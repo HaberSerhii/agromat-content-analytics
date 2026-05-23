@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #faf9f8;
+  --bg-card: #ffffff;
+  --bg-input: #f3f2f1;
+  --text: #201f1e;
+  --text-mid: #323130;
+  --text-dim: #605e5c;
+  --text-dim2: #797775;
+  --text-muted: #a19f9d;
+  --border: #edebe9;
+  --border2: #e1dfdd;
+  --accent-positive: #107c10;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] { -moz-appearance: textfield; }
