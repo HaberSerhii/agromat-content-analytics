@@ -7,5 +7,7 @@ export const dynamic = "force-dynamic";
 // Used by the dashboard's date picker — "view catalog state as of …".
 export async function GET() {
   const dates = await listSnapshotDates();
-  return NextResponse.json({ dates });
+  return NextResponse.json({ dates }, {
+    headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=600" },
+  });
 }

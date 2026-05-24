@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AppShell } from "@/components/AppShell";
 import { Tabs } from "@/components/Tabs";
 import "./globals.css";
 
@@ -10,6 +11,15 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="uk">
+      <head>
+        {/* Overlap DNS+TCP with HTML parse for the slowest origins. */}
+        {process.env.UPSTASH_REDIS_REST_URL && (
+          <link rel="preconnect" href={new URL(process.env.UPSTASH_REDIS_REST_URL).origin} crossOrigin="anonymous" />
+        )}
+        <link rel="preconnect" href="http://91.239.233.125:8080" />
+        <link rel="preconnect" href="https://images-shop.agromat.ua" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://www.agromat.ua" crossOrigin="anonymous" />
+      </head>
       <body>
         <div className="min-h-screen px-4 py-4">
           <header className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -21,7 +31,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             />
             <Tabs />
           </header>
-          <main>{children}</main>
+          <main>
+            {/* AppShell is rendered by the layout (not via `children`) so it
+                survives navigation between / and /catalog. Page components are
+                empty route markers — see src/app/page.tsx + catalog/page.tsx. */}
+            <AppShell />
+            {/* Route children are still rendered for Next.js routing semantics
+                (page-level metadata, error boundaries) but visually hidden. */}
+            <div style={{ display: "none" }}>{children}</div>
+          </main>
         </div>
       </body>
     </html>

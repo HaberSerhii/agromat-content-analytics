@@ -1,5 +1,4 @@
-import { ProductsCatalog } from "@/components/ProductsCatalog";
-
+// Route marker — see src/app/page.tsx and src/components/AppShell.tsx.
 export default function CatalogPage() {
-  return <ProductsCatalog />;
+  return null;
 }

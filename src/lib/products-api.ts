@@ -81,16 +81,21 @@ export interface ApiFilters {
 }
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
-const BASE = (process.env.AGROMAT_API_BASE_URL || "https://www.agromat.ua/api/v1").replace(/\/$/, "");
-const KEY = process.env.AGROMAT_API_KEY || "";
+// Resolved lazily per call (rather than at module init) so a missing .env at
+// boot doesn't permanently poison the cached value — the next call after env
+// is in place will pick it up.
+function baseUrl(): string {
+  return (process.env.AGROMAT_API_BASE_URL || "https://www.agromat.ua/api/v1").replace(/\/$/, "");
+}
 
 function authHeaders(): HeadersInit {
-  if (!KEY) throw new Error("AGROMAT_API_KEY is not configured");
-  return { "X-API-Key": KEY, Accept: "application/json" };
+  const key = process.env.AGROMAT_API_KEY || "";
+  if (!key) throw new Error("AGROMAT_API_KEY is not configured");
+  return { "X-API-Key": key, Accept: "application/json" };
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const url = `${BASE}${path}`;
+  const url = `${baseUrl()}${path}`;
   const res = await fetch(url, { headers: authHeaders(), cache: "no-store", signal });
   if (!res.ok) {
     const body = await res.text().catch(() => "");

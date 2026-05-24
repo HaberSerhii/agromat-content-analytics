@@ -5,7 +5,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const cfg = await readRequiredAttrs();
-  return NextResponse.json(cfg);
+  return NextResponse.json(cfg, {
+    headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=600" },
+  });
 }
 
 export async function POST(req: Request) {

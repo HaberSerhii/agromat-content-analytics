@@ -92,5 +92,7 @@ export async function GET() {
   }
 
   const rows = [...byCat.values()].sort((a, b) => b.total - a.total);
-  return NextResponse.json({ categories: rows, total: all.length });
+  return NextResponse.json({ categories: rows, total: all.length }, {
+    headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" },
+  });
 }

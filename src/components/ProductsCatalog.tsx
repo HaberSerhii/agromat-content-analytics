@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import * as XLSX from "xlsx";
 import { Card } from "@/components/ui";
 import { IS_DEV } from "@/lib/constants";
 import type {
   ProductLite,
   ProductFull,
   SyncState,
+  ChangeEvent,
 } from "@/lib/products-store";
 import type {
   ApiBrand,
@@ -134,7 +134,10 @@ function downloadIdsCsv(ids: (string | number)[], filename: string) {
   triggerDownload(new Blob([content], { type: "text/csv;charset=utf-8;" }), filename);
 }
 
-function downloadIdsXlsx(ids: (string | number)[], filename: string, columnHeader: string) {
+// xlsx (~400KB minified) is loaded on-demand only when the user triggers
+// an Excel export — keeps it out of the initial bundle.
+async function downloadIdsXlsx(ids: (string | number)[], filename: string, columnHeader: string) {
+  const XLSX = await import("xlsx");
   const rows = [[columnHeader], ...ids.filter(Boolean).map((id) => [id])];
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
@@ -144,7 +147,8 @@ function downloadIdsXlsx(ids: (string | number)[], filename: string, columnHeade
 }
 
 // Full-catalog Excel export — every visible column from the table
-function downloadProductsXlsx(items: ProductLite[], filename: string) {
+async function downloadProductsXlsx(items: ProductLite[], filename: string) {
+  const XLSX = await import("xlsx");
   const rows = items.map((p) => ({
     "Код товара": p.code,
     "goods_ref": p.goodsRef,
@@ -1315,6 +1319,7 @@ function ProductModal({ id, seed, onClose }: {
   const [loadingFull, setLoadingFull] = useState(true);
   const [err, setErr] = useState("");
   const [required, setRequired] = useState<Record<string, number[]>>({});
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -1353,7 +1358,15 @@ function ProductModal({ id, seed, onClose }: {
               </div>
             )}
           </div>
-          <button onClick={onClose} className="px-3 py-1 rounded-lg text-xs cursor-pointer border-0" style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}>✕ Закрити</button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowHistory(true)}
+              className="px-3 py-1 rounded-lg text-xs font-bold cursor-pointer border-0"
+              style={{ background: "#118dff", color: "#fff" }}
+              title="Переглянути всі зміни цього товару — ціна, статус, залишок, атрибути, фото, артикул"
+            >📜 Історія змін</button>
+            <button onClick={onClose} className="px-3 py-1 rounded-lg text-xs cursor-pointer border-0" style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}>✕ Закрити</button>
+          </div>
         </div>
 
         <div className="p-4 space-y-4">
@@ -1456,8 +1469,278 @@ function ProductModal({ id, seed, onClose }: {
           )}
         </div>
       </div>
+      {showHistory && (
+        <ChangeHistoryModal
+          id={id}
+          productName={data?.name || `Товар #${id}`}
+          currency={data?.currency || "UAH"}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   );
+}
+
+// ── Change-history modal ────────────────────────────────────────────────────
+// Tabs over change-event groups returned by /api/products/:id/history.
+// Each tab renders newest-first list of "from → to" rows; attributes and
+// images get richer layouts since they're not single scalar values.
+type HistoryBucket = "price" | "status" | "stock" | "sku" | "attributes" | "images";
+interface HistoryResponse {
+  productId: number;
+  total: number;
+  groups: Record<HistoryBucket, ChangeEvent[]>;
+}
+
+function ChangeHistoryModal({ id, productName, currency, onClose }: {
+  id: number;
+  productName: string;
+  currency: string;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<HistoryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [tab, setTab] = useState<HistoryBucket>("price");
+
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onEsc);
+    return () => document.removeEventListener("keydown", onEsc);
+  }, [onClose]);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/products/${id}/history`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: HistoryResponse) => setData(d))
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [id]);
+
+  // Pick the first non-empty tab on first load so the user sees something
+  // immediately instead of a default-empty pane.
+  useEffect(() => {
+    if (!data) return;
+    const order: HistoryBucket[] = ["price", "status", "stock", "sku", "attributes", "images"];
+    const firstWithData = order.find((b) => data.groups[b].length > 0);
+    if (firstWithData) setTab(firstWithData);
+  }, [data]);
+
+  const tabs: { key: HistoryBucket; label: string; color: string }[] = [
+    { key: "price",      label: "Ціни",      color: "#118dff" },
+    { key: "status",     label: "Статус",    color: "#107c10" },
+    { key: "stock",      label: "Залишок",   color: "#e66c37" },
+    { key: "sku",        label: "Артикул",   color: "#8e44ad" },
+    { key: "attributes", label: "Атрибути",  color: "#d9b300" },
+    { key: "images",     label: "Фото",      color: "#d13438" },
+  ];
+
+  const events = data?.groups[tab] ?? [];
+
+  return (
+    <div
+      className="fixed inset-0 z-[210] flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.6)" }}
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+    >
+      <div
+        className="rounded-2xl flex flex-col"
+        style={{ background: "var(--bg-card)", border: "1px solid var(--border)", width: "100%", maxWidth: 900, maxHeight: "85vh" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--border)" }}>
+          <div>
+            <div className="text-sm font-bold" style={{ color: "var(--text)" }}>📜 Історія змін</div>
+            <div className="text-xs mt-0.5 truncate" style={{ color: "var(--text-dim)", maxWidth: 720 }}>
+              {productName}
+            </div>
+          </div>
+          <button onClick={onClose} className="px-3 py-1 rounded-lg text-xs cursor-pointer border-0" style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}>✕ Закрити</button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 px-4 pt-3 pb-0 border-b overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+          {tabs.map((t) => {
+            const count = data?.groups[t.key].length ?? 0;
+            const active = t.key === tab;
+            return (
+              <button key={t.key}
+                onClick={() => setTab(t.key)}
+                className="px-3 py-2 rounded-t-lg text-xs font-semibold cursor-pointer border-0 whitespace-nowrap flex items-center gap-1.5"
+                style={{
+                  background: active ? "var(--bg-input)" : "transparent",
+                  color: active ? t.color : "var(--text-dim)",
+                  borderBottom: active ? `2px solid ${t.color}` : "2px solid transparent",
+                }}
+              >
+                {t.label}
+                <span className="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full"
+                  style={{ background: active ? `${t.color}22` : "var(--bg-input)", color: active ? t.color : "var(--text-dim)" }}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Body */}
+        <div className="p-4 overflow-y-auto flex-1">
+          {loading && <div className="text-xs" style={{ color: "var(--text-dim)" }}>Завантаження…</div>}
+          {err && <div className="text-xs" style={{ color: "#d13438" }}>{err}</div>}
+          {!loading && !err && data && data.total === 0 && (
+            <div className="text-xs p-6 text-center" style={{ color: "var(--text-dim)" }}>
+              Поки що змін не зафіксовано. Історія наповнюється після кожного синку (раз на годину).
+            </div>
+          )}
+          {!loading && !err && data && events.length === 0 && data.total > 0 && (
+            <div className="text-xs p-6 text-center" style={{ color: "var(--text-dim)" }}>
+              У цій категорії змін немає. Перевірте інші вкладки.
+            </div>
+          )}
+          {events.length > 0 && (
+            <div className="space-y-2">
+              {events.map((e, i) => <HistoryEventRow key={i} event={e} currency={currency} />)}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-4 py-2 border-t text-[10px]" style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+          Дані оновлюються раз на годину (по cron-розкладу синку). Зберігаються до 200 останніх змін на товар, 180 днів.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function fmtMoney(v: number | null, currency: string): string {
+  if (v == null) return "—";
+  return `${v.toLocaleString("uk-UA")} ${currency}`;
+}
+
+function HistoryEventRow({ event, currency }: { event: ChangeEvent; currency: string }) {
+  const date = (
+    <span className="text-[10px] tabular-nums whitespace-nowrap" style={{ color: "var(--text-dim)" }}>
+      {fmtDateTime(event.at)}
+    </span>
+  );
+
+  const wrap = (label: string, body: React.ReactNode, accent: string) => (
+    <div className="rounded-lg p-2.5" style={{ background: "var(--bg-input)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[10px] uppercase tracking-wide font-bold" style={{ color: accent }}>{label}</span>
+        {date}
+      </div>
+      <div className="text-xs" style={{ color: "var(--text)" }}>{body}</div>
+    </div>
+  );
+
+  const arrow = <span style={{ color: "var(--text-dim)", margin: "0 6px" }}>→</span>;
+
+  switch (event.field) {
+    case "price":
+      return wrap("Ціна", (
+        <span><span style={{ color: "var(--text-dim)" }}>{fmtMoney(event.from, currency)}</span>{arrow}<b>{fmtMoney(event.to, currency)}</b></span>
+      ), "#118dff");
+    case "priceBase":
+      return wrap("Базова ціна", (
+        <span><span style={{ color: "var(--text-dim)" }}>{fmtMoney(event.from, currency)}</span>{arrow}<b>{fmtMoney(event.to, currency)}</b></span>
+      ), "#118dff");
+    case "discountPct":
+      return wrap("Знижка", (
+        <span>
+          <span style={{ color: "var(--text-dim)" }}>{event.from != null ? `${event.from}%` : "—"}</span>
+          {arrow}
+          <b>{event.to != null ? `${event.to}%` : "—"}</b>
+        </span>
+      ), "#118dff");
+    case "status":
+      return wrap("Статус", (
+        <span>
+          <span style={{ color: statusColor(event.from.id) }}>{event.from.name || `#${event.from.id}`}</span>
+          {arrow}
+          <b style={{ color: statusColor(event.to.id) }}>{event.to.name || `#${event.to.id}`}</b>
+        </span>
+      ), "#107c10");
+    case "stock":
+      return wrap("Залишок", (
+        <span>
+          <span style={{ color: "var(--text-dim)" }}>{event.from ?? "—"} шт</span>
+          {arrow}
+          <b>{event.to ?? "—"} шт</b>
+        </span>
+      ), "#e66c37");
+    case "sku":
+      return wrap("Артикул", (
+        <span>
+          <span style={{ color: "var(--text-dim)" }}>{event.from || "—"}</span>
+          {arrow}
+          <b style={{ fontFamily: "monospace" }}>{event.to || "—"}</b>
+        </span>
+      ), "#8e44ad");
+    case "attributes":
+      return wrap("Атрибути", (
+        <div className="space-y-1">
+          {event.added.map((a) => (
+            <div key={`a-${a.id}`} className="text-xs">
+              <span style={{ color: "#107c10", fontWeight: 700 }}>+ додано</span>{" "}
+              <span style={{ color: "var(--text-dim)" }}>{a.name}:</span>{" "}
+              <b>{a.values.join(", ")}</b>
+            </div>
+          ))}
+          {event.removed.map((a) => (
+            <div key={`r-${a.id}`} className="text-xs">
+              <span style={{ color: "#d13438", fontWeight: 700 }}>− видалено</span>{" "}
+              <span style={{ color: "var(--text-dim)" }}>{a.name}:</span>{" "}
+              <span style={{ textDecoration: "line-through", color: "var(--text-dim)" }}>{a.values.join(", ")}</span>
+            </div>
+          ))}
+          {event.changed.map((a) => (
+            <div key={`c-${a.id}`} className="text-xs">
+              <span style={{ color: "#118dff", fontWeight: 700 }}>~ змінено</span>{" "}
+              <span style={{ color: "var(--text-dim)" }}>{a.name}:</span>{" "}
+              <span style={{ color: "var(--text-dim)", textDecoration: "line-through" }}>{a.from.join(", ")}</span>
+              {arrow}
+              <b>{a.to.join(", ")}</b>
+            </div>
+          ))}
+        </div>
+      ), "#d9b300");
+    case "images":
+      return wrap("Фото", (
+        <div>
+          <div className="text-xs mb-1.5">
+            <span style={{ color: "var(--text-dim)" }}>{event.fromCount} шт</span>{arrow}<b>{event.toCount} шт</b>
+          </div>
+          {event.addedUrls.length > 0 && (
+            <div className="mb-1">
+              <div className="text-[10px] font-bold mb-1" style={{ color: "#107c10" }}>+ Додано ({event.addedUrls.length})</div>
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-1">
+                {event.addedUrls.map((u, i) => (
+                  <a key={i} href={u} target="_blank" rel="noopener noreferrer" className="block rounded overflow-hidden border" style={{ borderColor: "#107c10aa" }}>
+                    <img src={u} alt="" className="w-full h-16 object-cover" loading="lazy" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+          {event.removedUrls.length > 0 && (
+            <div>
+              <div className="text-[10px] font-bold mb-1" style={{ color: "#d13438" }}>− Видалено ({event.removedUrls.length})</div>
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-1">
+                {event.removedUrls.map((u, i) => (
+                  <a key={i} href={u} target="_blank" rel="noopener noreferrer" className="block rounded overflow-hidden border opacity-60" style={{ borderColor: "#d13438aa" }}>
+                    <img src={u} alt="" className="w-full h-16 object-cover" loading="lazy" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ), "#d13438");
+  }
 }
 
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
@@ -1765,7 +2048,7 @@ export function ProductsCatalog() {
   const exportGoodsRefsXlsx = async () => {
     const items = await fetchAllFiltered();
     const refs = items.map((i) => i.goodsRef).filter(Boolean);
-    downloadIdsXlsx(refs, `goods_ref-${today()}.xlsx`, "goods_ref");
+    await downloadIdsXlsx(refs, `goods_ref-${today()}.xlsx`, "goods_ref");
     setToast(`Excel: ${refs.length} goods_ref`);
   };
   const exportGoodsRefsRegex = async () => {
@@ -1785,7 +2068,7 @@ export function ProductsCatalog() {
   const exportIddXlsx = async () => {
     const items = await fetchAllFiltered();
     const codes = items.map((i) => i.code).filter(Boolean);
-    downloadIdsXlsx(codes, `kod-tovara-${today()}.xlsx`, "Код товара");
+    await downloadIdsXlsx(codes, `kod-tovara-${today()}.xlsx`, "Код товара");
     setToast(`Excel: ${codes.length} кодів товару`);
   };
   const exportIddRegex = async () => {
@@ -1806,7 +2089,7 @@ export function ProductsCatalog() {
   };
   const exportFullXlsx = async () => {
     const items = await fetchAllFiltered();
-    downloadProductsXlsx(items, `products-full-${today()}.xlsx`);
+    await downloadProductsXlsx(items, `products-full-${today()}.xlsx`);
     setToast(`Excel повна аналітика: ${items.length} товарів`);
   };
 

@@ -6,8 +6,10 @@ import { fetchFilters, fetchProductsPage } from "@/lib/products-api";
 import {
   type ProductLite,
   type ProductFull,
+  type ProductComparable,
   type StatusChange,
   type SyncState,
+  type ChangeEvent,
   readAllLite,
   writeAllLite,
   writeAllFull,
@@ -15,6 +17,8 @@ import {
   writeFiltersCache,
   readSyncState,
   writeSyncState,
+  readAllComparable,
+  appendChangesBulk,
 } from "@/lib/products-store";
 
 const MAX_STATUS_HISTORY = 20;
@@ -99,6 +103,66 @@ function toLite(
   return { lite, full, changed: statusChanged, isNew: prev == null };
 }
 
+// Diff two states of one product → list of ChangeEvents. Returns [] when
+// nothing tracked has changed. Called per-product after each sync's full
+// record is built; output is collected and flushed via appendChangesBulk.
+function diffProduct(prev: ProductComparable, next: ProductFull, at: string): ChangeEvent[] {
+  const events: ChangeEvent[] = [];
+
+  if (prev.price !== next.price)
+    events.push({ at, field: "price", from: prev.price, to: next.price });
+  if (prev.priceBase !== next.priceBase)
+    events.push({ at, field: "priceBase", from: prev.priceBase, to: next.priceBase });
+  if (prev.discountPct !== next.discountPct)
+    events.push({ at, field: "discountPct", from: prev.discountPct, to: next.discountPct });
+  if (prev.statusId !== next.statusId)
+    events.push({
+      at, field: "status",
+      from: { id: prev.statusId, name: prev.statusName },
+      to:   { id: next.statusId, name: next.statusName },
+    });
+  if (prev.stockQty !== next.stockQty)
+    events.push({ at, field: "stock", from: prev.stockQty, to: next.stockQty });
+  if ((prev.sku ?? null) !== (next.sku ?? null))
+    events.push({ at, field: "sku", from: prev.sku, to: next.sku });
+
+  // Attributes — index by attribute_id, detect added/removed/changed values.
+  const prevAttrs = new Map(prev.attributes.map((a) => [a.id, a]));
+  const nextAttrs = new Map(next.attributes.map((a) => [a.id, a]));
+  const added:   { id: number; name: string; values: string[] }[] = [];
+  const removed: { id: number; name: string; values: string[] }[] = [];
+  const changed: { id: number; name: string; from: string[]; to: string[] }[] = [];
+  for (const [id, n] of nextAttrs) {
+    const p = prevAttrs.get(id);
+    if (!p) { added.push({ id, name: n.name, values: [...n.values] }); continue; }
+    // Order-insensitive value compare
+    const pv = [...p.values].sort().join("|");
+    const nv = [...n.values].sort().join("|");
+    if (pv !== nv) changed.push({ id, name: n.name, from: p.values, to: n.values });
+  }
+  for (const [id, p] of prevAttrs) {
+    if (!nextAttrs.has(id)) removed.push({ id, name: p.name, values: [...p.values] });
+  }
+  if (added.length || removed.length || changed.length)
+    events.push({ at, field: "attributes", added, removed, changed });
+
+  // Images — compare by URL set; record count delta + added/removed URLs.
+  const prevUrls = new Set(prev.imageUrls);
+  const nextUrls = new Set(next.images.map((i) => i.url));
+  const addedUrls:   string[] = [];
+  const removedUrls: string[] = [];
+  for (const u of nextUrls) if (!prevUrls.has(u)) addedUrls.push(u);
+  for (const u of prevUrls) if (!nextUrls.has(u)) removedUrls.push(u);
+  if (addedUrls.length || removedUrls.length)
+    events.push({
+      at, field: "images",
+      fromCount: prev.imageUrls.length, toCount: next.images.length,
+      addedUrls, removedUrls,
+    });
+
+  return events;
+}
+
 export async function runSync(): Promise<SyncState> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
@@ -112,10 +176,18 @@ export async function runSync(): Promise<SyncState> {
     const brandIdByName = new Map<string, number>();
     for (const b of filters.brands) brandIdByName.set(b.name.toLowerCase(), b.id);
 
-    // 2) Load previous snapshot
-    const prevList = await readAllLite();
+    // 2) Load previous snapshot (lite for table diff + comparable for full diff).
+    //    The comparable map is built once from full shards — see ProductComparable
+    //    for the trimmed shape. If this is the first sync ever, prevComparable
+    //    will be empty and no change events will be recorded (we don't want
+    //    spurious "added" events for every attribute/image on initial seed).
+    const [prevList, prevComparable] = await Promise.all([
+      readAllLite(),
+      readAllComparable(),
+    ]);
     const prevById = new Map<number, ProductLite>();
     for (const p of prevList) prevById.set(p.id, p);
+    const isFirstSync = prevComparable.size === 0;
 
     // 3) Stream all pages, accumulate lite + diff stats.
     //    The Agromat API occasionally returns 500 on individual pages — we retry
@@ -124,6 +196,7 @@ export async function runSync(): Promise<SyncState> {
     const lites: ProductLite[] = [];
     const fulls: ProductFull[] = [];
     const failedPages: number[] = [];
+    const changesByProduct = new Map<number, ChangeEvent[]>();
     let pages = 0;
     let newCount = 0;
     let statusChanges = 0;
@@ -144,6 +217,16 @@ export async function runSync(): Promise<SyncState> {
         fulls.push(full);
         if (isNew) newCount++;
         if (changed) statusChanges++;
+
+        // Diff against previous full record (if any). Skip on first-ever sync
+        // and for products newly introduced — neither has a meaningful "from".
+        if (!isFirstSync) {
+          const prev = prevComparable.get(api.id);
+          if (prev) {
+            const events = diffProduct(prev, full, startedAt);
+            if (events.length) changesByProduct.set(api.id, events);
+          }
+        }
       }
     }
     // Expose ghost count via console — surfaces them in sync logs without
@@ -200,6 +283,14 @@ export async function runSync(): Promise<SyncState> {
       await writeDailySnapshot(today, lites, startedAt);
     } catch (e) {
       console.warn("[products-sync] writeDailySnapshot failed:", e instanceof Error ? e.message : e);
+    }
+
+    // Per-product change log — powers the "Історія змін" modal. Best-effort:
+    // failure here doesn't affect the catalog itself, only the history view.
+    try {
+      await appendChangesBulk(changesByProduct);
+    } catch (e) {
+      console.warn("[products-sync] appendChangesBulk failed:", e instanceof Error ? e.message : e);
     }
 
     const finishedAt = new Date().toISOString();

@@ -3,6 +3,9 @@ import { readFiltersCache } from "@/lib/products-store";
 
 export const dynamic = "force-dynamic";
 
+// Filters change only on sync (≤ a few times/day). Long browser cache is safe.
+const CACHE = "private, max-age=60, stale-while-revalidate=600";
+
 export async function GET() {
   const cached = await readFiltersCache();
   if (!cached) {
@@ -11,5 +14,7 @@ export async function GET() {
       { status: 200 },
     );
   }
-  return NextResponse.json({ ...cached.filters, syncedAt: cached.syncedAt });
+  return NextResponse.json({ ...cached.filters, syncedAt: cached.syncedAt }, {
+    headers: { "Cache-Control": CACHE },
+  });
 }

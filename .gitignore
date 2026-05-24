@@ -37,3 +37,6 @@ next-env.d.ts
 # editor
 .vscode
 .idea
+
+# server-side disk cache (populated by sync, regenerated from Redis on demand)
+/data/

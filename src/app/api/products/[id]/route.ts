@@ -87,5 +87,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     writeFull(full).catch(() => {});
   }
 
-  return NextResponse.json(full);
+  return NextResponse.json(full, {
+    // Drill-down records rarely change between syncs — cache aggressively.
+    headers: { "Cache-Control": "private, max-age=300, stale-while-revalidate=86400" },
+  });
 }

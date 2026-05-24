@@ -296,5 +296,9 @@ export async function GET(request: Request) {
       noReviews,
       noSku,
     },
+  }, {
+    // Short fresh window + SWR — tab-switches and small filter tweaks hit the
+    // browser cache. Backend data only changes on sync, so 10s is conservative.
+    headers: { "Cache-Control": "private, max-age=10, stale-while-revalidate=60" },
   });
 }

@@ -2,6 +2,7 @@
 // Lite shards drive the UI table; full records drive the drill-down modal.
 
 import { getRedis } from "@/lib/redis";
+import { readDiskSnapshot, writeDiskSnapshot } from "@/lib/products-disk-cache";
 import type { ApiFilters } from "@/lib/products-api";
 
 // ── Models ───────────────────────────────────────────────────────────────────
@@ -61,6 +62,48 @@ export interface ProductFull extends ProductLite {
   reviews: ProductReview[];
 }
 
+// ── Change-log events ────────────────────────────────────────────────────────
+// Per-product change history captured at each sync by diffing the new full
+// record against the previously stored one. Powers the "Історія змін" modal.
+export type ChangeEvent =
+  | { at: string; field: "price";       from: number | null; to: number | null }
+  | { at: string; field: "priceBase";   from: number | null; to: number | null }
+  | { at: string; field: "discountPct"; from: number | null; to: number | null }
+  | { at: string; field: "status";      from: { id: number; name: string }; to: { id: number; name: string } }
+  | { at: string; field: "stock";       from: number | null; to: number | null }
+  | { at: string; field: "sku";         from: string | null; to: string | null }
+  | {
+      at: string;
+      field: "attributes";
+      added:   { id: number; name: string; values: string[] }[];
+      removed: { id: number; name: string; values: string[] }[];
+      changed: { id: number; name: string; from: string[]; to: string[] }[];
+    }
+  | {
+      at: string;
+      field: "images";
+      fromCount: number;
+      toCount: number;
+      addedUrls: string[];
+      removedUrls: string[];
+    };
+
+// Compact projection of ProductFull, used as the "previous state" we diff
+// against. Keeping it small lets us load all 31K products at sync start
+// without OOM (~10-30MB total vs. ~150MB for full records).
+export interface ProductComparable {
+  id: number;
+  price: number | null;
+  priceBase: number | null;
+  discountPct: number | null;
+  statusId: number;
+  statusName: string;
+  stockQty: number | null;
+  sku: string | null;
+  attributes: { id: number; name: string; values: string[] }[];
+  imageUrls: string[];
+}
+
 export interface SyncState {
   state: "idle" | "running" | "ok" | "error";
   startedAt: string | null;
@@ -85,6 +128,8 @@ export interface SyncState {
 const SHARD_SIZE = 1000;        // lite: ~31 shards × ~250KB JSON for 31K products
 const FULL_SHARD_COUNT = 200;   // full: 200 shards × ~150 items × ~3KB = ~450KB each (deterministic via id hash)
 const FULL_TTL_SEC = 60 * 60 * 24 * 30; // 30 days for drill-down cache
+const CHANGES_MAX_PER_PRODUCT = 200;          // cap to bound Redis size
+const CHANGES_TTL_SEC = 60 * 60 * 24 * 180;   // 180 days
 
 const K = {
   liteShard: (n: number) => `products:lite:p${n}`,
@@ -104,6 +149,8 @@ const K = {
   snapCount: (date: string) => `products:snap:${date}:count`,
   snapSyncAt: (date: string) => `products:snap:${date}:syncedAt`,
   snapDates: "products:snap:dates",          // sorted set, score=timestamp
+  // Per-product change-event log. Written incrementally by sync.
+  changes: (id: number) => `products:changes:${id}`,
 };
 
 const SNAPSHOT_KEEP_DAYS = 14;
@@ -119,22 +166,35 @@ function shardForId(id: number): number {
 // ── In-memory cache for lite snapshot ───────────────────────────────────────
 // Reading all 31 shards from Upstash REST costs ~1-3s per request (mostly
 // network). Cache the result in the warm Node.js process so repeated dashboard
-// requests (filtering, paging, summary) only pay that cost once per minute.
-// Cache is invalidated on writeAllLite() so a fresh sync is reflected immediately.
-const LITE_CACHE_TTL_MS = 60_000;
+// requests (filtering, paging, summary) skip that cost entirely.
+//
+// Two TTL windows:
+//   • FAST_TTL — return cached data with no Redis touch at all
+//   • PROBE_TTL — cheap 2-key probe to verify syncedAt; if unchanged, keep cache
+// Cache is invalidated explicitly by writeAllLite(), so a fresh sync is
+// reflected immediately even if the probe window hasn't elapsed.
+const LITE_CACHE_FAST_TTL_MS = 30_000;        // skip Redis entirely
+const LITE_CACHE_PROBE_TTL_MS = 60 * 60_000;  // 1h — beyond this, force reload
 declare global {
   // eslint-disable-next-line no-var
   var _productsLiteCache: { ts: number; key: string; data: ProductLite[] } | undefined;
 }
 
 // ── Lite shards I/O ─────────────────────────────────────────────────────────
+//
+// Read priority: in-memory → disk → Redis pipeline.
+//   1. Memory hit (<30s): no I/O at all.
+//   2. Probe Redis (2 GETs) for current syncedAt+count; if memory matches, reuse.
+//   3. Try disk snapshot; if its embedded syncedAt+count match Redis's probe,
+//      use it (saves the ~6s 31-shard pipeline).
+//   4. Last resort: pipeline all shards from Redis, repopulate disk for next time.
 export async function readAllLite(): Promise<ProductLite[]> {
-  // Hit warm cache when the lite snapshot hasn't been rewritten and we're
-  // within the TTL window. Cache key is the `syncedAt` timestamp — if a fresh
-  // sync wrote a new value, the key changes and we re-read from Redis.
   const redis = getRedis();
   const cache = global._productsLiteCache;
-  if (cache && Date.now() - cache.ts < LITE_CACHE_TTL_MS) {
+  const now = Date.now();
+
+  // Fast path — recent cache, return without touching Redis.
+  if (cache && now - cache.ts < LITE_CACHE_FAST_TTL_MS) {
     return cache.data;
   }
 
@@ -145,12 +205,26 @@ export async function readAllLite(): Promise<ProductLite[]> {
   const count = parseInt(countRaw || "0", 10);
   if (!count) return [];
 
-  // Cache key includes syncedAt — if cache from a different sync is here, drop it
+  // Cache key includes syncedAt — if probe shows the snapshot is unchanged,
+  // reuse the cache for up to PROBE_TTL.
   const key = `${syncedAt ?? ""}:${count}`;
-  if (cache && cache.key === key && Date.now() - cache.ts < LITE_CACHE_TTL_MS * 5) {
-    // Snapshot unchanged — extend TTL even if it was about to expire
-    cache.ts = Date.now();
+  if (cache && cache.key === key && now - cache.ts < LITE_CACHE_PROBE_TTL_MS) {
+    cache.ts = now;
     return cache.data;
+  }
+
+  // Disk cache — populated by writeAllLite() after each sync. If its embedded
+  // syncedAt matches what Redis just reported, the data is canonical and we
+  // skip the expensive 31-shard pipeline. (Note: Redis's K.liteCount is the
+  // shard count, not the product count — so we key freshness on syncedAt alone.)
+  const disk = readDiskSnapshot();
+  if (disk && syncedAt && disk.syncedAt === syncedAt) {
+    const out: ProductLite[] = [];
+    for (const p of disk.products) {
+      if (p.name && p.name.trim() && p.code) out.push(p);
+    }
+    global._productsLiteCache = { ts: now, key, data: out };
+    return out;
   }
 
   // Pipeline → one HTTP round-trip to Upstash instead of `count` separate calls.
@@ -172,7 +246,9 @@ export async function readAllLite(): Promise<ProductLite[]> {
       }
     } catch { /* skip corrupted shard */ }
   }
-  global._productsLiteCache = { ts: Date.now(), key, data: out };
+  global._productsLiteCache = { ts: now, key, data: out };
+  // Self-heal: backfill disk cache so future cold loads skip this Redis pipeline.
+  if (syncedAt) writeDiskSnapshot(out, syncedAt);
   return out;
 }
 
@@ -197,6 +273,9 @@ export async function writeAllLite(products: ProductLite[], syncedAt: string): P
   await Promise.all(writes);
   // Invalidate in-process cache so the next read picks up the fresh snapshot
   global._productsLiteCache = undefined;
+  // Mirror to disk so the next cold load skips the 31-shard Redis pipeline.
+  // Sync I/O is OK here — sync already takes minutes; an extra ~100ms is noise.
+  writeDiskSnapshot(products, syncedAt);
   return shardCount;
 }
 
@@ -381,6 +460,69 @@ export async function listSnapshotDates(): Promise<{ date: string; syncedAt: str
   for (const d of dates) pipe.get(K.snapSyncAt(d));
   const ats = (await pipe.exec()) as (string | null)[];
   return dates.map((d, i) => ({ date: d, syncedAt: ats[i] }));
+}
+
+// ── Change-log I/O ──────────────────────────────────────────────────────────
+// Per-product event log. Newest events stored first; capped at
+// CHANGES_MAX_PER_PRODUCT entries; TTL refreshed on each write.
+export async function readChanges(id: number): Promise<ChangeEvent[]> {
+  const redis = getRedis();
+  const raw = (await redis.get(K.changes(id))) as string | null;
+  if (!raw) return [];
+  try { return JSON.parse(raw) as ChangeEvent[]; } catch { return []; }
+}
+
+// Bulk write the per-product changes accumulated during a sync. Reads each
+// existing log, prepends the new events, caps to CHANGES_MAX_PER_PRODUCT,
+// writes back with TTL. Runs in capped parallel batches to respect Upstash limits.
+export async function appendChangesBulk(updates: Map<number, ChangeEvent[]>): Promise<void> {
+  if (updates.size === 0) return;
+  const redis = getRedis();
+  const entries = [...updates.entries()];
+  const PARALLEL = 20;
+  for (let i = 0; i < entries.length; i += PARALLEL) {
+    const slice = entries.slice(i, i + PARALLEL);
+    await Promise.all(
+      slice.map(async ([id, events]) => {
+        if (events.length === 0) return;
+        const existing = await readChanges(id);
+        const merged = [...events, ...existing].slice(0, CHANGES_MAX_PER_PRODUCT);
+        await redis.set(K.changes(id), JSON.stringify(merged), { ex: CHANGES_TTL_SEC });
+      }),
+    );
+  }
+}
+
+// Builds a compact { id → ProductComparable } map from all full shards.
+// Used at the start of a sync to capture the "previous state" we diff against
+// without holding the full ~150MB ProductFull set in memory.
+export async function readAllComparable(): Promise<Map<number, ProductComparable>> {
+  const redis = getRedis();
+  const pipe = redis.pipeline();
+  for (let i = 0; i < FULL_SHARD_COUNT; i++) pipe.get(K.fullShard(i));
+  const raws = (await pipe.exec()) as (string | null)[];
+  const out = new Map<number, ProductComparable>();
+  for (const raw of raws) {
+    if (!raw) continue;
+    try {
+      const shard = JSON.parse(raw) as ProductFull[];
+      for (const p of shard) {
+        out.set(p.id, {
+          id: p.id,
+          price: p.price,
+          priceBase: p.priceBase,
+          discountPct: p.discountPct,
+          statusId: p.statusId,
+          statusName: p.statusName,
+          stockQty: p.stockQty,
+          sku: p.sku,
+          attributes: p.attributes.map((a) => ({ id: a.id, name: a.name, values: [...a.values] })),
+          imageUrls: p.images.map((i) => i.url),
+        });
+      }
+    } catch { /* skip corrupt shard */ }
+  }
+  return out;
 }
 
 // ── Cleanup of legacy "cards:*" keys (old Google Sheets pipeline) ───────────
