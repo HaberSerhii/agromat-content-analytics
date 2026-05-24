@@ -1061,6 +1061,18 @@ function SyncButton({ syncState, syncedAt, onSynced }: {
       .then(async (r) => {
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
+          // 409 = sync is already running (started by another tab / cron / VPS).
+          // Treat it as an info note, not an error — keep the running indicator
+          // and let polling pick up the live progress.
+          if (r.status === 409) {
+            setErr("");
+            // refresh state from server so the progress bar appears immediately
+            fetch("/api/products/sync/status", { cache: "no-store" })
+              .then((s) => s.ok ? s.json() : null)
+              .then((s: SyncState | null) => { if (s) setLive(s); })
+              .catch(() => {});
+            return;
+          }
           setErr(j.error || `HTTP ${r.status}`);
           setLive(null);
         }
@@ -2443,7 +2455,13 @@ export function ProductsCatalog() {
                       ["Фото", "imagesCount"],
                       ["Відгук.", "reviewsCount"],
                       ["Атриб.", "attributesCount"],
-                      ["Уперше у нас", "firstSeenAt"],
+                      // In the "Зміна статусу" preset the "first seen" column is
+                      // replaced with the date of the *previous* status change —
+                      // so you can see the chain of transitions, not when we
+                      // first met the product.
+                      tab === "changed7"
+                        ? ["Попередня зміна", null]
+                        : ["Уперше у нас", "firstSeenAt"],
                       ["Зміна ст.", "statusChangedAt"],
                     ]) as [string, string | null][]).map(([h, sk], i) => (
                       <th key={i} className="text-left px-2 py-2 font-semibold text-[11px] whitespace-nowrap" style={{ color: "var(--text-dim2)" }}>
@@ -2573,7 +2591,35 @@ export function ProductsCatalog() {
                         <td className="px-2 py-1.5 text-center font-semibold" style={{ color: p.imagesCount === 0 ? "#d13438" : p.imagesCount >= 3 ? "#107c10" : "#e66c37" }}>{p.imagesCount}</td>
                         <td className="px-2 py-1.5 text-center font-semibold" style={{ color: p.reviewsCount === 0 ? "var(--text-dim)" : "#107c10" }}>{p.reviewsCount}</td>
                         <td className="px-2 py-1.5 text-center font-semibold" style={{ color: p.attributesCount === 0 ? "#d13438" : p.attributesCount >= 5 ? "#107c10" : "#e66c37" }}>{p.attributesCount}</td>
-                        <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: "var(--text-dim)" }}>{fmtDate(p.firstSeenAt)}</td>
+                        {tab === "changed7" ? (() => {
+                          // Previous-change date: take statusHistory[1] if available, else firstSeenAt.
+                          // statusHistory is ordered newest-first, so [0] is the latest change (== statusChangedAt)
+                          // and [1] is the one before it.
+                          const prevAt = p.statusHistory[1]?.at ?? p.firstSeenAt;
+                          const curAt = p.statusChangedAt ?? p.statusHistory[0]?.at ?? null;
+                          let deltaText = "";
+                          if (prevAt && curAt) {
+                            const days = Math.round(
+                              (new Date(curAt).getTime() - new Date(prevAt).getTime()) / 86400000
+                            );
+                            if (days >= 0) {
+                              const word = days === 0 ? "сьогодні" : days === 1 ? "день" : days < 5 ? "дні" : "днів";
+                              deltaText = days === 0 ? word : `${days} ${word}`;
+                            }
+                          }
+                          const prevStatus = p.statusHistory[1]?.to ?? p.statusHistory[0]?.from ?? null;
+                          return (
+                            <td className="px-2 py-1.5 whitespace-nowrap">
+                              <div style={{ color: "var(--text-mid)" }}>{fmtDate(prevAt)}</div>
+                              <div className="text-[10px] flex items-center gap-1" style={{ color: "var(--text-dim2)" }}>
+                                {prevStatus != null && <span style={{ color: statusColor(prevStatus) }}>●</span>}
+                                <span>{deltaText}</span>
+                              </div>
+                            </td>
+                          );
+                        })() : (
+                          <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: "var(--text-dim)" }}>{fmtDate(p.firstSeenAt)}</td>
+                        )}
                         <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: "var(--text-dim)" }}>{fmtDate(p.statusChangedAt)}</td>
                       </tr>
                     );
