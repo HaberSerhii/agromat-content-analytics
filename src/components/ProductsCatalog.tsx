@@ -117,6 +117,30 @@ function percent(n: number, total: number): number {
 }
 
 // ── Export helpers (CSV / Excel / Regex / Cube) ─────────────────────────────
+// Copy text to clipboard with a fallback for non-secure-context (HTTP).
+// navigator.clipboard.writeText silently rejects on plain HTTP; the legacy
+// document.execCommand('copy') still works there. We accept either path.
+async function _copyText(text: string): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise<void>((resolve, reject) => {
+    if (typeof document === "undefined") return reject(new Error("no document"));
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { /* fallthrough */ }
+    document.body.removeChild(ta);
+    ok ? resolve() : reject(new Error("execCommand copy failed"));
+  });
+}
+
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -2064,10 +2088,14 @@ export function ProductsCatalog() {
     setToast(`Excel: ${refs.length} goods_ref`);
   };
   const exportGoodsRefsRegex = async () => {
-    const items = await fetchAllFiltered();
-    const refs = items.map((i) => i.goodsRef).filter(Boolean).join("|");
-    await navigator.clipboard.writeText(refs);
-    setToast(`Regex: ${items.length} goods_ref скопійовано`);
+    try {
+      const items = await fetchAllFiltered();
+      const refs = items.map((i) => i.goodsRef).filter(Boolean).join("|");
+      await _copyText(refs);
+      setToast(`Regex: ${items.length} goods_ref скопійовано`);
+    } catch (e) {
+      setToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
+    }
   };
   // "IDD" exports use product `code` (a.k.a. "Код товара") — consistent across
   // CSV / Excel / Regex / Cube. Cube wraps it in the MDX `[Код товару]` member.
@@ -2084,20 +2112,28 @@ export function ProductsCatalog() {
     setToast(`Excel: ${codes.length} кодів товару`);
   };
   const exportIddRegex = async () => {
-    const items = await fetchAllFiltered();
-    const codes = items.map((i) => i.code).filter(Boolean).join("|");
-    await navigator.clipboard.writeText(codes);
-    setToast(`Regex: ${items.length} кодів товару скопійовано`);
+    try {
+      const items = await fetchAllFiltered();
+      const codes = items.map((i) => i.code).filter(Boolean).join("|");
+      await _copyText(codes);
+      setToast(`Regex: ${items.length} кодів товару скопійовано`);
+    } catch (e) {
+      setToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
+    }
   };
   const exportIddCube = async () => {
-    const items = await fetchAllFiltered();
-    const lines = items
-      .map((i) => i.code)
-      .filter(Boolean)
-      .map((code) => `[Товар].[Код товару].&[${code}]`)
-      .join(",\n");
-    await navigator.clipboard.writeText(`{\n${lines}\n}`);
-    setToast(`Cube: ${items.length} кодів товару скопійовано`);
+    try {
+      const items = await fetchAllFiltered();
+      const lines = items
+        .map((i) => i.code)
+        .filter(Boolean)
+        .map((code) => `[Товар].[Код товару].&[${code}]`)
+        .join(",\n");
+      await _copyText(`{\n${lines}\n}`);
+      setToast(`Cube: ${items.length} кодів товару скопійовано`);
+    } catch (e) {
+      setToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
+    }
   };
   const exportFullXlsx = async () => {
     const items = await fetchAllFiltered();
@@ -2117,7 +2153,7 @@ export function ProductsCatalog() {
     if (value == null || value === "" || value === 0) return;
     const text = String(value);
     try {
-      await navigator.clipboard.writeText(text);
+      await _copyText(text);
       setToast(`${label}: ${text} — скопійовано`);
     } catch {
       setToast(`Не вдалося скопіювати ${label}`);
@@ -2275,8 +2311,12 @@ export function ProductsCatalog() {
               // Reuse the original separator style — if user pasted with commas
               // we keep commas; otherwise newlines. Detected from the raw text.
               const sep = bulk.rawText.includes(",") ? ", " : "\n";
-              await navigator.clipboard.writeText(notFound.join(sep));
-              setToast(`Скопійовано ${notFound.length} не знайдених ${bulk.type === "code" ? "кодів" : "goods_ref"}`);
+              try {
+                await _copyText(notFound.join(sep));
+                setToast(`Скопійовано ${notFound.length} не знайдених ${bulk.type === "code" ? "кодів" : "goods_ref"}`);
+              } catch (e) {
+                setToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
+              }
             };
             return (
               <div className="mb-3 px-3 py-2 rounded-lg flex items-center justify-between gap-2 flex-wrap"
