@@ -205,6 +205,31 @@ async function downloadProductsXlsx(items: ProductLite[], filename: string) {
   triggerDownload(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
 }
 
+// Category-attributes Excel export — long format, one row per (category, attribute).
+// The "Обов'язковий" column marks which attributes are currently flagged as
+// required (★) so commerce/SEO specialists can review the full list and advise
+// which others should be added.
+async function downloadRequiredAttrsXlsx(
+  rows: { category: string; path: string; attribute: string; filled: number; total: number; required: boolean }[],
+  filename: string,
+) {
+  const XLSX = await import("xlsx");
+  const sheetRows = rows.map((r) => ({
+    "Категорія": r.category,
+    "Шлях": r.path,
+    "Атрибут": r.attribute,
+    "Обов'язковий": r.required ? "★" : "",
+    "Заповнено": r.filled,
+    "Всього": r.total,
+    "%": r.total > 0 ? Math.round((r.filled / r.total) * 100) : 0,
+  }));
+  const ws = XLSX.utils.json_to_sheet(sheetRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Атрибути");
+  const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  triggerDownload(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
+}
+
 // Pill-shaped action button used for CSV / Regex / Cube exports. Toggles into a
 // "✓ Скопійовано" state for 1.5s after a successful clipboard write.
 function ExportPill({ label, color, bg, busy, onClick, title }: {
@@ -1800,66 +1825,142 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 // ── Required-attrs config modal ─────────────────────────────────────────────
+// Reads a pre-computed category × attribute fill aggregate from the server
+// (single request, instant clicks) instead of doing live drill-down scans.
+interface CategoryAggregate {
+  id: number;
+  productCount: number;
+  attributes: { id: number; name: string; filledCount: number }[];
+}
 function RequiredAttrsModal({ categories, onClose }: {
   categories: ApiCategoryNode[];
   onClose: () => void;
 }) {
   const [config, setConfig] = useState<Record<string, number[]>>({});
+  const [agg, setAgg] = useState<CategoryAggregate[] | null>(null);
+  const [excluded, setExcluded] = useState<Set<number>>(new Set());
+  const [showExcluded, setShowExcluded] = useState(false);
   const [catId, setCatId] = useState<number | null>(null);
-  const [available, setAvailable] = useState<{ id: number; name: string; usage: number }[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportSel, setExportSel] = useState<Set<number>>(new Set());
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    fetch("/api/products/required-attrs").then((r) => r.json()).then(setConfig);
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      fetch("/api/products/required-attrs").then((r) => r.json()),
+      fetch("/api/products/category-attributes").then((r) => r.json()),
+    ])
+      .then(([cfg, data]: [Record<string, number[]>, { categories: CategoryAggregate[]; excluded: number[] }]) => {
+        if (cancelled) return;
+        setConfig(cfg || {});
+        setAgg(data.categories || []);
+        setExcluded(new Set(data.excluded || []));
+      })
+      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
-  // Once a category is chosen — discover which attributes its products actually use
-  useEffect(() => {
-    if (catId == null) return;
-    fetch(`/api/products?category_ids=${catId}&limit=500`)
-      .then((r) => r.json())
-      .then((d: ListResponse) => {
-        // We need attributes — but lite doesn't carry them. Fetch the first 30 full
-        // records of this category to discover attribute_id frequency.
-        const sample = d.items.slice(0, 30);
-        return Promise.all(sample.map((s) => fetch(`/api/products/${s.id}`).then((r) => r.json() as Promise<ProductFull>)));
-      })
-      .then((fulls) => {
-        const usage = new Map<number, { name: string; usage: number }>();
-        for (const f of fulls) {
-          for (const a of f.attributes || []) {
-            const e = usage.get(a.id) ?? { name: a.name, usage: 0 };
-            e.usage++;
-            usage.set(a.id, e);
-          }
-        }
-        setAvailable([...usage.entries()].map(([id, v]) => ({ id, name: v.name, usage: v.usage })).sort((a, b) => b.usage - a.usage));
-      })
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, [catId]);
+  const aggById = new Map<number, CategoryAggregate>();
+  for (const c of agg ?? []) aggById.set(c.id, c);
 
-  const selected = catId != null ? config[String(catId)] ?? [] : [];
+  const nameById = new Map<number, { name: string; path: string }>();
+  for (const c of categories) nameById.set(c.id, { name: c.name, path: c.path });
 
-  const toggle = (id: number) => {
+  const visibleCategories = (agg ?? [])
+    .filter((c) => c.productCount > 0)
+    .filter((c) => showExcluded ? excluded.has(c.id) : !excluded.has(c.id))
+    .map((c) => ({ ...c, _meta: nameById.get(c.id) }))
+    .filter((c) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (c._meta?.name || "").toLowerCase().includes(q)
+        || (c._meta?.path || "").toLowerCase().includes(q);
+    })
+    .sort((a, b) => b.productCount - a.productCount);
+
+  const selectedCat = catId != null ? aggById.get(catId) : null;
+  const selectedAttrIds = catId != null ? config[String(catId)] ?? [] : [];
+
+  const toggleAttr = (id: number) => {
     if (catId == null) return;
-    const cur = new Set(selected);
+    const cur = new Set(selectedAttrIds);
     if (cur.has(id)) cur.delete(id); else cur.add(id);
     setConfig({ ...config, [String(catId)]: [...cur] });
+  };
+
+  const toggleExclude = (id: number) => {
+    const next = new Set(excluded);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setExcluded(next);
+    if (catId === id) setCatId(null);
+  };
+
+  const toggleExport = (id: number) => {
+    const next = new Set(exportSel);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setExportSel(next);
+  };
+
+  const exportXlsx = async () => {
+    setExporting(true); setErr("");
+    try {
+      const rows: { category: string; path: string; attribute: string; filled: number; total: number; required: boolean }[] = [];
+      for (const id of exportSel) {
+        const cat = aggById.get(id);
+        if (!cat) continue;
+        const meta = nameById.get(id);
+        const required = new Set(config[String(id)] ?? []);
+        // Sort: required (★) attributes first, then by fill count descending —
+        // makes the file easy to skim for specialists reviewing candidates.
+        const sorted = [...cat.attributes].sort((a, b) => {
+          const ra = required.has(a.id) ? 1 : 0;
+          const rb = required.has(b.id) ? 1 : 0;
+          if (ra !== rb) return rb - ra;
+          return b.filledCount - a.filledCount;
+        });
+        for (const a of sorted) {
+          rows.push({
+            category: meta?.name || `#${id}`,
+            path: meta?.path || "",
+            attribute: a.name,
+            filled: a.filledCount,
+            total: cat.productCount,
+            required: required.has(a.id),
+          });
+        }
+      }
+      if (rows.length === 0) {
+        setErr("У вибраних категоріях немає атрибутів");
+        return;
+      }
+      const date = new Date().toISOString().slice(0, 10);
+      await downloadRequiredAttrsXlsx(rows, `category-attrs-${date}.xlsx`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Export error");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const save = async () => {
     setSaving(true); setErr("");
     try {
-      const r = await fetch("/api/products/required-attrs", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-dashboard-secret": process.env.NEXT_PUBLIC_DASHBOARD_SECRET || "",
-        },
-        body: JSON.stringify(config),
+      const headers = {
+        "content-type": "application/json",
+        "x-dashboard-secret": process.env.NEXT_PUBLIC_DASHBOARD_SECRET || "",
+      };
+      const r1 = await fetch("/api/products/required-attrs", { method: "POST", headers, body: JSON.stringify(config) });
+      if (!r1.ok) throw new Error(`required-attrs HTTP ${r1.status}`);
+      const r2 = await fetch("/api/products/category-attributes", {
+        method: "POST", headers, body: JSON.stringify({ excluded: [...excluded] }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r2.ok) throw new Error(`excluded HTTP ${r2.status}`);
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Error");
@@ -1868,9 +1969,12 @@ function RequiredAttrsModal({ categories, onClose }: {
     }
   };
 
+  const fmtPct = (filled: number, total: number) =>
+    total === 0 ? "0%" : `${Math.round((filled / total) * 100)}%`;
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
-      <div className="rounded-2xl flex flex-col" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", maxHeight: "85vh", width: "100%", maxWidth: 900 }} onClick={(e) => e.stopPropagation()}>
+      <div className="rounded-2xl flex flex-col" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", maxHeight: "85vh", width: "100%", maxWidth: 1000 }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--border)" }}>
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Обов&apos;язкові атрибути по категоріях</div>
           <button onClick={onClose} className="px-3 py-1 rounded-lg text-xs cursor-pointer border-0" style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}>✕</button>
@@ -1878,54 +1982,146 @@ function RequiredAttrsModal({ categories, onClose }: {
 
         <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 overflow-y-auto">
           {/* Left: category list */}
-          <div>
-            <div className="text-xs font-semibold mb-2" style={{ color: "var(--text-dim)" }}>Категорія</div>
-            <div className="max-h-[60vh] overflow-y-auto rounded-lg" style={{ background: "var(--bg-input)", border: "1px solid var(--border)" }}>
-              {categories.filter((c) => c.active === 1).map((c) => {
-                const count = (config[String(c.id)] ?? []).length;
-                const isSel = c.id === catId;
-                return (
-                  <button key={c.id} onClick={() => setCatId(c.id)}
-                    className="w-full text-left px-2 py-1.5 text-xs cursor-pointer border-0 flex items-center justify-between"
-                    style={{ background: isSel ? "#118dff22" : "transparent", color: isSel ? "#118dff" : "var(--text-mid)" }}
-                    title={c.path}>
-                    <span className="truncate">{c.name}</span>
-                    {count > 0 && <span className="text-[10px] font-bold ml-2" style={{ color: "#107c10" }}>{count}</span>}
+          <div className="flex flex-col min-h-0">
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <div className="text-xs font-semibold" style={{ color: "var(--text-dim)" }}>
+                Категорія {visibleCategories.length > 0 && <span style={{ color: "var(--text-dim)" }}>({visibleCategories.length})</span>}
+              </div>
+              <div className="flex items-center gap-1">
+                {!showExcluded && exportSel.size > 0 && (
+                  <button
+                    onClick={() => setExportSel(new Set())}
+                    className="text-[10px] px-2 py-0.5 rounded cursor-pointer border-0"
+                    style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}
+                  >
+                    Очистити ({exportSel.size})
                   </button>
+                )}
+                <button
+                  onClick={() => setShowExcluded((v) => !v)}
+                  className="text-[10px] px-2 py-0.5 rounded cursor-pointer border-0"
+                  style={{ background: showExcluded ? "#d1343822" : "var(--bg-input)", color: showExcluded ? "#d13438" : "var(--text-mid)" }}
+                >
+                  {showExcluded ? `← Назад (приховано: ${excluded.size})` : `Приховані (${excluded.size})`}
+                </button>
+              </div>
+            </div>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Пошук категорії…"
+              className="px-2 py-1.5 rounded-lg text-xs mb-2 border-0 outline-none"
+              style={{ background: "var(--bg-input)", color: "var(--text)" }}
+            />
+            <div className="max-h-[55vh] overflow-y-auto rounded-lg" style={{ background: "var(--bg-input)", border: "1px solid var(--border)" }}>
+              {loading && (
+                <div className="text-xs p-4 text-center" style={{ color: "var(--text-dim)" }}>
+                  Завантаження агрегату по 31 000 товарів…
+                  <div className="mt-1 text-[10px]" style={{ color: "var(--text-dim)" }}>
+                    Перший раз ~3-5с, далі миттєво (кешується до наступної синхронізації)
+                  </div>
+                </div>
+              )}
+              {!loading && visibleCategories.length === 0 && (
+                <div className="text-xs p-4 text-center" style={{ color: "var(--text-dim)" }}>
+                  {showExcluded ? "Немає прихованих категорій" : "Немає категорій з товарами"}
+                </div>
+              )}
+              {visibleCategories.map((c) => {
+                const reqCount = (config[String(c.id)] ?? []).length;
+                const isSel = c.id === catId;
+                const inExport = exportSel.has(c.id);
+                return (
+                  <div key={c.id}
+                    className="w-full flex items-center justify-between border-b last:border-b-0"
+                    style={{ borderColor: "var(--border)", background: isSel ? "#118dff22" : "transparent" }}>
+                    {!showExcluded && (
+                      <input
+                        type="checkbox"
+                        checked={inExport}
+                        onChange={() => toggleExport(c.id)}
+                        title="Вибрати для експорту в Excel"
+                        className="ml-2 cursor-pointer"
+                        style={{ accentColor: "#107c10" }}
+                      />
+                    )}
+                    <button onClick={() => setCatId(c.id)}
+                      className="flex-1 text-left px-2 py-1.5 text-xs cursor-pointer border-0 flex items-center justify-between min-w-0"
+                      style={{ background: "transparent", color: isSel ? "#118dff" : "var(--text-mid)" }}
+                      title={c._meta?.path || ""}>
+                      <span className="truncate">{c._meta?.name || `#${c.id}`}</span>
+                      <span className="text-[10px] ml-2 flex-shrink-0" style={{ color: "var(--text-dim)" }}>
+                        {c.productCount} тов.
+                        {reqCount > 0 && <span className="ml-1 font-bold" style={{ color: "#107c10" }}>· {reqCount}★</span>}
+                      </span>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleExclude(c.id); }}
+                      title={showExcluded ? "Відновити" : "Сховати категорію"}
+                      className="px-2 py-1.5 text-[11px] cursor-pointer border-0"
+                      style={{ background: "transparent", color: showExcluded ? "#107c10" : "var(--text-dim)" }}
+                    >
+                      {showExcluded ? "↺" : "✕"}
+                    </button>
+                  </div>
                 );
               })}
             </div>
           </div>
 
           {/* Right: attributes for selected category */}
-          <div>
+          <div className="flex flex-col min-h-0">
             <div className="text-xs font-semibold mb-2" style={{ color: "var(--text-dim)" }}>
-              {catId == null ? "Виберіть категорію →" : `Атрибути з товарів цієї категорії (вибрано: ${selected.length})`}
+              {catId == null
+                ? "Виберіть категорію →"
+                : `Атрибути (${selectedCat?.attributes.length ?? 0}) · вибрано: ${selectedAttrIds.length} · товарів: ${selectedCat?.productCount ?? 0}`}
             </div>
             <div className="max-h-[60vh] overflow-y-auto rounded-lg" style={{ background: "var(--bg-input)", border: "1px solid var(--border)" }}>
-              {available.map((a) => {
-                const isSel = selected.includes(a.id);
+              {catId == null && (
+                <div className="text-xs p-4 text-center" style={{ color: "var(--text-dim)" }}>
+                  Оберіть категорію зліва щоб побачити її атрибути
+                </div>
+              )}
+              {catId != null && selectedCat && selectedCat.attributes.length === 0 && (
+                <div className="text-xs p-4 text-center" style={{ color: "var(--text-dim)" }}>
+                  У товарів цієї категорії немає заповнених атрибутів
+                </div>
+              )}
+              {catId != null && selectedCat?.attributes.map((a) => {
+                const isSel = selectedAttrIds.includes(a.id);
+                const total = selectedCat.productCount;
+                const pct = total > 0 ? (a.filledCount / total) * 100 : 0;
                 return (
-                  <button key={a.id} onClick={() => toggle(a.id)}
-                    className="w-full text-left px-2 py-1.5 text-xs cursor-pointer border-0 flex items-center justify-between"
-                    style={{ background: isSel ? "#107c1022" : "transparent", color: isSel ? "#107c10" : "var(--text-mid)" }}>
-                    <span className="truncate">{isSel ? "★" : "☆"} {a.name}</span>
-                    <span className="text-[10px] ml-2" style={{ color: "var(--text-dim)" }}>{a.usage} тов.</span>
+                  <button key={a.id} onClick={() => toggleAttr(a.id)}
+                    className="w-full text-left px-2 py-1.5 text-xs cursor-pointer border-0 flex items-center gap-2 border-b last:border-b-0"
+                    style={{ background: isSel ? "#107c1022" : "transparent", color: isSel ? "#107c10" : "var(--text-mid)", borderColor: "var(--border)" }}>
+                    <span className="flex-shrink-0">{isSel ? "★" : "☆"}</span>
+                    <span className="truncate flex-1">{a.name}</span>
+                    <span className="text-[10px] flex-shrink-0 tabular-nums" style={{ color: "var(--text-dim)" }}>
+                      {a.filledCount}/{total} · {fmtPct(a.filledCount, total)}
+                    </span>
+                    <div className="h-1 w-12 rounded flex-shrink-0 overflow-hidden" style={{ background: "var(--border)" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: pct >= 80 ? "#107c10" : pct >= 40 ? "#f7a11a" : "#d13438" }} />
+                    </div>
                   </button>
                 );
               })}
-              {catId != null && available.length === 0 && (
-                <div className="text-xs p-4 text-center" style={{ color: "var(--text-dim)" }}>
-                  Сканую перші 30 товарів категорії…
-                </div>
-              )}
             </div>
           </div>
         </div>
 
-        <div className="p-4 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+        <div className="p-4 border-t flex items-center justify-between gap-2" style={{ borderColor: "var(--border)" }}>
           {err && <span className="text-xs" style={{ color: "#d13438" }}>{err}</span>}
           <div className="flex gap-2 ml-auto">
+            <button
+              onClick={exportXlsx}
+              disabled={exporting || exportSel.size === 0}
+              title={exportSel.size === 0 ? "Виберіть категорії чекбоксами зліва" : `Вивантажити ${exportSel.size} категорій у Excel`}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer border-0 disabled:opacity-50"
+              style={{ background: "var(--bg-input)", color: "var(--text)" }}
+            >
+              {exporting ? "Готую…" : `↓ Excel (${exportSel.size})`}
+            </button>
             <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs cursor-pointer border-0" style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}>Скасувати</button>
             <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer border-0 disabled:opacity-60" style={{ background: "#107c10", color: "#fff" }}>
               {saving ? "Зберігаю…" : "Зберегти"}
@@ -1965,8 +2161,9 @@ export function ProductsCatalog() {
   // Snapshot date — null = live data, "YYYY-MM-DD" = frozen state of that day
   const [asOf, setAsOf] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
-  const [hasImages, setHasImages] = useState<"" | "true" | "false">("");
-  const [hasAttrs, setHasAttrs] = useState<"" | "true" | "false">("");
+  // "" all · "true" з фото · "false" без фото · "lt2|lt3|lt5" — менше N фото
+  const [hasImages, setHasImages] = useState<"" | "true" | "false" | "lt2" | "lt3" | "lt5">("");
+  const [hasAttrs, setHasAttrs] = useState<"" | "true" | "false" | "lt2" | "lt3" | "lt5">("");
   const [hasReviews, setHasReviews] = useState<"" | "true" | "false">("");
   const [hasSku, setHasSku] = useState<"" | "true" | "false">("");
   const [sortBy, setSortBy] = useState("firstSeenAt");
@@ -1998,8 +2195,14 @@ export function ProductsCatalog() {
       p.set(bulk.type === "code" ? "codes_in" : "refs_in", bulk.ids.join(","));
     }
     if (asOf) p.set("as_of", asOf);
-    if (hasImages) p.set("has_images", hasImages);
-    if (hasAttrs) p.set("has_attributes", hasAttrs);
+    if (hasImages === "true" || hasImages === "false") p.set("has_images", hasImages);
+    else if (hasImages === "lt2") p.set("max_images", "2");
+    else if (hasImages === "lt3") p.set("max_images", "3");
+    else if (hasImages === "lt5") p.set("max_images", "5");
+    if (hasAttrs === "true" || hasAttrs === "false") p.set("has_attributes", hasAttrs);
+    else if (hasAttrs === "lt2") p.set("max_attributes", "2");
+    else if (hasAttrs === "lt3") p.set("max_attributes", "3");
+    else if (hasAttrs === "lt5") p.set("max_attributes", "5");
     if (hasReviews) p.set("has_reviews", hasReviews);
     if (hasSku) p.set("has_sku", hasSku);
     p.set("sort_by", sortBy);
@@ -2405,13 +2608,19 @@ export function ProductsCatalog() {
           </div>
           <select value={hasImages} onChange={(e) => setHasImages(e.target.value as typeof hasImages)} style={selStyle}>
             <option value="">Фото: всі</option>
+            <option value="false">Без фото (0)</option>
+            <option value="lt2">Менше 2</option>
+            <option value="lt3">Менше 3</option>
+            <option value="lt5">Менше 5</option>
             <option value="true">Тільки з фото</option>
-            <option value="false">Без фото</option>
           </select>
           <select value={hasAttrs} onChange={(e) => setHasAttrs(e.target.value as typeof hasAttrs)} style={selStyle}>
             <option value="">Атриб.: всі</option>
+            <option value="false">Без атриб. (0)</option>
+            <option value="lt2">Менше 2</option>
+            <option value="lt3">Менше 3</option>
+            <option value="lt5">Менше 5</option>
             <option value="true">З атриб.</option>
-            <option value="false">Без атриб.</option>
           </select>
           <select value={hasReviews} onChange={(e) => setHasReviews(e.target.value as typeof hasReviews)} style={selStyle}>
             <option value="">Відгуки: всі</option>

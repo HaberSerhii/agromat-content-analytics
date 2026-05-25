@@ -94,6 +94,11 @@ export async function GET(request: Request) {
   const maxPrice = q.get("max_price") ? parseFloat(q.get("max_price")!) : null;
   const minStock = q.get("min_stock") ? parseInt(q.get("min_stock")!, 10) : null;
   const maxStock = q.get("max_stock") ? parseInt(q.get("max_stock")!, 10) : null;
+  // Photo-count threshold: keep only products with imagesCount < maxImages.
+  // Lets the catalog flag "products needing more photos" (e.g. < 2).
+  const maxImages = q.get("max_images") ? parseInt(q.get("max_images")!, 10) : null;
+  // Attribute-count threshold: keep only products with attributesCount < maxAttributes.
+  const maxAttributes = q.get("max_attributes") ? parseInt(q.get("max_attributes")!, 10) : null;
 
   // Bulk-id filter: user pastes a list of codes or goods_refs (whitespace/comma
   // separated) → we filter to that exact set and report which inputs we couldn't find.
@@ -143,8 +148,10 @@ export async function GET(request: Request) {
     }
     if (hasImages === true && p.imagesCount === 0) return false;
     if (hasImages === false && p.imagesCount > 0) return false;
+    if (maxImages != null && p.imagesCount >= maxImages) return false;
     if (hasAttributes === true && p.attributesCount === 0) return false;
     if (hasAttributes === false && p.attributesCount > 0) return false;
+    if (maxAttributes != null && p.attributesCount >= maxAttributes) return false;
     if (hasReviews === true && p.reviewsCount === 0) return false;
     if (hasReviews === false && p.reviewsCount > 0) return false;
     if (hasSku === true && (!p.sku || !p.sku.trim())) return false;

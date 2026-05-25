@@ -16,7 +16,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {process.env.UPSTASH_REDIS_REST_URL && (
           <link rel="preconnect" href={new URL(process.env.UPSTASH_REDIS_REST_URL).origin} crossOrigin="anonymous" />
         )}
-        <link rel="preconnect" href="http://91.239.233.125:8080" />
         <link rel="preconnect" href="https://images-shop.agromat.ua" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://www.agromat.ua" crossOrigin="anonymous" />
       </head>

@@ -18,7 +18,10 @@ const ProductsCatalog = dynamic(
   },
 );
 
-const PARCER_URL = process.env.NEXT_PUBLIC_PARCER_URL || "http://91.239.233.125:8080/";
+// Default points at a same-origin nginx location (`/parcer/` → 127.0.0.1:8080
+// internally on the VPS). Override via NEXT_PUBLIC_PARCER_URL for local dev
+// where Flask is reachable directly (e.g. http://91.239.233.125:8080/).
+const PARCER_URL = process.env.NEXT_PUBLIC_PARCER_URL || "/parcer/";
 
 // Renders both tabs in a single persistent shell hosted by the root layout.
 // CSS visibility swaps based on pathname → iframe and catalog stay mounted

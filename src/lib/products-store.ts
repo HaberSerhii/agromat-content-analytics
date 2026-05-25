@@ -143,6 +143,8 @@ const K = {
   filtersAt: "products:filters:syncedAt",
   syncState: "products:sync:state",
   requiredAttrs: "products:required_attrs",
+  excludedCategories: "products:excluded_categories",
+  categoryAttrsAggregate: "products:category_attrs_aggregate",
   // Per-day snapshots — copy of the lite snapshot keyed by ISO date (YYYY-MM-DD).
   // Used by the dashboard's "view state on day X" picker.
   snapShard: (date: string, n: number) => `products:snap:${date}:p${n}`,
@@ -383,6 +385,120 @@ export async function readRequiredAttrs(): Promise<RequiredAttrsConfig> {
 export async function writeRequiredAttrs(cfg: RequiredAttrsConfig): Promise<void> {
   const redis = getRedis();
   await redis.set(K.requiredAttrs, JSON.stringify(cfg));
+}
+
+// ── Excluded categories ─────────────────────────────────────────────────────
+// User-curated list of category ids to hide from the "Required attributes" modal
+// (e.g. obsolete or auxiliary categories the user doesn't want to configure).
+export async function readExcludedCategories(): Promise<number[]> {
+  const redis = getRedis();
+  const raw = (await redis.get(K.excludedCategories)) as string | null;
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.map((x) => Number(x)).filter((n) => Number.isFinite(n));
+  } catch { return []; }
+}
+
+export async function writeExcludedCategories(ids: number[]): Promise<void> {
+  const redis = getRedis();
+  await redis.set(K.excludedCategories, JSON.stringify(ids));
+}
+
+// ── Category × attribute fill aggregate ─────────────────────────────────────
+// Pre-computed during sync from the full product set. Powers the
+// "Required attributes" modal — replaces a slow client-side scan of 30
+// product details with a single cached lookup.
+export interface CategoryAttrAggregate {
+  syncedAt: string;
+  categories: {
+    id: number;
+    productCount: number;
+    attributes: { id: number; name: string; filledCount: number }[];
+  }[];
+}
+
+export async function readCategoryAttrsAggregate(): Promise<CategoryAttrAggregate | null> {
+  const redis = getRedis();
+  const raw = (await redis.get(K.categoryAttrsAggregate)) as string | null;
+  if (!raw) return null;
+  try { return JSON.parse(raw) as CategoryAttrAggregate; } catch { return null; }
+}
+
+export async function writeCategoryAttrsAggregate(agg: CategoryAttrAggregate): Promise<void> {
+  const redis = getRedis();
+  await redis.set(K.categoryAttrsAggregate, JSON.stringify(agg));
+}
+
+// On-demand backfill: read all full shards from Redis and aggregate. Used by
+// the API route when sync hasn't written the aggregate yet (first deploy of
+// this feature). Uses a single Redis pipeline to batch 200 GETs into one
+// HTTP round-trip — ~2-3s on Upstash REST vs. ~15-20s for 20-parallel GETs.
+export async function backfillCategoryAttrsAggregate(): Promise<CategoryAttrAggregate | null> {
+  const redis = getRedis();
+  const syncedAtRaw = (await redis.get(K.liteSyncAt)) as string | null;
+  const syncedAt = syncedAtRaw || new Date().toISOString();
+
+  const pipe = redis.pipeline();
+  for (let i = 0; i < FULL_SHARD_COUNT; i++) pipe.get(K.fullShard(i));
+  const raws = (await pipe.exec()) as (string | null)[];
+
+  const byCat = new Map<number, { count: number; attrs: Map<number, { name: string; count: number }> }>();
+  let any = false;
+  for (const raw of raws) {
+    if (!raw) continue;
+    try {
+      const shard = JSON.parse(raw) as ProductFull[];
+      for (const p of shard) {
+        any = true;
+        let bucket = byCat.get(p.categoryId);
+        if (!bucket) { bucket = { count: 0, attrs: new Map() }; byCat.set(p.categoryId, bucket); }
+        bucket.count++;
+        for (const a of p.attributes || []) {
+          if (!a.values || a.values.length === 0) continue;
+          const e = bucket.attrs.get(a.id) ?? { name: a.name, count: 0 };
+          e.count++;
+          bucket.attrs.set(a.id, e);
+        }
+      }
+    } catch { /* skip corrupt shard */ }
+  }
+  if (!any) return null;
+  const categories = [...byCat.entries()].map(([id, b]) => ({
+    id,
+    productCount: b.count,
+    attributes: [...b.attrs.entries()]
+      .map(([aid, v]) => ({ id: aid, name: v.name, filledCount: v.count }))
+      .sort((x, y) => y.filledCount - x.filledCount),
+  }));
+  return { syncedAt, categories };
+}
+
+// Build the aggregate from a list of full product records. Pure function —
+// reusable by both the sync path and the on-demand backfill in the API route.
+export function buildCategoryAttrsAggregate(fulls: ProductFull[], syncedAt: string): CategoryAttrAggregate {
+  // categoryId → (attrId → { name, count })
+  const byCat = new Map<number, { count: number; attrs: Map<number, { name: string; count: number }> }>();
+  for (const p of fulls) {
+    let bucket = byCat.get(p.categoryId);
+    if (!bucket) { bucket = { count: 0, attrs: new Map() }; byCat.set(p.categoryId, bucket); }
+    bucket.count++;
+    for (const a of p.attributes || []) {
+      if (!a.values || a.values.length === 0) continue;
+      const e = bucket.attrs.get(a.id) ?? { name: a.name, count: 0 };
+      e.count++;
+      bucket.attrs.set(a.id, e);
+    }
+  }
+  const categories = [...byCat.entries()].map(([id, b]) => ({
+    id,
+    productCount: b.count,
+    attributes: [...b.attrs.entries()]
+      .map(([aid, v]) => ({ id: aid, name: v.name, filledCount: v.count }))
+      .sort((x, y) => y.filledCount - x.filledCount),
+  }));
+  return { syncedAt, categories };
 }
 
 // ── Per-day snapshots ────────────────────────────────────────────────────────

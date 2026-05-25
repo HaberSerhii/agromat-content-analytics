@@ -19,6 +19,8 @@ import {
   writeSyncState,
   readAllComparable,
   appendChangesBulk,
+  buildCategoryAttrsAggregate,
+  writeCategoryAttrsAggregate,
 } from "@/lib/products-store";
 
 const MAX_STATUS_HISTORY = 20;
@@ -275,6 +277,14 @@ export async function runSync(): Promise<SyncState> {
       await writeAllFull(fulls);
     } catch (e) {
       console.warn("[products-sync] writeAllFull failed (drill-downs will fetch live):", e instanceof Error ? e.message : e);
+    }
+
+    // Category × attribute fill aggregate — powers the "Required attributes"
+    // modal with a single cached lookup instead of a 30-product live scan.
+    try {
+      await writeCategoryAttrsAggregate(buildCategoryAttrsAggregate(fulls, startedAt));
+    } catch (e) {
+      console.warn("[products-sync] writeCategoryAttrsAggregate failed:", e instanceof Error ? e.message : e);
     }
 
     // Per-day snapshot for the "view state on day X" picker. Best-effort.
