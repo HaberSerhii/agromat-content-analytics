@@ -17,8 +17,18 @@ PM2_NAME="${PM2_NAME:-}"   # leave empty → auto-detect by cwd
   echo
   echo "════════════════════════════════════════════════════════════"
   echo "▸ deploy started: $(date -Iseconds)"
-  echo "▸ app dir: $APP_DIR"
   cd "$APP_DIR"
+  # When invoked by /api/admin/deploy, $APP_DIR points at process.cwd() which
+  # for a Next.js standalone build is `.next/standalone/` — NOT the repo root.
+  # Walk up until we find .git so git pull / npm install operate on the source
+  # tree, not the runtime artifacts.
+  while [ "$PWD" != "/" ] && [ ! -d ".git" ]; do cd ..; done
+  if [ ! -d ".git" ]; then
+    echo "❌ Could not locate git root from $APP_DIR"
+    exit 1
+  fi
+  APP_DIR="$PWD"
+  echo "▸ app dir: $APP_DIR"
 
   echo "▸ git fetch + reset"
   git fetch --quiet origin main
@@ -30,6 +40,17 @@ PM2_NAME="${PM2_NAME:-}"   # leave empty → auto-detect by cwd
 
   echo "▸ npm run build"
   npm run build
+
+  # Next.js standalone output needs static/ + public/ + .env copied into the
+  # standalone tree — `next build` does not do this automatically. Mirrors the
+  # legacy /opt/.../deploy.sh on the VPS.
+  if [ -d ".next/standalone" ]; then
+    echo "▸ copy static/public/.env into standalone"
+    mkdir -p .next/standalone/public
+    cp -r .next/static .next/standalone/.next/
+    [ -d public ] && cp -r public/. .next/standalone/public/
+    [ -f .env ] && cp .env .next/standalone/
+  fi
 
   echo "▸ pm2 restart"
   if [ -z "$PM2_NAME" ]; then
