@@ -35,8 +35,11 @@ PM2_NAME="${PM2_NAME:-}"   # leave empty → auto-detect by cwd
   git reset --hard origin/main
   echo "  HEAD: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
-  echo "▸ npm install"
-  npm install --no-audit --no-fund
+  echo "▸ npm ci (clean install from lockfile)"
+  # Use `ci` not `install` — deterministic and recovers from prior broken state.
+  # `next build` is sensitive to stale/mismatched deps (e.g. emits
+  # "[TypeError: generate is not a function]" if incremental install left junk).
+  npm ci --no-audit --no-fund
 
   echo "▸ npm run build"
   npm run build
