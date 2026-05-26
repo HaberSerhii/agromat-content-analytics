@@ -2568,12 +2568,13 @@ function CompetitorPricesView() {
   const totalPages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1;
 
   // Mass-reparse: start the job, then poll its status every 5s until done.
-  // Auto-refetches the table when the job finishes.
-  const startBulkSantechshara = useCallback(async () => {
+  // Auto-refetches the table when the job finishes. Generic over competitor —
+  // Flask exposes prices-vencon / prices-teploradost / prices-santechshara.
+  const startBulk = useCallback(async (adapter: "vencon" | "teploradost" | "santechshara") => {
     setBulkStarting(true);
     setError("");
     try {
-      const resp = await fetch("/api/parser/run/prices-santechshara", { method: "POST" });
+      const resp = await fetch(`/api/parser/run/prices-${adapter}`, { method: "POST" });
       const json = await resp.json();
       if (!json.ok) {
         if (json.error === "busy" && json.active_job_id) {
@@ -2584,7 +2585,11 @@ function CompetitorPricesView() {
         }
         return;
       }
-      setJob({ ok: true, job_id: json.job_id, status: "starting", current: 0, total: 0 });
+      setJob({
+        ok: true, job_id: json.job_id, status: "starting",
+        current: 0, total: 0,
+        action: `prices-${adapter}`,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "network error");
     } finally {
@@ -2629,14 +2634,26 @@ function CompetitorPricesView() {
             Знімок цін за <b style={{ color: "var(--text-mid)" }}>{data.snapshotDate}</b>
           </span>
         )}
-        <button
-          onClick={startBulkSantechshara}
-          disabled={bulkStarting || (job?.status === "running" || job?.status === "starting")}
-          className="ml-auto px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border disabled:opacity-60"
-          style={{ background: "#8e44ad11", color: "#8e44ad", borderColor: "#8e44ad55" }}
-          title="Запустити фоновий live-парсинг усіх товарів у Сантехшарі через headless Chrome. ~45 хв.">
-          {bulkStarting ? "Стартую…" : "↻↻ Оновити всю Сантехшару live"}
-        </button>
+        {/* Three mass-reparse buttons, one per competitor. Only one Flask job
+            can run at a time (semaphored in app.py), so all three are
+            disabled while ANY job is in flight. */}
+        <div className="ml-auto flex gap-1 flex-wrap">
+          {([
+            { adapter: "vencon",       label: "Vencon",       color: "#118dff", title: "Live-парсинг усіх товарів у Vencon (~45 хв через REQUEST_DELAY 1.5с)" },
+            { adapter: "teploradost",  label: "Теплорадість", color: "#107c10", title: "Live-парсинг усіх товарів у Теплорадості (~45 хв)" },
+            { adapter: "santechshara", label: "Сантехшара",   color: "#8e44ad", title: "Запустити фоновий обхід усіх товарів у Сантехшарі. Без Playwright — читає кеш." },
+          ] as const).map((c) => (
+            <button
+              key={c.adapter}
+              onClick={() => startBulk(c.adapter)}
+              disabled={bulkStarting || (job?.status === "running" || job?.status === "starting")}
+              className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border disabled:opacity-60 whitespace-nowrap"
+              style={{ background: `${c.color}11`, color: c.color, borderColor: `${c.color}55` }}
+              title={c.title}>
+              ↻↻ {c.label}
+            </button>
+          ))}
+        </div>
         <button onClick={load}
           className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
           style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
@@ -2796,9 +2813,21 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
     eta = m > 0 ? `~${m} хв ${s} с` : `~${s} с`;
   }
 
-  const bg = failed ? "#d1343811" : done ? "#107c1011" : "#8e44ad11";
-  const border = failed ? "#d13438aa" : done ? "#107c10aa" : "#8e44ad55";
-  const accent = failed ? "#d13438" : done ? "#107c10" : "#8e44ad";
+  // Action is "prices-<adapter>"; map to a human label + colour matching the
+  // table header so the user knows which competitor is being processed
+  // without parsing strings themselves.
+  const adapter = (job.action || "").replace(/^prices-/, "");
+  const ADAPTERS: Record<string, { label: string; color: string }> = {
+    vencon:       { label: "Vencon",       color: "#118dff" },
+    teploradost:  { label: "Теплорадість", color: "#107c10" },
+    santechshara: { label: "Сантехшара",   color: "#8e44ad" },
+  };
+  const runColor = ADAPTERS[adapter]?.color || "#8e44ad";
+  const runLabel = ADAPTERS[adapter]?.label || adapter || "—";
+
+  const bg = failed ? "#d1343811" : done ? "#107c1011" : `${runColor}11`;
+  const border = failed ? "#d13438aa" : done ? "#107c10aa" : `${runColor}55`;
+  const accent = failed ? "#d13438" : done ? "#107c10" : runColor;
 
   // Flattened orchestrator summary (only meaningful when status === "done").
   const r = job.result || null;
@@ -2810,8 +2839,8 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
           {failed
             ? `❌ Помилка: ${job.error || "unknown"}`
             : done
-              ? `✓ Завершено: оброблено ${current}${total ? ` / ${total}` : ""} товарів`
-              : `↻↻ Live-парсинг Сантехшари ${job.label ? `· ${job.label}` : ""}`}
+              ? `✓ ${runLabel} — оброблено ${current}${total ? ` / ${total}` : ""} товарів`
+              : `↻↻ Парсинг ${runLabel} ${job.label ? `· ${job.label}` : ""}`}
         </span>
         <span className="text-[11px] tabular-nums" style={{ color: accent }}>
           {!done && !failed && total > 0 && <>{current} / {total} · {pct}%</>}
