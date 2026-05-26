@@ -2453,7 +2453,20 @@ interface PricesResponse {
 }
 
 // Mass-reparse job status returned by /api/parser/job/<id>. Mirrors Flask's
-// _jobs payload shape from Agromat_Parcer/app.py.
+// _jobs payload shape from Agromat_Parcer/app.py. On completion `result`
+// carries a flattened orchestrator summary — Flask collapses list fields
+// to their length before serializing, so e.g. `errors` is a count not array.
+interface ParserJobResult {
+  total_products?: number;
+  total_processed?: number;
+  total_found?: number;
+  errors?: number;
+  new_finds?: number;
+  price_changes?: number;
+  price_dist?: { higher?: number; lower?: number; equal?: number };
+  mode?: string;
+  competitor_filter?: string | null;
+}
 interface ParserJob {
   ok: boolean;
   job_id?: string;
@@ -2465,6 +2478,7 @@ interface ParserJob {
   started_at?: number;
   finished_at?: number | null;
   error?: string | null;
+  result?: ParserJobResult | null;
 }
 
 function CompetitorPricesView() {
@@ -2786,6 +2800,9 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
   const border = failed ? "#d13438aa" : done ? "#107c10aa" : "#8e44ad55";
   const accent = failed ? "#d13438" : done ? "#107c10" : "#8e44ad";
 
+  // Flattened orchestrator summary (only meaningful when status === "done").
+  const r = job.result || null;
+
   return (
     <div className="mb-3 p-3 rounded-lg" style={{ background: bg, border: `1px solid ${border}` }}>
       <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
@@ -2817,7 +2834,38 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
           }}
         />
       </div>
+      {/* Summary breakdown on completion. Flask collapses orchestrator list
+          fields to their lengths, so `errors`, `new_finds`, `price_changes`
+          are counts. price_dist tells us how many came out cheaper / equal /
+          higher than our price — useful for a quick "who wins" glance. */}
+      {done && r && (
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] tabular-nums">
+          <Stat label="Знайдено цін" value={r.total_found} color="#107c10" />
+          <Stat label="Нових (раніше не було ціни)" value={r.new_finds} color="#118dff" />
+          <Stat label="Ціна змінилась" value={r.price_changes} color="#e66c37" />
+          <Stat label="Помилок" value={r.errors} color="#d13438" />
+          {r.price_dist && (r.price_dist.lower || r.price_dist.higher || r.price_dist.equal) && (
+            <span style={{ color: "var(--text-dim)" }}>
+              · <span style={{ color: "#d13438" }}>{r.price_dist.lower ?? 0} дешевше</span>
+              {" · "}
+              <span style={{ color: "var(--text-mid)" }}>{r.price_dist.equal ?? 0} ≈</span>
+              {" · "}
+              <span style={{ color: "#107c10" }}>{r.price_dist.higher ?? 0} дорожче нас</span>
+            </span>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: number | undefined; color: string }) {
+  if (value == null) return null;
+  return (
+    <span>
+      <b style={{ color }}>{fmtNum(value)}</b>{" "}
+      <span style={{ color: "var(--text-dim)" }}>{label}</span>
+    </span>
   );
 }
 
