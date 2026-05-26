@@ -45,11 +45,13 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
 
   # Wipe any stale build artefacts BEFORE install. `next build` emits the
   # cryptic "[TypeError: generate is not a function]" when it tries to reuse
-  # a partial .next/ from a prior failed build — clearing it makes the build
-  # deterministic at the cost of ~30s of compile time.
-  CURRENT_STEP="clean .next/"
+  # a partial .next/ OR a half-installed node_modules from a prior failed
+  # build. `npm ci` is supposed to wipe node_modules on its own but on this
+  # VPS we've consistently seen it skip files — wipe it explicitly. Cost:
+  # ~30–40s extra per deploy, worth it for determinism.
+  CURRENT_STEP="clean .next/ + node_modules"
   echo "▸ $CURRENT_STEP"
-  rm -rf .next
+  rm -rf .next node_modules
 
   CURRENT_STEP="npm ci (clean install from lockfile)"
   echo "▸ $CURRENT_STEP"
