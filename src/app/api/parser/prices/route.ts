@@ -1,7 +1,18 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
+
+// PostgREST returns at most 1000 rows per request by default; the catalog
+// has ~3K active products and ~1850 snapshots/day, so we MUST page through
+// every list query. Helpers below page until the response is short.
+
+const PAGE = 1000;
+// PostgREST .in() encodes its argument list into the URL; an unbounded
+// product-id list can blow past the nginx URL-length limit. Split into
+// modest chunks — for a few thousand products this is 4–7 round trips.
+const ID_CHUNK = 500;
 
 interface Competitor {
   id: number;
@@ -52,6 +63,53 @@ function parseIntOr(v: string | null, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+async function fetchAllSnapshotsForDate(
+  db: SupabaseClient, snapshotDate: string,
+): Promise<SnapshotRow[]> {
+  const out: SnapshotRow[] = [];
+  let from = 0;
+  // Bounded at 50 pages = 50k rows defensively in case of pathological data.
+  for (let i = 0; i < 50; i++) {
+    const { data, error } = await db
+      .from("price_snapshots")
+      .select("product_id, competitor_id, price, status, found_url")
+      .eq("snapshot_date", snapshotDate)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data || []) as SnapshotRow[];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
+async function fetchProductsByIds(
+  db: SupabaseClient, ids: number[], search: string,
+): Promise<ProductRow[]> {
+  if (ids.length === 0) return [];
+  const out: ProductRow[] = [];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK);
+    let q = db
+      .from("products")
+      .select("id, sku, name, brand, category, actual_price, url, agromat_status")
+      .eq("is_active", true)
+      .in("id", chunk)
+      // A single chunk can never overflow because chunk ≤ 500 ≤ PAGE; but
+      // set range explicitly to be safe under future schema changes.
+      .range(0, PAGE - 1);
+    if (search) {
+      const like = `%${search}%`;
+      q = q.or(`name.ilike.${like},sku.ilike.${like}`);
+    }
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    out.push(...((data || []) as ProductRow[]));
+  }
+  return out;
+}
+
 export async function GET(request: Request) {
   const q = new URL(request.url).searchParams;
   const search = (q.get("search") || "").trim().toLowerCase();
@@ -61,15 +119,12 @@ export async function GET(request: Request) {
 
   const db = getSupabase();
 
-  // 1) Competitors — usually 3 rows, cache via Supabase. Sorted to keep column
-  //    order stable across requests.
+  // 1) Competitors — usually 3 rows, sorted for stable column order.
   const { data: competitorsRaw, error: cErr } = await db
     .from("competitors")
     .select("id, name, adapter_name")
     .order("id", { ascending: true });
-  if (cErr) {
-    return NextResponse.json({ error: cErr.message }, { status: 500 });
-  }
+  if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
   const competitors = (competitorsRaw || []) as Competitor[];
 
   // 2) Resolve effective snapshot_date — explicit param wins, otherwise pick
@@ -85,35 +140,20 @@ export async function GET(request: Request) {
   }
 
   // 3) Snapshots for the chosen date — one row per (product, competitor).
+  //    Paged to bypass PostgREST's default 1000-row cap.
   let snapshots: SnapshotRow[] = [];
   if (effectiveDate) {
-    const { data: snapRows, error: sErr } = await db
-      .from("price_snapshots")
-      .select("product_id, competitor_id, price, status, found_url")
-      .eq("snapshot_date", effectiveDate);
-    if (sErr) {
-      return NextResponse.json({ error: sErr.message }, { status: 500 });
+    try {
+      snapshots = await fetchAllSnapshotsForDate(db, effectiveDate);
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "snapshots_failed" }, { status: 500 });
     }
-    snapshots = (snapRows || []) as SnapshotRow[];
   }
 
-  // 4) Restrict to products that have at least one competitor entry — keeps
+  // 4) Restrict to products that have at least one competitor snapshot — keeps
   //    the table dense and the page count meaningful.
-  const productIdsWithSnap = new Set(snapshots.map((s) => s.product_id));
-  const productIdList = [...productIdsWithSnap];
-
-  // Supabase has no UPSERT-like batched IN with large lists in the JS client
-  // beyond ~1000 items, but the parser's product table is in the low thousands
-  // so `.in()` is safe here.
-  let productsQuery = db
-    .from("products")
-    .select("id, sku, name, brand, category, actual_price, url, agromat_status")
-    .eq("is_active", true);
-
-  if (productIdList.length > 0) {
-    productsQuery = productsQuery.in("id", productIdList);
-  } else {
-    // Empty: return an empty page rather than every product.
+  const productIdList = [...new Set(snapshots.map((s) => s.product_id))];
+  if (productIdList.length === 0) {
     return NextResponse.json({
       snapshotDate: effectiveDate,
       competitors,
@@ -124,17 +164,12 @@ export async function GET(request: Request) {
     });
   }
 
-  if (search) {
-    // Search by name OR sku — case-insensitive partial match.
-    const like = `%${search}%`;
-    productsQuery = productsQuery.or(`name.ilike.${like},sku.ilike.${like}`);
+  let products: ProductRow[];
+  try {
+    products = await fetchProductsByIds(db, productIdList, search);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
   }
-
-  const { data: productsRaw, error: pErr } = await productsQuery;
-  if (pErr) {
-    return NextResponse.json({ error: pErr.message }, { status: 500 });
-  }
-  const products = (productsRaw || []) as ProductRow[];
 
   // 5) Index snapshots by product → competitor for O(1) cell lookup.
   const cellByProduct = new Map<number, Map<number, CompetitorCell>>();
