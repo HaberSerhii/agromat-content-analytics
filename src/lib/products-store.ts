@@ -86,6 +86,14 @@ export type ChangeEvent =
       toCount: number;
       addedUrls: string[];
       removedUrls: string[];
+    }
+  | {
+      at: string;
+      field: "reviews";
+      fromCount: number;
+      toCount: number;
+      fromRating: number | null;
+      toRating: number | null;
     };
 
 // Compact projection of ProductFull, used as the "previous state" we diff
@@ -102,6 +110,8 @@ export interface ProductComparable {
   sku: string | null;
   attributes: { id: number; name: string; values: string[] }[];
   imageUrls: string[];
+  reviewsCount: number;
+  ratingAvg: number | null;
 }
 
 export interface SyncState {
@@ -153,7 +163,160 @@ const K = {
   snapDates: "products:snap:dates",          // sorted set, score=timestamp
   // Per-product change-event log. Written incrementally by sync.
   changes: (id: number) => `products:changes:${id}`,
+  // Global cross-product timeline per group. Sorted set: score = epoch ms,
+  // member = denormalized JSON (TimelineEvent). Trimmed to last 30 days at
+  // each sync. Powers the "Хронологія змін" dashboard view.
+  timeline: (group: TimelineGroup) => `products:timeline:${group}`,
 };
+
+// ── Cross-product timeline ──────────────────────────────────────────────────
+// One zset per "change group" so the dashboard can render Фото/Атрибути/Відгуки/
+// Артикул/Ціни as separate tabs without scanning everything. Members are JSON-
+// encoded TimelineEvent objects with denormalized product fields so each row
+// renders without an extra per-product lookup.
+export type TimelineGroup = "photos" | "attributes" | "reviews" | "sku" | "prices";
+
+export const TIMELINE_GROUPS: TimelineGroup[] = ["photos", "attributes", "reviews", "sku", "prices"];
+
+export interface TimelineEvent {
+  at: string;              // ISO of the sync that detected the change
+  productId: number;
+  productName: string;
+  productUrl: string;
+  categoryId: number;
+  categoryName: string;
+  statusId: number;
+  statusName: string;
+  firstSeenAt: string;     // denormalized — used to filter out currently-NEW products
+  group: TimelineGroup;
+  // group-specific fields (only the relevant subset is populated per row)
+  fromCount?: number;
+  toCount?: number;
+  // photos
+  addedUrls?: string[];
+  removedUrls?: string[];
+  // attributes (counts only here — full diff is in the per-product log)
+  attrAdded?: number;
+  attrRemoved?: number;
+  attrChanged?: number;
+  // sku
+  fromSku?: string | null;
+  toSku?: string | null;
+  // prices
+  fromPrice?: number | null;
+  toPrice?: number | null;
+  currency?: string;
+  // reviews
+  fromRating?: number | null;
+  toRating?: number | null;
+}
+
+const TIMELINE_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Bulk-write timeline events grouped by their group. Trims each touched zset
+// to the last 30 days by removing entries with score below the cutoff.
+// Best-effort: failure here does not break sync or the per-product log.
+export async function writeTimelineEvents(events: TimelineEvent[]): Promise<void> {
+  if (events.length === 0) return;
+  const redis = getRedis();
+  const byGroup = new Map<TimelineGroup, { score: number; member: string }[]>();
+  for (const ev of events) {
+    const score = Date.parse(ev.at);
+    if (!Number.isFinite(score)) continue;
+    const arr = byGroup.get(ev.group) ?? [];
+    arr.push({ score, member: JSON.stringify(ev) });
+    byGroup.set(ev.group, arr);
+  }
+  const cutoff = Date.now() - TIMELINE_KEEP_MS;
+  const ops: Promise<unknown>[] = [];
+  for (const [group, items] of byGroup) {
+    if (items.length === 0) continue;
+    const [first, ...rest] = items;
+    ops.push(redis.zadd(K.timeline(group), first, ...rest));
+    ops.push(redis.zremrangebyscore(K.timeline(group), 0, cutoff));
+  }
+  await Promise.all(ops);
+}
+
+export interface TimelineQuery {
+  group: TimelineGroup;
+  sinceMs?: number;     // inclusive
+  untilMs?: number;     // inclusive
+  limit?: number;       // default 50
+  offset?: number;      // default 0
+  sort?: "asc" | "desc"; // default desc (newest first)
+  excludeNewFirstSeenAt?: string | null; // events with firstSeenAt === this are dropped
+}
+
+export interface TimelineResult {
+  events: TimelineEvent[];
+  total: number;       // total matching (before paging) — best-effort
+}
+
+export async function readTimeline(q: TimelineQuery): Promise<TimelineResult> {
+  const redis = getRedis();
+  const key = K.timeline(q.group);
+  const min = q.sinceMs ?? 0;
+  const max = q.untilMs ?? Date.now() + 60_000; // small slack
+  const sort: "asc" | "desc" = q.sort ?? "desc";
+  // Fetch full range first — Upstash REST doesn't support paged zrangebyscore
+  // efficiently here, and timelines are bounded to ~50k. Filter+slice in JS.
+  const raws = (await redis.zrange(key, min, max, {
+    byScore: true,
+    rev: sort === "desc",
+  })) as string[];
+  const parsed: TimelineEvent[] = [];
+  for (const raw of raws) {
+    try {
+      parsed.push(JSON.parse(raw) as TimelineEvent);
+    } catch { /* skip corrupt */ }
+  }
+  // Filter out events whose product is currently marked NEW (firstSeenAt is
+  // the latest sync time). The denormalized firstSeenAt was captured at the
+  // event's sync but never changes per product, so this comparison is stable.
+  const filtered = q.excludeNewFirstSeenAt
+    ? parsed.filter((e) => e.firstSeenAt !== q.excludeNewFirstSeenAt)
+    : parsed;
+  const total = filtered.length;
+  const limit = q.limit ?? 50;
+  const offset = q.offset ?? 0;
+  const events = filtered.slice(offset, offset + limit);
+  return { events, total };
+}
+
+// Per-group counts (matching the same excludeNew filter). Used for the tab
+// badges in the Хронологія view. Cheap — one zrange per group; results are
+// already bounded by the 30-day trim.
+export async function readTimelineCounts(
+  excludeNewFirstSeenAt: string | null,
+  sinceMs?: number,
+  untilMs?: number,
+): Promise<Record<TimelineGroup, number>> {
+  const redis = getRedis();
+  const min = sinceMs ?? 0;
+  const max = untilMs ?? Date.now() + 60_000;
+  const pipe = redis.pipeline();
+  for (const g of TIMELINE_GROUPS) {
+    pipe.zrange(K.timeline(g), min, max, { byScore: true });
+  }
+  const results = (await pipe.exec()) as string[][];
+  const out: Record<TimelineGroup, number> = {
+    photos: 0, attributes: 0, reviews: 0, sku: 0, prices: 0,
+  };
+  TIMELINE_GROUPS.forEach((g, i) => {
+    const arr = results[i] || [];
+    if (!excludeNewFirstSeenAt) { out[g] = arr.length; return; }
+    let n = 0;
+    for (const raw of arr) {
+      try {
+        const e = JSON.parse(raw) as TimelineEvent;
+        if (e.firstSeenAt !== excludeNewFirstSeenAt) n++;
+      } catch { /* skip */ }
+    }
+    out[g] = n;
+  });
+  return out;
+}
 
 const SNAPSHOT_KEEP_DAYS = 14;
 
@@ -634,6 +797,8 @@ export async function readAllComparable(): Promise<Map<number, ProductComparable
           sku: p.sku,
           attributes: p.attributes.map((a) => ({ id: a.id, name: a.name, values: [...a.values] })),
           imageUrls: p.images.map((i) => i.url),
+          reviewsCount: p.reviews?.length ?? 0,
+          ratingAvg: p.ratingAvg,
         });
       }
     } catch { /* skip corrupt shard */ }

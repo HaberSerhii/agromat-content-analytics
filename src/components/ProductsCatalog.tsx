@@ -2133,6 +2133,299 @@ function RequiredAttrsModal({ categories, onClose }: {
   );
 }
 
+// ── Changes timeline view ───────────────────────────────────────────────────
+// Cross-product change history. Pulls from /api/products/changes which reads
+// per-group sorted sets populated by sync. Splits events into 5 sub-tabs.
+type TimelineGroupKey = "photos" | "attributes" | "reviews" | "sku" | "prices";
+
+interface TimelineEventResp {
+  at: string;
+  productId: number;
+  productName: string;
+  productUrl: string;
+  categoryId: number;
+  categoryName: string;
+  statusId: number;
+  statusName: string;
+  firstSeenAt: string;
+  group: TimelineGroupKey;
+  fromCount?: number;
+  toCount?: number;
+  addedUrls?: string[];
+  removedUrls?: string[];
+  attrAdded?: number;
+  attrRemoved?: number;
+  attrChanged?: number;
+  fromSku?: string | null;
+  toSku?: string | null;
+  fromPrice?: number | null;
+  toPrice?: number | null;
+  currency?: string;
+  fromRating?: number | null;
+  toRating?: number | null;
+}
+
+interface TimelineResponse {
+  group: TimelineGroupKey;
+  events: TimelineEventResp[];
+  total: number;
+  counts: Record<TimelineGroupKey, number>;
+  limit: number;
+  offset: number;
+  sort: "asc" | "desc";
+  syncedAt: string | null;
+}
+
+function ChangesTimelineView() {
+  const [group, setGroup] = useState<TimelineGroupKey>("photos");
+  const [sort, setSort] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [limit] = useState(50);
+  // Date range — default: last 7 days. Both endpoints inclusive.
+  const today = new Date().toISOString().slice(0, 10);
+  const sevenAgo = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+  const [since, setSince] = useState<string>(sevenAgo);
+  const [until, setUntil] = useState<string>(today);
+  const [data, setData] = useState<TimelineResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => { setPage(1); }, [group, sort, since, until]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set("group", group);
+    params.set("limit", String(limit));
+    params.set("offset", String((page - 1) * limit));
+    params.set("sort", sort);
+    if (since) params.set("since", `${since}T00:00:00.000Z`);
+    if (until) params.set("until", `${until}T23:59:59.999Z`);
+    setLoading(true); setError("");
+    fetch(`/api/products/changes?${params.toString()}`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: TimelineResponse) => setData(d))
+      .catch((e) => setError(e instanceof Error ? e.message : "Error"))
+      .finally(() => setLoading(false));
+  }, [group, sort, since, until, page, limit]);
+
+  const tabs: { key: TimelineGroupKey; label: string; color: string }[] = [
+    { key: "photos",     label: "Фото",      color: "#d13438" },
+    { key: "attributes", label: "Атрибути",  color: "#d9b300" },
+    { key: "reviews",    label: "Відгуки",   color: "#107c10" },
+    { key: "sku",        label: "Артикул",   color: "#8e44ad" },
+    { key: "prices",     label: "Ціни",      color: "#118dff" },
+  ];
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1;
+
+  return (
+    <Card>
+      {/* Sub-tabs */}
+      <div className="flex gap-1 mb-3 flex-wrap rounded-xl p-0.5" style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
+        {tabs.map((t) => {
+          const active = t.key === group;
+          const count = data?.counts[t.key] ?? 0;
+          return (
+            <button key={t.key} onClick={() => setGroup(t.key)}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border-0 flex items-center gap-1.5"
+              style={active ? { background: t.color, color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
+            >
+              {t.label}
+              <span className="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full"
+                style={{ background: active ? "rgba(255,255,255,0.25)" : "var(--bg-card)", color: active ? "#fff" : "var(--text-dim)" }}>
+                {fmtNum(count)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-xs" style={{ color: "var(--text-dim)" }}>Період:</span>
+        <input type="date" value={since} max={until || undefined} onChange={(e) => setSince(e.target.value)}
+          className="rounded-lg px-2 py-1 text-xs border outline-none tabular-nums"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }} />
+        <span style={{ color: "var(--text-dim)" }}>—</span>
+        <input type="date" value={until} min={since || undefined} onChange={(e) => setUntil(e.target.value)}
+          className="rounded-lg px-2 py-1 text-xs border outline-none tabular-nums"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }} />
+        <button onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
+          className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
+          title="Перемкнути порядок сортування за датою">
+          📅 {sort === "desc" ? "Новіші першими" : "Старіші першими"}
+        </button>
+        <div className="text-[10px] ml-auto" style={{ color: "var(--text-dim)" }}>
+          Без товарів, які щойно з&apos;явилися в каталозі ·{" "}
+          {data?.syncedAt && <>останній sync: {fmtDateTime(data.syncedAt)}</>}
+        </div>
+      </div>
+
+      {/* Body */}
+      {loading && !data && <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>Завантаження…</div>}
+      {error && <div className="text-xs p-3 rounded-lg" style={{ background: "#d1343811", color: "#d13438" }}>{error}</div>}
+      {!loading && !error && data && data.events.length === 0 && (
+        <div className="text-xs p-6 text-center" style={{ color: "var(--text-dim)" }}>
+          У цій категорії за обраний період змін не зафіксовано.
+          <div className="mt-1 text-[10px]">Хронологія наповнюється після кожного синку (раз на годину).</div>
+        </div>
+      )}
+      {data && data.events.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="text-left" style={{ color: "var(--text-dim)" }}>
+                <th className="px-2 py-2 whitespace-nowrap">Дата</th>
+                <th className="px-2 py-2">Товар</th>
+                <th className="px-2 py-2 whitespace-nowrap">Категорія</th>
+                <th className="px-2 py-2 whitespace-nowrap">Статус</th>
+                <th className="px-2 py-2 whitespace-nowrap text-right">Було → Стало</th>
+                <th className="px-2 py-2">Деталі</th>
+                <th className="px-2 py-2 whitespace-nowrap text-right">Сайт</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.events.map((e, i) => (
+                <TimelineRow key={`${e.productId}-${e.at}-${i}`} event={e} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Pager */}
+      {data && data.total > limit && (
+        <div className="flex items-center justify-end gap-2 mt-3">
+          <button disabled={page <= 1} onClick={() => setPage(1)}
+            className="px-2 py-1 rounded-lg text-xs cursor-pointer border disabled:opacity-30"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}>«</button>
+          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
+            className="px-2.5 py-1 rounded-lg text-xs cursor-pointer border disabled:opacity-30"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}>← Попер.</button>
+          <span className="text-xs tabular-nums" style={{ color: "var(--text-dim)" }}>
+            {page} / {totalPages}
+          </span>
+          <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
+            className="px-2.5 py-1 rounded-lg text-xs cursor-pointer border disabled:opacity-30"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}>Наст. →</button>
+          <button disabled={page >= totalPages} onClick={() => setPage(totalPages)}
+            className="px-2 py-1 rounded-lg text-xs cursor-pointer border disabled:opacity-30"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}>»</button>
+          <span className="text-xs ml-2" style={{ color: "var(--text-dim)" }}>
+            {`${(page - 1) * limit + 1}–${Math.min(page * limit, data.total)}`} з {fmtNum(data.total)}
+          </span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function TimelineRow({ event }: { event: TimelineEventResp }) {
+  const arrow = <span style={{ color: "var(--text-dim)", margin: "0 4px" }}>→</span>;
+
+  const beforeAfter = (() => {
+    switch (event.group) {
+      case "photos":
+      case "attributes":
+      case "reviews":
+        return (
+          <span className="tabular-nums">
+            <span style={{ color: "var(--text-dim)" }}>{event.fromCount ?? 0}</span>
+            {arrow}
+            <b>{event.toCount ?? 0}</b>
+          </span>
+        );
+      case "sku":
+        return (
+          <span className="tabular-nums">
+            <span style={{ color: "var(--text-dim)" }}>{event.fromSku || "—"}</span>
+            {arrow}
+            <b style={{ fontFamily: "monospace" }}>{event.toSku || "—"}</b>
+          </span>
+        );
+      case "prices":
+        return (
+          <span className="tabular-nums">
+            <span style={{ color: "var(--text-dim)" }}>{event.fromPrice != null ? fmtPrice(event.fromPrice, event.currency || "UAH") : "—"}</span>
+            {arrow}
+            <b>{event.toPrice != null ? fmtPrice(event.toPrice, event.currency || "UAH") : "—"}</b>
+          </span>
+        );
+    }
+  })();
+
+  const details = (() => {
+    switch (event.group) {
+      case "photos": {
+        const added = event.addedUrls?.length ?? 0;
+        const removed = event.removedUrls?.length ?? 0;
+        const parts: React.ReactNode[] = [];
+        if (added) parts.push(<span key="a" style={{ color: "#107c10" }}>+{added} додано</span>);
+        if (removed) parts.push(<span key="r" style={{ color: "#d13438" }}>−{removed} видалено</span>);
+        return parts.length ? <span className="flex gap-2 flex-wrap">{parts}</span> : <span style={{ color: "var(--text-dim)" }}>пересортовано</span>;
+      }
+      case "attributes": {
+        const parts: React.ReactNode[] = [];
+        if (event.attrAdded)   parts.push(<span key="a" style={{ color: "#107c10" }}>+{event.attrAdded}</span>);
+        if (event.attrRemoved) parts.push(<span key="r" style={{ color: "#d13438" }}>−{event.attrRemoved}</span>);
+        if (event.attrChanged) parts.push(<span key="c" style={{ color: "#118dff" }}>~{event.attrChanged}</span>);
+        return parts.length ? <span className="flex gap-2 flex-wrap">{parts}</span> : <span style={{ color: "var(--text-dim)" }}>—</span>;
+      }
+      case "reviews": {
+        const delta = (event.toCount ?? 0) - (event.fromCount ?? 0);
+        const ratingChanged = event.fromRating !== event.toRating;
+        return (
+          <span className="flex gap-2 flex-wrap items-center">
+            <span style={{ color: delta > 0 ? "#107c10" : delta < 0 ? "#d13438" : "var(--text-dim)" }}>
+              {delta > 0 ? `+${delta}` : delta}
+            </span>
+            {ratingChanged && (
+              <span style={{ color: "var(--text-dim)" }} className="tabular-nums">
+                ★ {event.fromRating?.toFixed(1) ?? "—"}{arrow}<b>{event.toRating?.toFixed(1) ?? "—"}</b>
+              </span>
+            )}
+          </span>
+        );
+      }
+      case "sku":
+        return event.fromSku
+          ? <span style={{ color: "var(--text-dim)" }}>оновлено</span>
+          : <span style={{ color: "#107c10" }}>+ артикул додано</span>;
+      case "prices": {
+        const from = event.fromPrice ?? 0;
+        const to = event.toPrice ?? 0;
+        if (!from || !to) return <span style={{ color: "var(--text-dim)" }}>—</span>;
+        const pct = Math.round(((to - from) / from) * 100);
+        return (
+          <span style={{ color: pct > 0 ? "#d13438" : pct < 0 ? "#107c10" : "var(--text-dim)" }} className="tabular-nums">
+            {pct > 0 ? "+" : ""}{pct}%
+          </span>
+        );
+      }
+    }
+  })();
+
+  return (
+    <tr className="border-t hover:bg-[var(--bg-input)]" style={{ borderColor: "var(--border)" }}>
+      <td className="px-2 py-2 tabular-nums whitespace-nowrap" style={{ color: "var(--text-dim)" }}>{fmtDateTime(event.at)}</td>
+      <td className="px-2 py-2" style={{ color: "var(--text)" }}>
+        <div className="truncate" style={{ maxWidth: 360 }} title={event.productName}>{event.productName}</div>
+        <div className="text-[10px] tabular-nums" style={{ color: "var(--text-dim)" }}>id: {event.productId}</div>
+      </td>
+      <td className="px-2 py-2 truncate" style={{ color: "var(--text-mid)", maxWidth: 220 }} title={event.categoryName}>{event.categoryName}</td>
+      <td className="px-2 py-2 whitespace-nowrap" style={{ color: statusColor(event.statusId) }}>● {event.statusName || `#${event.statusId}`}</td>
+      <td className="px-2 py-2 text-right whitespace-nowrap">{beforeAfter}</td>
+      <td className="px-2 py-2">{details}</td>
+      <td className="px-2 py-2 text-right">
+        <a href={event.productUrl} target="_blank" rel="noopener noreferrer"
+          className="text-xs font-semibold no-underline whitespace-nowrap"
+          style={{ color: "#118dff" }}
+          title="Відкрити товар на сайті agromat.ua">↗ сайт</a>
+      </td>
+    </tr>
+  );
+}
+
 // ── Main section ────────────────────────────────────────────────────────────
 export function ProductsCatalog() {
   const [data, setData] = useState<ListResponse | null>(null);
@@ -2175,6 +2468,9 @@ export function ProductsCatalog() {
   const [openSettings, setOpenSettings] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // View mode — "catalog" (table of products) vs "timeline" (cross-product
+  // change history grouped by Фото/Атрибути/Відгуки/Артикул/Ціни).
+  const [mode, setMode] = useState<"catalog" | "timeline">("catalog");
 
   // Reset to page 1 when any filter changes
   useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
@@ -2416,11 +2712,23 @@ export function ProductsCatalog() {
       <Card style={{ borderColor: "#118dff44" }} className="mb-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>
-            Картка товару. Каталог.
+            Картка товару. {mode === "catalog" ? "Каталог." : "Хронологія змін."}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Mode toggle: Каталог / Хронологія змін */}
+            <div className="flex gap-1 rounded-xl p-0.5" style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
+              {([
+                ["catalog",  "Каталог"],
+                ["timeline", "Хронологія змін"],
+              ] as ["catalog" | "timeline", string][]).map(([m, l]) => (
+                <button key={m} onClick={() => setMode(m)}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer border-0"
+                  style={mode === m ? { background: "#118dff", color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
+                >{l}</button>
+              ))}
+            </div>
             {/* Inline "as of" pill so it's still visible when a snapshot is pinned */}
-            {asOf && (
+            {asOf && mode === "catalog" && (
               <button
                 onClick={() => setAsOf(null)}
                 className="text-xs font-semibold px-2 py-1 rounded-lg cursor-pointer border whitespace-nowrap"
@@ -2441,7 +2749,7 @@ export function ProductsCatalog() {
         </div>
 
         {/* "As of" banner — visible only when looking at a historical snapshot */}
-        {asOf && (
+        {asOf && mode === "catalog" && (
           <div className="mb-3 px-3 py-2 rounded-lg flex items-center justify-between gap-2 flex-wrap"
             style={{ background: "#e66c3711", border: "1px solid #e66c3744", color: "#e66c37" }}>
             <span className="text-xs font-semibold">
@@ -2456,9 +2764,12 @@ export function ProductsCatalog() {
           </div>
         )}
 
-        {data && <KpiRow stats={data.stats} total={data.total} />}
+        {mode === "catalog" && data && <KpiRow stats={data.stats} total={data.total} />}
       </Card>
 
+      {mode === "timeline" && <ChangesTimelineView />}
+
+      {mode === "catalog" && <>
       <CategorySummaryPanel onFilter={applyCategoryFilter} />
 
       <div id="products-table-anchor" />
@@ -2917,6 +3228,7 @@ export function ProductsCatalog() {
           </>
         )}
       </Card>
+      </>}
 
       {openBulk && (
         <BulkFilterModal

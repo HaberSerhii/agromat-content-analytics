@@ -10,6 +10,8 @@ import {
   type StatusChange,
   type SyncState,
   type ChangeEvent,
+  type TimelineEvent,
+  type TimelineGroup,
   readAllLite,
   writeAllLite,
   writeAllFull,
@@ -21,6 +23,7 @@ import {
   appendChangesBulk,
   buildCategoryAttrsAggregate,
   writeCategoryAttrsAggregate,
+  writeTimelineEvents,
 } from "@/lib/products-store";
 
 const MAX_STATUS_HISTORY = 20;
@@ -162,7 +165,81 @@ function diffProduct(prev: ProductComparable, next: ProductFull, at: string): Ch
       addedUrls, removedUrls,
     });
 
+  // Reviews — count-only diff (full review-by-review tracking would bloat the
+  // change log; the Хронологія dashboard only needs "X review(s) appeared").
+  const prevReviewsCount = prev.reviewsCount ?? 0;
+  const nextReviewsCount = next.reviews?.length ?? 0;
+  if (prevReviewsCount !== nextReviewsCount) {
+    events.push({
+      at, field: "reviews",
+      fromCount: prevReviewsCount,
+      toCount: nextReviewsCount,
+      fromRating: prev.ratingAvg ?? null,
+      toRating: next.ratingAvg,
+    });
+  }
+
   return events;
+}
+
+// Maps a per-product ChangeEvent to a denormalized TimelineEvent for the
+// cross-product dashboard. Returns null for events that don't have a UI
+// surface in the Хронологія view (status / stock / discountPct / priceBase).
+function toTimelineEvent(ev: ChangeEvent, lite: ProductLite): TimelineEvent | null {
+  const base = {
+    at: ev.at,
+    productId: lite.id,
+    productName: lite.name,
+    productUrl: lite.url,
+    categoryId: lite.categoryId,
+    categoryName: lite.categoryName,
+    statusId: lite.statusId,
+    statusName: lite.statusName,
+    firstSeenAt: lite.firstSeenAt,
+  };
+  let group: TimelineGroup;
+  switch (ev.field) {
+    case "images":
+      group = "photos";
+      return {
+        ...base, group,
+        fromCount: ev.fromCount, toCount: ev.toCount,
+        addedUrls: ev.addedUrls, removedUrls: ev.removedUrls,
+      };
+    case "attributes":
+      group = "attributes";
+      return {
+        ...base, group,
+        fromCount: lite.attributesCount - ev.added.length + ev.removed.length,
+        toCount: lite.attributesCount,
+        attrAdded: ev.added.length,
+        attrRemoved: ev.removed.length,
+        attrChanged: ev.changed.length,
+      };
+    case "reviews":
+      group = "reviews";
+      return {
+        ...base, group,
+        fromCount: ev.fromCount, toCount: ev.toCount,
+        fromRating: ev.fromRating, toRating: ev.toRating,
+      };
+    case "sku":
+      group = "sku";
+      return {
+        ...base, group,
+        fromSku: ev.from, toSku: ev.to,
+      };
+    case "price":
+      group = "prices";
+      return {
+        ...base, group,
+        fromPrice: ev.from, toPrice: ev.to,
+        currency: lite.currency,
+      };
+    default:
+      // status / stock / priceBase / discountPct — not surfaced on the dashboard
+      return null;
+  }
 }
 
 export async function runSync(): Promise<SyncState> {
@@ -199,6 +276,7 @@ export async function runSync(): Promise<SyncState> {
     const fulls: ProductFull[] = [];
     const failedPages: number[] = [];
     const changesByProduct = new Map<number, ChangeEvent[]>();
+    const timelineEvents: TimelineEvent[] = [];
     let pages = 0;
     let newCount = 0;
     let statusChanges = 0;
@@ -226,7 +304,16 @@ export async function runSync(): Promise<SyncState> {
           const prev = prevComparable.get(api.id);
           if (prev) {
             const events = diffProduct(prev, full, startedAt);
-            if (events.length) changesByProduct.set(api.id, events);
+            if (events.length) {
+              changesByProduct.set(api.id, events);
+              // Project the relevant events into the cross-product timeline.
+              // Denormalizes ProductLite fields so the dashboard renders rows
+              // without any extra per-product lookup.
+              for (const ev of events) {
+                const tEv = toTimelineEvent(ev, lite);
+                if (tEv) timelineEvents.push(tEv);
+              }
+            }
           }
         }
       }
@@ -301,6 +388,14 @@ export async function runSync(): Promise<SyncState> {
       await appendChangesBulk(changesByProduct);
     } catch (e) {
       console.warn("[products-sync] appendChangesBulk failed:", e instanceof Error ? e.message : e);
+    }
+
+    // Cross-product timeline — powers the "Хронологія змін" dashboard tab.
+    // Best-effort; failure here only affects that view.
+    try {
+      await writeTimelineEvents(timelineEvents);
+    } catch (e) {
+      console.warn("[products-sync] writeTimelineEvents failed:", e instanceof Error ? e.message : e);
     }
 
     const finishedAt = new Date().toISOString();
