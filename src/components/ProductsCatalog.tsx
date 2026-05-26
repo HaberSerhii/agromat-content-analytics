@@ -2452,6 +2452,21 @@ interface PricesResponse {
   limit: number;
 }
 
+// Mass-reparse job status returned by /api/parser/job/<id>. Mirrors Flask's
+// _jobs payload shape from Agromat_Parcer/app.py.
+interface ParserJob {
+  ok: boolean;
+  job_id?: string;
+  action?: string;
+  status?: "starting" | "running" | "done" | "error";
+  current?: number;
+  total?: number;
+  label?: string;
+  started_at?: number;
+  finished_at?: number | null;
+  error?: string | null;
+}
+
 function CompetitorPricesView() {
   const [data, setData] = useState<PricesResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -2462,6 +2477,9 @@ function CompetitorPricesView() {
   const [limit] = useState(50);
   // per-cell loading state keyed by `${productId}:${competitorId}`
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  // Mass-reparse job state — null when no job running.
+  const [job, setJob] = useState<ParserJob | null>(null);
+  const [bulkStarting, setBulkStarting] = useState(false);
 
   useEffect(() => {
     const id = window.setTimeout(() => setSearchDebounced(search), 300);
@@ -2535,6 +2553,51 @@ function CompetitorPricesView() {
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1;
 
+  // Mass-reparse: start the job, then poll its status every 5s until done.
+  // Auto-refetches the table when the job finishes.
+  const startBulkSantechshara = useCallback(async () => {
+    setBulkStarting(true);
+    setError("");
+    try {
+      const resp = await fetch("/api/parser/run/prices-santechshara", { method: "POST" });
+      const json = await resp.json();
+      if (!json.ok) {
+        if (json.error === "busy" && json.active_job_id) {
+          // Parser already has another job running — pick it up and poll.
+          setJob({ ok: true, job_id: json.active_job_id, status: "running" });
+        } else {
+          setError(`Не вдалось стартувати: ${json.error || "unknown"}`);
+        }
+        return;
+      }
+      setJob({ ok: true, job_id: json.job_id, status: "starting", current: 0, total: 0 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "network error");
+    } finally {
+      setBulkStarting(false);
+    }
+  }, []);
+
+  // Poll while a job is active. Flask returns the job dict; when status flips
+  // to done/error we refetch the table to surface the new prices and stop polling.
+  useEffect(() => {
+    if (!job?.job_id) return;
+    if (job.status === "done" || job.status === "error") return;
+    const id = window.setInterval(async () => {
+      try {
+        const resp = await fetch(`/api/parser/job/${job.job_id}`);
+        const j: ParserJob = await resp.json();
+        if (!j.ok) return;
+        setJob(j);
+        if (j.status === "done" || j.status === "error") {
+          window.clearInterval(id);
+          if (j.status === "done") load(); // Reload table to show fresh prices
+        }
+      } catch { /* keep polling */ }
+    }, 5_000);
+    return () => window.clearInterval(id);
+  }, [job?.job_id, job?.status, load]);
+
   return (
     <Card>
       {/* Filters */}
@@ -2552,11 +2615,25 @@ function CompetitorPricesView() {
             Знімок цін за <b style={{ color: "var(--text-mid)" }}>{data.snapshotDate}</b>
           </span>
         )}
+        <button
+          onClick={startBulkSantechshara}
+          disabled={bulkStarting || (job?.status === "running" || job?.status === "starting")}
+          className="ml-auto px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border disabled:opacity-60"
+          style={{ background: "#8e44ad11", color: "#8e44ad", borderColor: "#8e44ad55" }}
+          title="Запустити фоновий live-парсинг усіх товарів у Сантехшарі через headless Chrome. ~45 хв.">
+          {bulkStarting ? "Стартую…" : "↻↻ Оновити всю Сантехшару live"}
+        </button>
         <button onClick={load}
-          className="ml-auto px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
+          className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
           style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
           title="Перезавантажити таблицю з БД">↻ Оновити</button>
       </div>
+
+      {/* Mass-reparse progress bar — visible while a job is in-flight or
+          just finished. Dismissible after completion. */}
+      {job && (
+        <BulkProgressBar job={job} onDismiss={() => setJob(null)} />
+      )}
 
       {error && (
         <div className="text-xs p-2 mb-2 rounded-lg" style={{ background: "#d1343811", color: "#d13438", border: "1px solid #d1343844" }}>{error}</div>
@@ -2683,6 +2760,64 @@ function CompetitorCellView({ cell, ourPrice, busy, onReparse }: {
         {busy ? "…" : "↻"}
       </button>
     </span>
+  );
+}
+
+function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => void }) {
+  const current = job.current ?? 0;
+  const total = job.total ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+  const done = job.status === "done";
+  const failed = job.status === "error";
+
+  // Rough ETA: elapsed time ÷ items done × items left. Only meaningful once
+  // we have any progress.
+  let eta = "";
+  if (!done && !failed && job.started_at && current > 0 && total > current) {
+    const elapsedSec = Date.now() / 1000 - job.started_at;
+    const ratePerSec = current / elapsedSec;
+    const remainingSec = Math.round((total - current) / ratePerSec);
+    const m = Math.floor(remainingSec / 60);
+    const s = remainingSec % 60;
+    eta = m > 0 ? `~${m} хв ${s} с` : `~${s} с`;
+  }
+
+  const bg = failed ? "#d1343811" : done ? "#107c1011" : "#8e44ad11";
+  const border = failed ? "#d13438aa" : done ? "#107c10aa" : "#8e44ad55";
+  const accent = failed ? "#d13438" : done ? "#107c10" : "#8e44ad";
+
+  return (
+    <div className="mb-3 p-3 rounded-lg" style={{ background: bg, border: `1px solid ${border}` }}>
+      <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+        <span className="text-xs font-semibold" style={{ color: accent }}>
+          {failed
+            ? `❌ Помилка: ${job.error || "unknown"}`
+            : done
+              ? `✓ Завершено: оброблено ${current}${total ? ` / ${total}` : ""} товарів`
+              : `↻↻ Live-парсинг Сантехшари ${job.label ? `· ${job.label}` : ""}`}
+        </span>
+        <span className="text-[11px] tabular-nums" style={{ color: accent }}>
+          {!done && !failed && total > 0 && <>{current} / {total} · {pct}%</>}
+          {eta && <span style={{ marginLeft: 8 }}>ETA {eta}</span>}
+          {(done || failed) && (
+            <button onClick={onDismiss}
+              className="ml-3 px-2 py-0.5 rounded cursor-pointer border-0 text-[10px] font-semibold"
+              style={{ background: accent, color: "#fff" }}>✕ Закрити</button>
+          )}
+        </span>
+      </div>
+      {/* Progress bar — animated stripes while running */}
+      <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--bg-input)" }}>
+        <div
+          className="h-full transition-all"
+          style={{
+            width: total > 0 ? `${pct}%` : "100%",
+            background: accent,
+            opacity: !done && !failed ? 0.6 : 1,
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
