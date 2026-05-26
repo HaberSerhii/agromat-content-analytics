@@ -2456,16 +2456,14 @@ interface PricesResponse {
 // _jobs payload shape from Agromat_Parcer/app.py. On completion `result`
 // carries a flattened orchestrator summary — Flask collapses list fields
 // to their length before serializing, so e.g. `errors` is a count not array.
+// Field names match orchestrator.run()'s return verbatim: { total, found,
+// new_finds, price_changes, errors }.
 interface ParserJobResult {
-  total_products?: number;
-  total_processed?: number;
-  total_found?: number;
+  total?: number;
+  found?: number;
   errors?: number;
   new_finds?: number;
   price_changes?: number;
-  price_dist?: { higher?: number; lower?: number; equal?: number };
-  mode?: string;
-  competitor_filter?: string | null;
 }
 interface ParserJob {
   ok: boolean;
@@ -2863,25 +2861,21 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
           }}
         />
       </div>
-      {/* Summary breakdown on completion. Flask collapses orchestrator list
-          fields to their lengths, so `errors`, `new_finds`, `price_changes`
-          are counts. price_dist tells us how many came out cheaper / equal /
-          higher than our price — useful for a quick "who wins" glance. */}
+      {/* Summary breakdown on completion. Orchestrator returns
+          { total, found, new_finds, price_changes, errors } where the last
+          three are list-of-dicts that Flask collapses to lengths.
+          - total       — products that were actually processed (not skipped)
+          - found       — those where the parser returned a price
+          - new_finds   — among `found`, those that had no price before today
+          - price_changes — among `found`, those whose price differs from prev
+          - errors      — products that failed AND had no previous snapshot */}
       {done && r && (
         <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] tabular-nums">
-          <Stat label="Знайдено цін" value={r.total_found} color="#107c10" />
+          <Stat label="Оброблено (без скіпів)" value={r.total} color="var(--text-mid)" />
+          <Stat label="Знайдено ціни" value={r.found} color="#107c10" />
           <Stat label="Нових (раніше не було ціни)" value={r.new_finds} color="#118dff" />
           <Stat label="Ціна змінилась" value={r.price_changes} color="#e66c37" />
           <Stat label="Помилок" value={r.errors} color="#d13438" />
-          {r.price_dist && (r.price_dist.lower || r.price_dist.higher || r.price_dist.equal) && (
-            <span style={{ color: "var(--text-dim)" }}>
-              · <span style={{ color: "#d13438" }}>{r.price_dist.lower ?? 0} дешевше</span>
-              {" · "}
-              <span style={{ color: "var(--text-mid)" }}>{r.price_dist.equal ?? 0} ≈</span>
-              {" · "}
-              <span style={{ color: "#107c10" }}>{r.price_dist.higher ?? 0} дорожче нас</span>
-            </span>
-          )}
         </div>
       )}
     </div>
