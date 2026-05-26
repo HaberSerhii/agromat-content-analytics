@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.106.2",
     "@upstash/redis": "^1.36.4",
     "clsx": "^2.1.1",
     "next": "^15.3.0",
@@ -20,11 +21,11 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.2.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.0.1",
-    "@eslint/eslintrc": "^3.2.0",
     "eslint": "^9.18.0",
     "eslint-config-next": "^15.3.0",
     "postcss": "^8",

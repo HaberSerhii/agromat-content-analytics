@@ -2426,6 +2426,266 @@ function TimelineRow({ event }: { event: TimelineEventResp }) {
   );
 }
 
+// ── Competitor prices view ──────────────────────────────────────────────────
+// Reads from /api/parser/prices (joins Supabase products + competitors +
+// price_snapshots). "↻" button per cell hits /api/parser/reparse which
+// forwards to the legacy Flask scraper (Agromat_Parcer).
+interface PricesCompetitor { id: number; name: string; adapter_name: string }
+interface PricesCell { price: number | null; status: string | null; url: string | null }
+interface PricesRow {
+  productId: number;
+  sku: string | null;
+  name: string;
+  brand: string | null;
+  category: string | null;
+  ourPrice: number | null;
+  ourUrl: string | null;
+  status: string | null;
+  byCompetitor: Record<number, PricesCell>;
+}
+interface PricesResponse {
+  snapshotDate: string | null;
+  competitors: PricesCompetitor[];
+  rows: PricesRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+function CompetitorPricesView() {
+  const [data, setData] = useState<PricesResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [searchDebounced, setSearchDebounced] = useState("");
+  const [page, setPage] = useState(1);
+  const [limit] = useState(50);
+  // per-cell loading state keyed by `${productId}:${competitorId}`
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setSearchDebounced(search), 300);
+    return () => window.clearTimeout(id);
+  }, [search]);
+
+  useEffect(() => { setPage(1); }, [searchDebounced]);
+
+  const load = useCallback(() => {
+    const p = new URLSearchParams();
+    p.set("page", String(page));
+    p.set("limit", String(limit));
+    if (searchDebounced) p.set("search", searchDebounced);
+    setLoading(true); setError("");
+    fetch(`/api/parser/prices?${p.toString()}`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: PricesResponse) => setData(d))
+      .catch((e) => setError(e instanceof Error ? e.message : "Error"))
+      .finally(() => setLoading(false));
+  }, [page, limit, searchDebounced]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const reparse = useCallback(async (productId: number, competitorId: number) => {
+    const key = `${productId}:${competitorId}`;
+    setBusy((b) => ({ ...b, [key]: true }));
+    try {
+      const resp = await fetch("/api/parser/reparse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_id: productId,
+          competitor_id: competitorId,
+          snapshot_date: data?.snapshotDate,
+        }),
+      });
+      const json = await resp.json();
+      if (!json.ok) {
+        setError(`Reparse failed: ${json.error || "unknown"}`);
+        return;
+      }
+      // Patch the cell in place so the user sees the new price immediately
+      // without a full refetch.
+      setData((cur) => {
+        if (!cur) return cur;
+        return {
+          ...cur,
+          rows: cur.rows.map((r) =>
+            r.productId === productId
+              ? {
+                  ...r,
+                  byCompetitor: {
+                    ...r.byCompetitor,
+                    [competitorId]: {
+                      price: typeof json.price === "number" ? json.price : null,
+                      status: json.status ?? r.byCompetitor[competitorId]?.status ?? null,
+                      url: r.byCompetitor[competitorId]?.url ?? null,
+                    },
+                  },
+                }
+              : r,
+          ),
+        };
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "network error");
+    } finally {
+      setBusy((b) => ({ ...b, [key]: false }));
+    }
+  }, [data?.snapshotDate]);
+
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1;
+
+  return (
+    <Card>
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Пошук: назва або SKU…"
+          className="rounded-lg px-2 py-1 text-xs border outline-none"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: search ? "#118dff" : "var(--border2)", minWidth: 320 }}
+        />
+        {data?.snapshotDate && (
+          <span className="text-[11px]" style={{ color: "var(--text-dim)" }}>
+            Знімок цін за <b style={{ color: "var(--text-mid)" }}>{data.snapshotDate}</b>
+          </span>
+        )}
+        <button onClick={load}
+          className="ml-auto px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
+          title="Перезавантажити таблицю з БД">↻ Оновити</button>
+      </div>
+
+      {error && (
+        <div className="text-xs p-2 mb-2 rounded-lg" style={{ background: "#d1343811", color: "#d13438", border: "1px solid #d1343844" }}>{error}</div>
+      )}
+      {loading && !data && <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>Завантаження…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div className="text-xs p-6 text-center" style={{ color: "var(--text-dim)" }}>
+          Жодного товару з цінами конкурентів за цей знімок.
+        </div>
+      )}
+
+      {data && data.rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="text-left" style={{ color: "var(--text-dim)" }}>
+                <th className="px-2 py-2">Товар</th>
+                <th className="px-2 py-2 whitespace-nowrap text-right">Наша ціна</th>
+                {data.competitors.map((c) => (
+                  <th key={c.id} className="px-2 py-2 whitespace-nowrap text-right">{c.name}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r) => (
+                <tr key={r.productId} className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="px-2 py-2">
+                    <div className="flex items-center gap-2">
+                      {r.ourUrl
+                        ? <a href={r.ourUrl} target="_blank" rel="noopener noreferrer" className="no-underline" style={{ color: "var(--text)" }}>
+                            <span className="truncate inline-block align-middle" style={{ maxWidth: 360 }} title={r.name}>{r.name}</span>
+                            <span className="ml-1" style={{ color: "#118dff" }}>↗</span>
+                          </a>
+                        : <span className="truncate inline-block align-middle" style={{ maxWidth: 360, color: "var(--text)" }} title={r.name}>{r.name}</span>}
+                    </div>
+                    <div className="text-[10px] tabular-nums" style={{ color: "var(--text-dim)" }}>
+                      {r.sku ? <>SKU <b style={{ fontFamily: "monospace" }}>{r.sku}</b> · </> : null}
+                      {r.brand ? <>{r.brand} · </> : null}
+                      id {r.productId}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" style={{ color: "var(--text)" }}>
+                    {r.ourPrice != null ? fmtPrice(r.ourPrice, "UAH") : <span style={{ color: "var(--text-dim)" }}>—</span>}
+                  </td>
+                  {data.competitors.map((c) => {
+                    const cell = r.byCompetitor[c.id];
+                    const key = `${r.productId}:${c.id}`;
+                    const cellBusy = busy[key];
+                    return (
+                      <td key={c.id} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+                        <CompetitorCellView
+                          cell={cell}
+                          ourPrice={r.ourPrice}
+                          busy={!!cellBusy}
+                          onReparse={() => reparse(r.productId, c.id)}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Pager */}
+      {data && data.total > limit && (
+        <div className="flex items-center justify-end gap-2 mt-3">
+          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
+            className="px-2.5 py-1 rounded-lg text-xs cursor-pointer border disabled:opacity-30"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}>← Попер.</button>
+          <span className="text-xs tabular-nums" style={{ color: "var(--text-dim)" }}>{page} / {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
+            className="px-2.5 py-1 rounded-lg text-xs cursor-pointer border disabled:opacity-30"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}>Наст. →</button>
+          <span className="text-xs ml-2" style={{ color: "var(--text-dim)" }}>
+            {`${(page - 1) * limit + 1}–${Math.min(page * limit, data.total)}`} з {fmtNum(data.total)}
+          </span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function CompetitorCellView({ cell, ourPrice, busy, onReparse }: {
+  cell: PricesCell | undefined;
+  ourPrice: number | null;
+  busy: boolean;
+  onReparse: () => void;
+}) {
+  const has = cell && cell.price != null;
+  let priceColor = "var(--text-mid)";
+  let diffLabel: string | null = null;
+  if (has && ourPrice != null && ourPrice > 0) {
+    const diff = (cell!.price! - ourPrice) / ourPrice;
+    if (diff <= -0.05) {
+      priceColor = "#d13438";       // конкурент дешевший на >5% — ми програємо
+      diffLabel = `${Math.round(diff * 100)}%`;
+    } else if (diff >= 0.05) {
+      priceColor = "#107c10";       // конкурент дорожчий на >5% — ми виграємо
+      diffLabel = `+${Math.round(diff * 100)}%`;
+    } else {
+      priceColor = "var(--text-mid)";
+      diffLabel = "≈";
+    }
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 justify-end">
+      {has ? (
+        <>
+          {cell!.url
+            ? <a href={cell!.url} target="_blank" rel="noopener noreferrer" className="no-underline" style={{ color: priceColor, fontWeight: 600 }}>
+                {fmtPrice(cell!.price, "UAH")}
+              </a>
+            : <span style={{ color: priceColor, fontWeight: 600 }}>{fmtPrice(cell!.price, "UAH")}</span>}
+          {diffLabel && <span className="text-[10px]" style={{ color: priceColor }}>{diffLabel}</span>}
+        </>
+      ) : <span style={{ color: "var(--text-dim)" }}>—</span>}
+      <button onClick={onReparse} disabled={busy}
+        className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border-0 disabled:opacity-60"
+        style={{ background: busy ? "var(--bg-input)" : "#118dff11", color: "#118dff" }}
+        title="Оновити ціну зараз (live-парсинг сайту конкурента)">
+        {busy ? "…" : "↻"}
+      </button>
+    </span>
+  );
+}
+
 // ── Main section ────────────────────────────────────────────────────────────
 export function ProductsCatalog() {
   const [data, setData] = useState<ListResponse | null>(null);
@@ -2469,8 +2729,9 @@ export function ProductsCatalog() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   // View mode — "catalog" (table of products) vs "timeline" (cross-product
-  // change history grouped by Фото/Атрибути/Відгуки/Артикул/Ціни).
-  const [mode, setMode] = useState<"catalog" | "timeline">("catalog");
+  // change history grouped by Фото/Атрибути/Відгуки/Артикул/Ціни) vs
+  // "prices" (Vencon/Теплорадість/Сантехшара side-by-side from parser DB).
+  const [mode, setMode] = useState<"catalog" | "timeline" | "prices">("catalog");
 
   // Reset to page 1 when any filter changes
   useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
@@ -2712,15 +2973,16 @@ export function ProductsCatalog() {
       <Card style={{ borderColor: "#118dff44" }} className="mb-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>
-            Картка товару. {mode === "catalog" ? "Каталог." : "Хронологія змін."}
+            Картка товару. {mode === "catalog" ? "Каталог." : mode === "timeline" ? "Хронологія змін." : "Ціни конкурентів."}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Mode toggle: Каталог / Хронологія змін */}
+            {/* Mode toggle: Каталог / Хронологія змін / Ціни конкурентів */}
             <div className="flex gap-1 rounded-xl p-0.5" style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
               {([
                 ["catalog",  "Каталог"],
                 ["timeline", "Хронологія змін"],
-              ] as ["catalog" | "timeline", string][]).map(([m, l]) => (
+                ["prices",   "Ціни конкурентів"],
+              ] as ["catalog" | "timeline" | "prices", string][]).map(([m, l]) => (
                 <button key={m} onClick={() => setMode(m)}
                   className="px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer border-0"
                   style={mode === m ? { background: "#118dff", color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
@@ -2768,6 +3030,7 @@ export function ProductsCatalog() {
       </Card>
 
       {mode === "timeline" && <ChangesTimelineView />}
+      {mode === "prices" && <CompetitorPricesView />}
 
       {mode === "catalog" && <>
       <CategorySummaryPanel onFilter={applyCategoryFilter} />
