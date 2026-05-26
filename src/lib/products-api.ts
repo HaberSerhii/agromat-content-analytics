@@ -96,7 +96,15 @@ function authHeaders(): HeadersInit {
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const url = `${baseUrl()}${path}`;
-  const res = await fetch(url, { headers: authHeaders(), cache: "no-store", signal });
+  // Per-request hard timeout. Without it, an upstream that opens the socket
+  // and never replies (we've observed this around page 80 of /products) makes
+  // fetch hang indefinitely — retry-wrappers above only catch thrown errors,
+  // not hangs, so the whole sync would stall on a single bad page.
+  const res = await fetch(url, {
+    headers: authHeaders(),
+    cache: "no-store",
+    signal: signal ?? AbortSignal.timeout(30_000),
+  });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`GET ${path} → HTTP ${res.status}: ${body.slice(0, 200)}`);
