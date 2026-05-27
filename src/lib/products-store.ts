@@ -261,9 +261,12 @@ export async function readTimeline(q: TimelineQuery): Promise<TimelineResult> {
   const sort: "asc" | "desc" = q.sort ?? "desc";
   // Fetch full range first — Upstash REST doesn't support paged zrangebyscore
   // efficiently here, and timelines are bounded to ~50k. Filter+slice in JS.
-  const raws = (await redis.zrange(key, min, max, {
+  // ZRANGE BYSCORE REV expects (max, min) — i.e. higher score first — otherwise
+  // Redis returns an empty set. Swap the args when sort=desc.
+  const rev = sort === "desc";
+  const raws = (await redis.zrange(key, rev ? max : min, rev ? min : max, {
     byScore: true,
-    rev: sort === "desc",
+    rev,
   })) as string[];
   const parsed: TimelineEvent[] = [];
   for (const raw of raws) {
