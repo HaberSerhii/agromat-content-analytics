@@ -13,9 +13,15 @@ const url = process.argv[2] || "https://www.santechshara.ua/ua/";
 await fs.mkdir(profileDir, { recursive: true });
 const context = await chromium.launchPersistentContext(profileDir, {
   headless: false,
+  channel: "chrome",
   viewport: { width: 1365, height: 900 },
   locale: "uk-UA",
   timezoneId: "Europe/Kyiv",
+  // Hide automation fingerprints so Cloudflare Turnstile doesn't loop the
+  // challenge. Must match the worker exactly (same UA = default Chromium UA,
+  // same flags) or the warmed cf_clearance cookie won't be honoured there.
+  ignoreDefaultArgs: ["--enable-automation"],
+  args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
 });
 const page = context.pages()[0] || await context.newPage();
 await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });

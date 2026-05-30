@@ -240,10 +240,15 @@ async function main() {
   await fs.mkdir(profileDir, { recursive: true });
   const context = await chromium.launchPersistentContext(profileDir, {
     headless,
+    channel: "chrome",
     viewport: { width: 1365, height: 900 },
     locale: "uk-UA",
     timezoneId: "Europe/Kyiv",
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    // Must match santechshara-login.mjs EXACTLY: no UA override (use the real
+    // Chromium UA) + hidden automation flags, otherwise Cloudflare won't honour
+    // the warmed cf_clearance cookie (it's bound to UA + browser fingerprint).
+    ignoreDefaultArgs: ["--enable-automation"],
+    args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
   });
   const page = context.pages()[0] || await context.newPage();
   page.setDefaultTimeout(15000);
