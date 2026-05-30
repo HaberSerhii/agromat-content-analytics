@@ -321,7 +321,7 @@ export async function readTimelineCounts(
   return out;
 }
 
-const SNAPSHOT_KEEP_DAYS = 7;
+const SNAPSHOT_KEEP_DAYS = 4;
 
 // Deterministic id → shard mapping (djb2 hash, evenly distributes integer ids of any size).
 function shardForId(id: number): number {
