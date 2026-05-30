@@ -321,7 +321,7 @@ export async function readTimelineCounts(
   return out;
 }
 
-const SNAPSHOT_KEEP_DAYS = 14;
+const SNAPSHOT_KEEP_DAYS = 7;
 
 // Deterministic id → shard mapping (djb2 hash, evenly distributes integer ids of any size).
 function shardForId(id: number): number {
@@ -672,32 +672,47 @@ export function buildCategoryAttrsAggregate(fulls: ProductFull[], syncedAt: stri
 // Used by the dashboard's "state as of day X" picker. Trimmed to the last
 // SNAPSHOT_KEEP_DAYS dates to bound Redis storage.
 
+// Backstop TTL on snapshot keys: even if the trim logic never runs (e.g. the
+// hourly sync stops), Redis evicts them on its own a couple days past the
+// retention window.
+const SNAP_TTL_SEC = (SNAPSHOT_KEEP_DAYS + 2) * 24 * 60 * 60;
+
+// Delete daily snapshots beyond the newest `keep` dates. DEL-only, so it is
+// safe to call even when the DB is at its storage cap: Redis rejects writes
+// (SET) at 100% but still allows deletes that free space. This is what lets the
+// store self-heal out of a full state — call it before any writes. Returns the
+// number of dates dropped.
+export async function pruneOldSnapshots(keep = SNAPSHOT_KEEP_DAYS): Promise<number> {
+  const redis = getRedis();
+  const dates = ((await redis.zrange(K.snapDates, 0, -1)) as string[]) || []; // oldest-first
+  // Drop dates whose data has already TTL-expired but still linger in the zset.
+  await redis.zremrangebyscore(K.snapDates, 0, Date.now() - SNAP_TTL_SEC * 1000);
+  if (dates.length <= keep) return 0;
+  const toDrop = dates.slice(0, dates.length - keep);
+  const ops: Promise<unknown>[] = [];
+  for (const d of toDrop) {
+    const cnt = parseInt(((await redis.get(K.snapCount(d))) as string | null) || "0", 10);
+    for (let i = 0; i < cnt; i++) ops.push(redis.del(K.snapShard(d, i)));
+    ops.push(redis.del(K.snapCount(d)));
+    ops.push(redis.del(K.snapSyncAt(d)));
+    ops.push(redis.zrem(K.snapDates, d));
+  }
+  await Promise.all(ops);
+  return toDrop.length;
+}
+
 export async function writeDailySnapshot(date: string, products: ProductLite[], syncedAt: string): Promise<void> {
   const redis = getRedis();
 
-  // Wipe any older shards for this date (a re-sync on the same day may have fewer shards)
-  const oldCountRaw = (await redis.get(K.snapCount(date))) as string | null;
-  const oldCount = parseInt(oldCountRaw || "0", 10);
-
-  const shardCount = Math.max(1, Math.ceil(products.length / SHARD_SIZE));
-  const writes: Promise<unknown>[] = [];
-  for (let i = 0; i < shardCount; i++) {
-    const chunk = products.slice(i * SHARD_SIZE, (i + 1) * SHARD_SIZE);
-    writes.push(redis.set(K.snapShard(date, i), JSON.stringify(chunk)));
-  }
-  for (let i = shardCount; i < oldCount; i++) {
-    writes.push(redis.del(K.snapShard(date, i)));
-  }
-  writes.push(redis.set(K.snapCount(date), String(shardCount)));
-  writes.push(redis.set(K.snapSyncAt(date), syncedAt));
-  writes.push(redis.zadd(K.snapDates, { score: Date.now(), member: date }));
-  await Promise.all(writes);
-
-  // Trim: keep only SNAPSHOT_KEEP_DAYS most recent dates
-  const allDates = (await redis.zrange(K.snapDates, 0, -1)) as string[];
-  if (allDates.length > SNAPSHOT_KEEP_DAYS) {
-    // zrange returns oldest-first; we want to drop the oldest excess
-    const toDrop = allDates.slice(0, allDates.length - SNAPSHOT_KEEP_DAYS);
+  // Trim BEFORE writing so deletes free space before today's copy is added —
+  // this keeps the store self-healing even at the storage cap. Keep the newest
+  // SNAPSHOT_KEEP_DAYS-1 of the *other* dates so that adding today lands at
+  // exactly SNAPSHOT_KEEP_DAYS.
+  const existing = ((await redis.zrange(K.snapDates, 0, -1)) as string[]) || []; // oldest-first
+  const others = existing.filter((d) => d !== date);
+  const keepOthers = Math.max(0, SNAPSHOT_KEEP_DAYS - 1);
+  if (others.length > keepOthers) {
+    const toDrop = others.slice(0, others.length - keepOthers);
     const ops: Promise<unknown>[] = [];
     for (const d of toDrop) {
       const cnt = parseInt(((await redis.get(K.snapCount(d))) as string | null) || "0", 10);
@@ -708,6 +723,24 @@ export async function writeDailySnapshot(date: string, products: ProductLite[], 
     }
     await Promise.all(ops);
   }
+
+  // Wipe any leftover shards for this date (a re-sync on the same day may have fewer shards)
+  const oldCountRaw = (await redis.get(K.snapCount(date))) as string | null;
+  const oldCount = parseInt(oldCountRaw || "0", 10);
+
+  const shardCount = Math.max(1, Math.ceil(products.length / SHARD_SIZE));
+  const writes: Promise<unknown>[] = [];
+  for (let i = 0; i < shardCount; i++) {
+    const chunk = products.slice(i * SHARD_SIZE, (i + 1) * SHARD_SIZE);
+    writes.push(redis.set(K.snapShard(date, i), JSON.stringify(chunk), { ex: SNAP_TTL_SEC }));
+  }
+  for (let i = shardCount; i < oldCount; i++) {
+    writes.push(redis.del(K.snapShard(date, i)));
+  }
+  writes.push(redis.set(K.snapCount(date), String(shardCount), { ex: SNAP_TTL_SEC }));
+  writes.push(redis.set(K.snapSyncAt(date), syncedAt, { ex: SNAP_TTL_SEC }));
+  writes.push(redis.zadd(K.snapDates, { score: Date.now(), member: date }));
+  await Promise.all(writes);
 }
 
 export async function readDailySnapshot(date: string): Promise<{ products: ProductLite[]; syncedAt: string | null } | null> {

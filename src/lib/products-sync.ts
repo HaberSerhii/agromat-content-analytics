@@ -24,6 +24,7 @@ import {
   buildCategoryAttrsAggregate,
   writeCategoryAttrsAggregate,
   writeTimelineEvents,
+  pruneOldSnapshots,
 } from "@/lib/products-store";
 
 const MAX_STATUS_HISTORY = 20;
@@ -245,6 +246,16 @@ function toTimelineEvent(ev: ChangeEvent, lite: ProductLite): TimelineEvent | nu
 export async function runSync(): Promise<SyncState> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
+
+  // Self-heal: free space FIRST via deletes (allowed even when the DB is at its
+  // storage cap, unlike writes) so every write below succeeds. Drops daily
+  // snapshots beyond the retention window. Best-effort — never blocks the sync.
+  try {
+    const dropped = await pruneOldSnapshots();
+    if (dropped) console.log(`[products-sync] pruned ${dropped} old daily snapshot(s) before sync`);
+  } catch (e) {
+    console.warn("[products-sync] pruneOldSnapshots failed:", e instanceof Error ? e.message : e);
+  }
 
   await writeSyncState({ state: "running", startedAt, finishedAt: null });
 
