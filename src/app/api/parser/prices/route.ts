@@ -127,6 +127,24 @@ export async function GET(request: Request) {
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
   const competitors = (competitorsRaw || []) as Competitor[];
 
+  // 1b) Last price-write time per competitor — the freshest `created_at` across
+  //     all of that competitor's snapshots. Surfaces "when were these prices last
+  //     refreshed" in the UI (incl. the daily 05:00 auto-run). One indexed
+  //     order-by-limit-1 query per competitor (~3 round trips). Best-effort:
+  //     a failure just yields null, never blocks the table.
+  const lastUpdated: Record<number, string | null> = {};
+  await Promise.all(
+    competitors.map(async (c) => {
+      const { data } = await db
+        .from("price_snapshots")
+        .select("created_at")
+        .eq("competitor_id", c.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      lastUpdated[c.id] = (data?.[0]?.created_at as string | undefined) ?? null;
+    }),
+  );
+
   // 2) Resolve effective snapshot_date — explicit param wins, otherwise pick
   //    the latest one that has any snapshots.
   let effectiveDate = snapshotDate;
@@ -157,6 +175,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       snapshotDate: effectiveDate,
       competitors,
+      lastUpdated,
       rows: [],
       total: 0,
       page,
@@ -215,6 +234,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     snapshotDate: effectiveDate,
     competitors,
+    lastUpdated,
     rows: paged,
     total,
     page,

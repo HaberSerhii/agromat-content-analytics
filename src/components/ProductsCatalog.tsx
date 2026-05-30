@@ -2446,6 +2446,9 @@ interface PricesRow {
 interface PricesResponse {
   snapshotDate: string | null;
   competitors: PricesCompetitor[];
+  // competitorId → ISO of the most recent price write for that competitor
+  // (latest created_at in price_snapshots). Powers the per-button "last updated".
+  lastUpdated: Record<number, string | null>;
   rows: PricesRow[];
   total: number;
   page: number;
@@ -2640,17 +2643,29 @@ function CompetitorPricesView() {
             { adapter: "vencon",       label: "Vencon",       color: "#118dff", title: "Live-парсинг усіх товарів у Vencon (~45 хв через REQUEST_DELAY 1.5с)" },
             { adapter: "teploradost",  label: "Теплорадість", color: "#107c10", title: "Live-парсинг усіх товарів у Теплорадості (~45 хв)" },
             { adapter: "santechshara", label: "Сантехшара",   color: "#8e44ad", title: "Запустити фоновий обхід усіх товарів у Сантехшарі. Без Playwright — читає кеш." },
-          ] as const).map((c) => (
-            <button
-              key={c.adapter}
-              onClick={() => startBulk(c.adapter)}
-              disabled={bulkStarting || (job?.status === "running" || job?.status === "starting")}
-              className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border disabled:opacity-60 whitespace-nowrap"
-              style={{ background: `${c.color}11`, color: c.color, borderColor: `${c.color}55` }}
-              title={c.title}>
-              ↻↻ {c.label}
-            </button>
-          ))}
+          ] as const).map((c) => {
+            // Map adapter → competitor id → last price-write time (data freshness).
+            const comp = data?.competitors.find((x) => x.adapter_name === c.adapter);
+            const ts = comp ? data?.lastUpdated?.[comp.id] ?? null : null;
+            return (
+              <div key={c.adapter} className="flex flex-col items-stretch gap-0.5">
+                <button
+                  onClick={() => startBulk(c.adapter)}
+                  disabled={bulkStarting || (job?.status === "running" || job?.status === "starting")}
+                  className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border disabled:opacity-60 whitespace-nowrap"
+                  style={{ background: `${c.color}11`, color: c.color, borderColor: `${c.color}55` }}
+                  title={c.title}>
+                  ↻↻ {c.label}
+                </button>
+                <span
+                  className="text-[9px] text-center tabular-nums whitespace-nowrap"
+                  style={{ color: "var(--text-dim)" }}
+                  title="Час останнього оновлення цін цього конкурента (автопрогін щодня о 05:00 + ручні)">
+                  {ts ? `онов. ${fmtDateTime(ts)}` : "— ще не було"}
+                </span>
+              </div>
+            );
+          })}
         </div>
         <button onClick={load}
           className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
