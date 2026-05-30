@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isSantechsharaJobId, readSantechsharaJob } from "@/lib/parser-jobs/santechshara";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,13 @@ export async function GET(
   if (!/^[a-zA-Z0-9_-]{4,64}$/.test(id)) {
     return NextResponse.json({ ok: false, error: "bad_id" }, { status: 400 });
   }
+
+  if (isSantechsharaJobId(id)) {
+    const job = await readSantechsharaJob(id);
+    if (!job) return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
+    return NextResponse.json(job);
+  }
+
   const base = process.env.PARCER_INTERNAL_URL || "http://127.0.0.1:8080";
   try {
     const resp = await fetch(`${base}/api/job/${id}`, {

@@ -74,6 +74,7 @@ async function fetchAllSnapshotsForDate(
       .from("price_snapshots")
       .select("product_id, competitor_id, price, status, found_url")
       .eq("snapshot_date", snapshotDate)
+      .order("created_at", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
     const rows = (data || []) as SnapshotRow[];

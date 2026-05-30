@@ -2467,12 +2467,13 @@ interface ParserJobResult {
   errors?: number;
   new_finds?: number;
   price_changes?: number;
+  blocked?: number;
 }
 interface ParserJob {
   ok: boolean;
   job_id?: string;
   action?: string;
-  status?: "starting" | "running" | "done" | "error";
+  status?: "starting" | "running" | "blocked" | "done" | "error";
   current?: number;
   total?: number;
   label?: string;
@@ -2642,7 +2643,7 @@ function CompetitorPricesView() {
           {([
             { adapter: "vencon",       label: "Vencon",       color: "#118dff", title: "Live-парсинг усіх товарів у Vencon (~45 хв через REQUEST_DELAY 1.5с)" },
             { adapter: "teploradost",  label: "Теплорадість", color: "#107c10", title: "Live-парсинг усіх товарів у Теплорадості (~45 хв)" },
-            { adapter: "santechshara", label: "Сантехшара",   color: "#8e44ad", title: "Запустити фоновий обхід усіх товарів у Сантехшарі. Без Playwright — читає кеш." },
+            { adapter: "santechshara", label: "Сантехшара",   color: "#8e44ad", title: "Запустити браузерний Playwright-обхід усіх товарів у Сантехшарі" },
           ] as const).map((c) => {
             // Map adapter → competitor id → last price-write time (data freshness).
             const comp = data?.competitors.find((x) => x.adapter_name === c.adapter);
@@ -2812,7 +2813,8 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
   const total = job.total ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
   const done = job.status === "done";
-  const failed = job.status === "error";
+  const blocked = job.status === "blocked";
+  const failed = job.status === "error" || blocked;
 
   // Rough ETA: elapsed time ÷ items done × items left. Only meaningful once
   // we have any progress.
@@ -2850,7 +2852,9 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
       <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
         <span className="text-xs font-semibold" style={{ color: accent }}>
           {failed
-            ? `❌ Помилка: ${job.error || "unknown"}`
+            ? blocked
+              ? `Потрібна ручна браузерна сесія: ${job.error || "blocked"}`
+              : `❌ Помилка: ${job.error || "unknown"}`
             : done
               ? `✓ ${runLabel} — оброблено ${current}${total ? ` / ${total}` : ""} товарів`
               : `↻↻ Парсинг ${runLabel} ${job.label ? `· ${job.label}` : ""}`}
@@ -2890,6 +2894,7 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
           <Stat label="Знайдено ціни" value={r.found} color="#107c10" />
           <Stat label="Нових (раніше не було ціни)" value={r.new_finds} color="#118dff" />
           <Stat label="Ціна змінилась" value={r.price_changes} color="#e66c37" />
+          <Stat label="Блокувань" value={r.blocked} color="#8e44ad" />
           <Stat label="Помилок" value={r.errors} color="#d13438" />
         </div>
       )}
