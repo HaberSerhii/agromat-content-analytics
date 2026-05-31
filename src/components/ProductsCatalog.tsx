@@ -73,10 +73,14 @@ interface FiltersResp {
 }
 
 type PresetTab = "all" | "new7" | "changed7" | "noImg" | "noAttr" | "noRev";
+type BulkFilterType = "code" | "ref";
+type BulkFilter = { type: BulkFilterType; ids: number[]; rawText: string };
+type SavedBulkSet = BulkFilter & { id: string; name: string; createdAt: number };
 
 // UI-only pseudo-status id for archived (deleted) products. Mirror of the
 // constant in /api/products/route.ts.
 const ARCHIVE_STATUS_ID = -1;
+const BULK_SETS_STORAGE_KEY = "agromat.analytics.bulkSets.v1";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function fmtNum(n: number | null | undefined): string {
@@ -682,14 +686,18 @@ function StockFilter({ min, max, stockMax, count, onChange }: {
 // ── Bulk-id filter modal ────────────────────────────────────────────────────
 // Paste a list of code or goods_ref values (any whitespace/comma separator) →
 // apply as an exact-match filter to the table.
-function BulkFilterModal({ initialType, initialText, onApply, onClose }: {
-  initialType: "code" | "ref";
+function BulkFilterModal({ initialType, initialText, savedSets, onApply, onSaveSet, onDeleteSet, onClose }: {
+  initialType: BulkFilterType;
   initialText: string;
-  onApply: (type: "code" | "ref", ids: number[], rawText: string) => void;
+  savedSets: SavedBulkSet[];
+  onApply: (type: BulkFilterType, ids: number[], rawText: string) => void;
+  onSaveSet: (name: string, type: BulkFilterType, ids: number[], rawText: string) => void;
+  onDeleteSet: (id: string) => void;
   onClose: () => void;
 }) {
-  const [type, setType] = useState<"code" | "ref">(initialType);
+  const [type, setType] = useState<BulkFilterType>(initialType);
   const [text, setText] = useState(initialText);
+  const [setName, setSetName] = useState("");
 
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -716,6 +724,18 @@ function BulkFilterModal({ initialType, initialText, onApply, onClose }: {
     onClose();
   };
 
+  const saveCurrent = () => {
+    const name = setName.trim();
+    if (!name || parsed.length === 0) return;
+    onSaveSet(name, type, parsed, text);
+    setSetName("");
+  };
+
+  const applySaved = (s: SavedBulkSet) => {
+    onApply(s.type, s.ids, s.rawText);
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
       <div className="rounded-2xl flex flex-col" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", width: "100%", maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
@@ -725,6 +745,37 @@ function BulkFilterModal({ initialType, initialText, onApply, onClose }: {
         </div>
 
         <div className="p-4 space-y-3">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-dim)" }}>Збережені набори</div>
+            {savedSets.length > 0 ? (
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {savedSets.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 border"
+                    style={{ background: "var(--bg-input)", borderColor: "var(--border2)" }}>
+                    <button onClick={() => applySaved(s)}
+                      className="min-w-0 flex-1 text-left cursor-pointer border-0 bg-transparent p-0"
+                      title="Застосувати набір"
+                    >
+                      <span className="block text-xs font-bold truncate" style={{ color: "var(--text)" }}>{s.name}</span>
+                      <span className="block text-[11px] tabular-nums" style={{ color: "var(--text-dim)" }}>
+                        {s.type === "code" ? "Код товара" : "goods_ref"} · {s.ids.length.toLocaleString("uk-UA")} ID
+                      </span>
+                    </button>
+                    <button onClick={() => onDeleteSet(s.id)}
+                      className="px-2 py-1 rounded text-xs cursor-pointer border-0"
+                      title="Видалити збережений набір"
+                      style={{ background: "#d1343811", color: "#d13438" }}
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg px-3 py-2 text-xs border" style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text-dim)" }}>
+                Збережених наборів ще немає. Вставте IDD нижче, введіть назву і натисніть “Зберегти набір”.
+              </div>
+            )}
+          </div>
+
           {/* Type chooser */}
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-dim)" }}>Фільтрувати за</div>
@@ -760,6 +811,23 @@ function BulkFilterModal({ initialType, initialText, onApply, onClose }: {
             />
             <div className="text-[11px] mt-1 tabular-nums" style={{ color: parsed.length > 0 ? "#107c10" : "var(--text-dim)" }}>
               {parsed.length > 0 ? `✓ Розпізнано ${parsed.length} унікальних ID` : "Вставте ID-шники щоб продовжити"}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-dim)" }}>Ручне збереження набору</div>
+            <div className="flex gap-2">
+              <input
+                value={setName}
+                onChange={(e) => setSetName(e.target.value)}
+                placeholder="Наприклад: Акція 1"
+                className="flex-1 rounded-lg px-3 py-2 text-xs border outline-none"
+                style={{ background: "var(--bg-input)", color: "var(--text)", borderColor: "var(--border2)" }}
+              />
+              <button onClick={saveCurrent} disabled={!setName.trim() || parsed.length === 0}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer border-0 disabled:opacity-50"
+                style={{ background: "#107c10", color: "#fff" }}
+              >Зберегти набір</button>
             </div>
           </div>
         </div>
@@ -2935,7 +3003,8 @@ export function ProductsCatalog() {
   const [maxStock, setMaxStock] = useState<number | null>(null);
   // Bulk filter — null when not active. Stores the raw text too, so reopening
   // the modal pre-fills the textarea for further editing.
-  const [bulk, setBulk] = useState<{ type: "code" | "ref"; ids: number[]; rawText: string } | null>(null);
+  const [bulk, setBulk] = useState<BulkFilter | null>(null);
+  const [savedBulkSets, setSavedBulkSets] = useState<SavedBulkSet[]>([]);
   const [openBulk, setOpenBulk] = useState(false);
   // Snapshot date — null = live data, "YYYY-MM-DD" = frozen state of that day
   const [asOf, setAsOf] = useState<string | null>(null);
@@ -2958,6 +3027,43 @@ export function ProductsCatalog() {
   // change history grouped by Фото/Атрибути/Відгуки/Артикул/Ціни) vs
   // "prices" (Vencon/Теплорадість/Сантехшара side-by-side from parser DB).
   const [mode, setMode] = useState<"catalog" | "timeline" | "prices">("catalog");
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(BULK_SETS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSavedBulkSets(parsed.filter((s) =>
+          s && typeof s.id === "string" && typeof s.name === "string" &&
+          (s.type === "code" || s.type === "ref") && Array.isArray(s.ids)
+        ));
+      }
+    } catch {}
+  }, []);
+
+  const persistBulkSets = useCallback((next: SavedBulkSet[]) => {
+    setSavedBulkSets(next);
+    try { window.localStorage.setItem(BULK_SETS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+
+  const saveBulkSet = useCallback((name: string, type: BulkFilterType, ids: number[], rawText: string) => {
+    const clean = name.trim();
+    if (!clean || ids.length === 0) return;
+    const nextSet: SavedBulkSet = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: clean,
+      type,
+      ids,
+      rawText,
+      createdAt: Date.now(),
+    };
+    persistBulkSets([nextSet, ...savedBulkSets.filter((s) => s.name.toLowerCase() !== clean.toLowerCase())]);
+  }, [persistBulkSets, savedBulkSets]);
+
+  const deleteBulkSet = useCallback((id: string) => {
+    persistBulkSets(savedBulkSets.filter((s) => s.id !== id));
+  }, [persistBulkSets, savedBulkSets]);
 
   // Reset to page 1 when any filter changes
   useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
@@ -3723,7 +3829,10 @@ export function ProductsCatalog() {
         <BulkFilterModal
           initialType={bulk?.type ?? "code"}
           initialText={bulk?.rawText ?? ""}
+          savedSets={savedBulkSets}
           onApply={(t, ids, raw) => setBulk({ type: t, ids, rawText: raw })}
+          onSaveSet={saveBulkSet}
+          onDeleteSet={deleteBulkSet}
           onClose={() => setOpenBulk(false)}
         />
       )}
