@@ -100,8 +100,13 @@ export async function GET(request: Request) {
   // Attribute-count threshold: keep only products with attributesCount < maxAttributes.
   const maxAttributes = q.get("max_attributes") ? parseInt(q.get("max_attributes")!, 10) : null;
 
-  // Bulk-id filter: user pastes a list of codes or goods_refs (whitespace/comma
-  // separated) → we filter to that exact set and report which inputs we couldn't find.
+  // Bulk-id filter: user pastes a list of identifiers (whitespace/comma separated)
+  // → we filter to that exact set and report which inputs we couldn't find.
+  // `ids_in` matches each value against BOTH `code` and `goods_ref` (parser-style,
+  // no field toggle). `codes_in`/`refs_in` kept for backward compat with any
+  // bookmarked URLs / older saved sets that still target a single field.
+  const idsIn = parseIntList(q.get("ids_in"));
+  const idsInSet = new Set(idsIn);
   const codesIn = parseIntList(q.get("codes_in"));
   const refsIn = parseIntList(q.get("refs_in"));
   const codesInSet = new Set(codesIn);
@@ -169,6 +174,7 @@ export async function GET(request: Request) {
       if (minStock != null && (p.stockQty ?? 0) < minStock) return false;
       if (maxStock != null && (p.stockQty ?? 0) > maxStock) return false;
     }
+    if (idsInSet.size && !(idsInSet.has(p.code) || idsInSet.has(p.goodsRef))) return false;
     if (codesInSet.size && !codesInSet.has(p.code)) return false;
     if (refsInSet.size && !refsInSet.has(p.goodsRef)) return false;
     return true;
@@ -219,8 +225,18 @@ export async function GET(request: Request) {
 
   // Bulk-id report: which of the inputs were not present in the catalog at all
   // (used by the "Набір товарів" UI to highlight missing items).
+  let notFoundIds: number[] = [];
   let notFoundCodes: number[] = [];
   let notFoundRefs: number[] = [];
+  if (idsInSet.size) {
+    // An input is "found" if it matches a product's code OR its goods_ref.
+    const present = new Set<number>();
+    for (const p of all) {
+      if (idsInSet.has(p.code)) present.add(p.code);
+      if (idsInSet.has(p.goodsRef)) present.add(p.goodsRef);
+    }
+    notFoundIds = idsIn.filter((id) => !present.has(id));
+  }
   if (codesInSet.size) {
     const presentCodes = new Set<number>();
     for (const p of all) if (codesInSet.has(p.code)) presentCodes.add(p.code);
@@ -288,6 +304,7 @@ export async function GET(request: Request) {
     availableBrands,
     priceMax,
     stockMax,
+    notFoundIds,
     notFoundCodes,
     notFoundRefs,
     asOf: asOfValid ? asOf : null,

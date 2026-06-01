@@ -29,8 +29,7 @@ interface ListResponse {
   availableBrands: FacetOption[];
   priceMax: number;
   stockMax: number;
-  notFoundCodes: number[];
-  notFoundRefs: number[];
+  notFoundIds: number[];
   asOf: string | null;
   stats: {
     totalAll: number;
@@ -73,9 +72,11 @@ interface FiltersResp {
 }
 
 type PresetTab = "all" | "new7" | "changed7" | "noImg" | "noAttr" | "noRev";
-type BulkFilterType = "code" | "ref";
-type BulkFilter = { type: BulkFilterType; ids: number[]; rawText: string };
-type SavedBulkSet = BulkFilter & { id: string; name: string; createdAt: number };
+// Bulk-id filter: a pasted list of identifiers matched against BOTH `code` and
+// `goods_ref` (parser-style — no field toggle). `matchedCount` is the number of
+// catalog products the set resolves to, resolved once at save time.
+type BulkFilter = { ids: number[]; rawText: string };
+type SavedBulkSet = BulkFilter & { id: string; name: string; createdAt: number; matchedCount?: number };
 
 // UI-only pseudo-status id for archived (deleted) products. Mirror of the
 // constant in /api/products/route.ts.
@@ -684,18 +685,17 @@ function StockFilter({ min, max, stockMax, count, onChange }: {
 }
 
 // ── Bulk-id filter modal ────────────────────────────────────────────────────
-// Paste a list of code or goods_ref values (any whitespace/comma separator) →
-// apply as an exact-match filter to the table.
-function BulkFilterModal({ initialType, initialText, savedSets, onApply, onSaveSet, onDeleteSet, onClose }: {
-  initialType: BulkFilterType;
+// Paste a list of identifiers (any whitespace/comma separator) → apply as an
+// exact-match filter. Each value is matched against BOTH `code` and `goods_ref`
+// (parser-style), so the user doesn't need to know which field they're pasting.
+function BulkFilterModal({ initialText, savedSets, onApply, onSaveSet, onDeleteSet, onClose }: {
   initialText: string;
   savedSets: SavedBulkSet[];
-  onApply: (type: BulkFilterType, ids: number[], rawText: string) => void;
-  onSaveSet: (name: string, type: BulkFilterType, ids: number[], rawText: string) => void;
+  onApply: (ids: number[], rawText: string) => void;
+  onSaveSet: (name: string, ids: number[], rawText: string) => void;
   onDeleteSet: (id: string) => void;
   onClose: () => void;
 }) {
-  const [type, setType] = useState<BulkFilterType>(initialType);
   const [text, setText] = useState(initialText);
   const [setName, setSetName] = useState("");
 
@@ -720,19 +720,19 @@ function BulkFilterModal({ initialType, initialText, savedSets, onApply, onSaveS
 
   const apply = () => {
     if (parsed.length === 0) return;
-    onApply(type, parsed, text);
+    onApply(parsed, text);
     onClose();
   };
 
   const saveCurrent = () => {
     const name = setName.trim();
     if (!name || parsed.length === 0) return;
-    onSaveSet(name, type, parsed, text);
+    onSaveSet(name, parsed, text);
     setSetName("");
   };
 
   const applySaved = (s: SavedBulkSet) => {
-    onApply(s.type, s.ids, s.rawText);
+    onApply(s.ids, s.rawText);
     onClose();
   };
 
@@ -758,7 +758,7 @@ function BulkFilterModal({ initialType, initialText, savedSets, onApply, onSaveS
                     >
                       <span className="block text-xs font-bold truncate" style={{ color: "var(--text)" }}>{s.name}</span>
                       <span className="block text-[11px] tabular-nums" style={{ color: "var(--text-dim)" }}>
-                        {s.type === "code" ? "Код товара" : "goods_ref"} · {s.ids.length.toLocaleString("uk-UA")} ID
+                        {(s.matchedCount ?? s.ids.length).toLocaleString("uk-UA")} товарів
                       </span>
                     </button>
                     <button onClick={() => onDeleteSet(s.id)}
@@ -771,31 +771,15 @@ function BulkFilterModal({ initialType, initialText, savedSets, onApply, onSaveS
               </div>
             ) : (
               <div className="rounded-lg px-3 py-2 text-xs border" style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text-dim)" }}>
-                Збережених наборів ще немає. Вставте IDD нижче, введіть назву і натисніть “Зберегти набір”.
+                Збережених наборів ще немає. Вставте ID нижче, введіть назву і натисніть “Зберегти набір”.
               </div>
             )}
-          </div>
-
-          {/* Type chooser */}
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-dim)" }}>Фільтрувати за</div>
-            <div className="flex gap-1 rounded-lg p-0.5 w-fit" style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
-              {[
-                { v: "code" as const, label: "Код товара" },
-                { v: "ref"  as const, label: "goods_ref" },
-              ].map((o) => (
-                <button key={o.v} onClick={() => setType(o.v)}
-                  className="px-3 py-1 rounded text-xs font-semibold cursor-pointer border-0"
-                  style={type === o.v ? { background: "#118dff", color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
-                >{o.label}</button>
-              ))}
-            </div>
           </div>
 
           {/* Paste field */}
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-dim)" }}>
-              Вставте список ({type === "code" ? "коди товару" : "goods_ref"})
+              Вставте список (code / goods_ref)
               <span className="font-normal ml-2" style={{ color: "var(--text-dim2)" }}>
                 — через пробіл, кому, табуляцію або новий рядок
               </span>
@@ -811,6 +795,9 @@ function BulkFilterModal({ initialType, initialText, savedSets, onApply, onSaveS
             />
             <div className="text-[11px] mt-1 tabular-nums" style={{ color: parsed.length > 0 ? "#107c10" : "var(--text-dim)" }}>
               {parsed.length > 0 ? `✓ Розпізнано ${parsed.length} унікальних ID` : "Вставте ID-шники щоб продовжити"}
+            </div>
+            <div className="text-[11px] mt-0.5" style={{ color: "var(--text-dim2)" }}>
+              Збіг шукається серед полів API <b>code</b> або <b>goods_ref</b>.
             </div>
           </div>
 
@@ -3034,10 +3021,13 @@ export function ProductsCatalog() {
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        setSavedBulkSets(parsed.filter((s) =>
-          s && typeof s.id === "string" && typeof s.name === "string" &&
-          (s.type === "code" || s.type === "ref") && Array.isArray(s.ids)
-        ));
+        // Migrate older sets (which carried a `type` field) — the filter now
+        // matches both code + goods_ref, so `type` is dropped on load.
+        setSavedBulkSets(
+          parsed
+            .filter((s) => s && typeof s.id === "string" && typeof s.name === "string" && Array.isArray(s.ids))
+            .map(({ type: _drop, ...s }) => s as SavedBulkSet),
+        );
       }
     } catch {}
   }, []);
@@ -3047,18 +3037,32 @@ export function ProductsCatalog() {
     try { window.localStorage.setItem(BULK_SETS_STORAGE_KEY, JSON.stringify(next)); } catch {}
   }, []);
 
-  const saveBulkSet = useCallback((name: string, type: BulkFilterType, ids: number[], rawText: string) => {
+  const saveBulkSet = useCallback(async (name: string, ids: number[], rawText: string) => {
     const clean = name.trim();
     if (!clean || ids.length === 0) return;
     const nextSet: SavedBulkSet = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name: clean,
-      type,
       ids,
       rawText,
       createdAt: Date.now(),
     };
-    persistBulkSets([nextSet, ...savedBulkSets.filter((s) => s.name.toLowerCase() !== clean.toLowerCase())]);
+    const without = savedBulkSets.filter((s) => s.name.toLowerCase() !== clean.toLowerCase());
+    persistBulkSets([nextSet, ...without]);
+    // Resolve how many catalog products this set actually maps to (matched on
+    // code OR goods_ref) so the saved-set list can show "N товарів" like the
+    // parser. Best-effort — the set is already saved; we just enrich it.
+    try {
+      const r = await fetch(`/api/products?ids_in=${ids.join(",")}&limit=1`, { cache: "no-store" });
+      if (r.ok) {
+        const d = (await r.json()) as ListResponse;
+        setSavedBulkSets((cur) => {
+          const next = cur.map((s) => (s.id === nextSet.id ? { ...s, matchedCount: d.total } : s));
+          try { window.localStorage.setItem(BULK_SETS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        });
+      }
+    } catch {}
   }, [persistBulkSets, savedBulkSets]);
 
   const deleteBulkSet = useCallback((id: string) => {
@@ -3081,7 +3085,7 @@ export function ProductsCatalog() {
     if (minStock != null) p.set("min_stock", String(minStock));
     if (maxStock != null) p.set("max_stock", String(maxStock));
     if (bulk && bulk.ids.length > 0) {
-      p.set(bulk.type === "code" ? "codes_in" : "refs_in", bulk.ids.join(","));
+      p.set("ids_in", bulk.ids.join(","));
     }
     if (asOf) p.set("as_of", asOf);
     if (hasImages === "true" || hasImages === "false") p.set("has_images", hasImages);
@@ -3412,7 +3416,7 @@ export function ProductsCatalog() {
             and offers a copy-to-clipboard of the not-found IDs in the same format. */}
         {bulk && data && (
           (() => {
-            const notFound = bulk.type === "code" ? data.notFoundCodes : data.notFoundRefs;
+            const notFound = data.notFoundIds;
             const requested = bulk.ids.length;
             const found = requested - notFound.length;
             const copyMissing = async () => {
@@ -3422,7 +3426,7 @@ export function ProductsCatalog() {
               const sep = bulk.rawText.includes(",") ? ", " : "\n";
               try {
                 await _copyText(notFound.join(sep));
-                setToast(`Скопійовано ${notFound.length} не знайдених ${bulk.type === "code" ? "кодів" : "goods_ref"}`);
+                setToast(`Скопійовано ${notFound.length} не знайдених ID`);
               } catch (e) {
                 setToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
               }
@@ -3431,7 +3435,7 @@ export function ProductsCatalog() {
               <div className="mb-3 px-3 py-2 rounded-lg flex items-center justify-between gap-2 flex-wrap"
                 style={{ background: "#118dff11", border: "1px solid #118dff44", color: "#118dff" }}>
                 <span className="text-xs font-semibold tabular-nums">
-                  📋 Набір {bulk.type === "code" ? "за кодом товара" : "за goods_ref"}:
+                  📋 Набір товарів:
                   <span className="ml-1.5" style={{ color: "var(--text)" }}>
                     {found.toLocaleString("uk-UA")} / {requested.toLocaleString("uk-UA")}
                   </span>
@@ -3827,10 +3831,9 @@ export function ProductsCatalog() {
 
       {openBulk && (
         <BulkFilterModal
-          initialType={bulk?.type ?? "code"}
           initialText={bulk?.rawText ?? ""}
           savedSets={savedBulkSets}
-          onApply={(t, ids, raw) => setBulk({ type: t, ids, rawText: raw })}
+          onApply={(ids, raw) => setBulk({ ids, rawText: raw })}
           onSaveSet={saveBulkSet}
           onDeleteSet={deleteBulkSet}
           onClose={() => setOpenBulk(false)}
