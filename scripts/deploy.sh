@@ -56,7 +56,12 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   CURRENT_STEP="npm ci (clean install from lockfile)"
   echo "▸ $CURRENT_STEP"
   # Use `ci` not `install` — deterministic and recovers from prior broken state.
-  npm ci --no-audit --no-fund
+  # CRITICAL: this script is spawned by /api/admin/deploy, which runs *inside* the
+  # Next.js standalone server where NODE_ENV=production. Under that env `npm ci`
+  # omits devDependencies → only ~46 packages install (instead of ~384) and
+  # `next build` dies with the cryptic "[TypeError: generate is not a function]"
+  # (typescript/tailwind/postcss live in devDependencies). Force dev deps in.
+  NODE_ENV=development npm ci --include=dev --no-audit --no-fund
 
   CURRENT_STEP="npm run build"
   echo "▸ $CURRENT_STEP"
