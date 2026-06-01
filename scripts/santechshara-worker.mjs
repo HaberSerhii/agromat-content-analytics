@@ -205,9 +205,18 @@ async function insertRows(db, rows) {
   }
 }
 
+// This worker only does REST (.select()/.insert()) — it never opens a realtime
+// channel. But @supabase/supabase-js eagerly builds a RealtimeClient inside
+// createClient, and on Node < 22 (the VPS runs Node 20) that constructor calls
+// getWebSocketConstructor() and throws "Node.js 20 detected without native
+// WebSocket support" before main() can do anything. Passing a stub `transport`
+// short-circuits that lookup. It's never instantiated because we never subscribe.
+class UnusedRealtimeTransport {}
+
 async function main() {
   const db = createClient(requireEnv("SUPABASE_URL"), requireEnv("SUPABASE_KEY"), {
     auth: { persistSession: false },
+    realtime: { transport: UnusedRealtimeTransport },
   });
 
   await writeJob({ status: "starting", label: "Сантехшара: читаю URL-и з БД" });
