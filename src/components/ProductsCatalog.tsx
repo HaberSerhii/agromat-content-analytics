@@ -2504,6 +2504,9 @@ interface PricesResponse {
   // competitorId → ISO of the most recent price write for that competitor
   // (latest created_at in price_snapshots). Powers the per-button "last updated".
   lastUpdated: Record<number, string | null>;
+  // competitorId → how many products' price changed in the latest run vs the
+  // previous run (null = couldn't compute / no prior run). Shown under each button.
+  priceChanges: Record<number, number | null>;
   rows: PricesRow[];
   total: number;
   page: number;
@@ -2537,6 +2540,19 @@ interface ParserJob {
   error?: string | null;
   result?: ParserJobResult | null;
 }
+
+// Per-competitor button styling, keyed by adapter_name. Anything not listed
+// (a freshly added competitor) falls back to a neutral grey button, so the UI
+// never breaks when the DB gains a new competitor before this map is updated.
+const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
+  vencon:       { color: "#118dff", title: "Live-парсинг усіх товарів у Vencon (~45 хв через REQUEST_DELAY 1.5с)" },
+  teploradost:  { color: "#107c10", title: "Live-парсинг усіх товарів у Теплорадості (~45 хв)" },
+  santechshara: { color: "#8e44ad", title: "Браузерний Playwright-обхід усіх товарів у Сантехшарі (не входить в автопрогін)" },
+  drop:         { color: "#e8590c", title: "Live-перепарсинг усіх товарів у Drop" },
+  depoint:      { color: "#0b7285", title: "Live-перепарсинг усіх товарів у Depoint" },
+  vannaja:      { color: "#9c36b5", title: "Live-перепарсинг усіх товарів у Vannaja" },
+  kranok:       { color: "#2b8a3e", title: "Live-перепарсинг усіх товарів у Kranok" },
+};
 
 function CompetitorPricesView() {
   const [data, setData] = useState<PricesResponse | null>(null);
@@ -2627,7 +2643,7 @@ function CompetitorPricesView() {
   // Mass-reparse: start the job, then poll its status every 5s until done.
   // Auto-refetches the table when the job finishes. Generic over competitor —
   // Flask exposes prices-vencon / prices-teploradost / prices-santechshara.
-  const startBulk = useCallback(async (adapter: "vencon" | "teploradost" | "santechshara") => {
+  const startBulk = useCallback(async (adapter: string) => {
     setBulkStarting(true);
     setError("");
     try {
@@ -2691,33 +2707,38 @@ function CompetitorPricesView() {
             Знімок цін за <b style={{ color: "var(--text-mid)" }}>{data.snapshotDate}</b>
           </span>
         )}
-        {/* Three mass-reparse buttons, one per competitor. Only one Flask job
-            can run at a time (semaphored in app.py), so all three are
-            disabled while ANY job is in flight. */}
+        {/* One mass-reparse button per competitor, derived from the DB list so
+            new competitors show up automatically. Under each: when its prices
+            were last refreshed + how many changed vs the previous run. Only one
+            Flask job runs at a time (semaphored in app.py), so all are disabled
+            while ANY job is in flight. The daily 05:00 auto-run covers every
+            competitor except Сантехшара (Cloudflare — manual only). */}
         <div className="ml-auto flex gap-1 flex-wrap">
-          {([
-            { adapter: "vencon",       label: "Vencon",       color: "#118dff", title: "Live-парсинг усіх товарів у Vencon (~45 хв через REQUEST_DELAY 1.5с)" },
-            { adapter: "teploradost",  label: "Теплорадість", color: "#107c10", title: "Live-парсинг усіх товарів у Теплорадості (~45 хв)" },
-            { adapter: "santechshara", label: "Сантехшара",   color: "#8e44ad", title: "Запустити браузерний Playwright-обхід усіх товарів у Сантехшарі" },
-          ] as const).map((c) => {
-            // Map adapter → competitor id → last price-write time (data freshness).
-            const comp = data?.competitors.find((x) => x.adapter_name === c.adapter);
-            const ts = comp ? data?.lastUpdated?.[comp.id] ?? null : null;
+          {(data?.competitors ?? []).map((comp) => {
+            const meta = COMPETITOR_BTN_META[comp.adapter_name] ?? { color: "#6b7280" };
+            const ts = data?.lastUpdated?.[comp.id] ?? null;
+            const changed = data?.priceChanges?.[comp.id] ?? null;
             return (
-              <div key={c.adapter} className="flex flex-col items-stretch gap-0.5">
+              <div key={comp.id} className="flex flex-col items-stretch gap-0.5">
                 <button
-                  onClick={() => startBulk(c.adapter)}
+                  onClick={() => startBulk(comp.adapter_name)}
                   disabled={bulkStarting || (job?.status === "running" || job?.status === "starting")}
                   className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border disabled:opacity-60 whitespace-nowrap"
-                  style={{ background: `${c.color}11`, color: c.color, borderColor: `${c.color}55` }}
-                  title={c.title}>
-                  ↻↻ {c.label}
+                  style={{ background: `${meta.color}11`, color: meta.color, borderColor: `${meta.color}55` }}
+                  title={meta.title ?? `Live-перепарсинг усіх товарів у «${comp.name}»`}>
+                  ↻↻ {comp.name}
                 </button>
                 <span
-                  className="text-[9px] text-center tabular-nums whitespace-nowrap"
+                  className="text-[9px] text-center tabular-nums whitespace-nowrap leading-tight"
                   style={{ color: "var(--text-dim)" }}
-                  title="Час останнього оновлення цін цього конкурента (автопрогін щодня о 05:00 + ручні)">
+                  title="Час останнього оновлення цін + скільки товарів змінили ціну порівняно з попереднім прогоном (автопрогін щодня о 05:00, окрім Сантехшари)">
                   {ts ? `онов. ${fmtDateTime(ts)}` : "— ще не було"}
+                  {changed != null && changed > 0 && (
+                    <><br /><b style={{ color: "#d83b01" }}>змінено цін: {changed}</b></>
+                  )}
+                  {changed === 0 && ts && (
+                    <><br /><span>без змін</span></>
+                  )}
                 </span>
               </div>
             );

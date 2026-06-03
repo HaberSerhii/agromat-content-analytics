@@ -111,6 +111,65 @@ async function fetchProductsByIds(
   return out;
 }
 
+// Latest price per product for one competitor on one snapshot_date. A day can
+// hold several rows per product (e.g. a manual reparse on top of the auto run),
+// so we order by created_at and let the newest win — same rule the table uses.
+// Returns null on error so the caller can degrade gracefully.
+async function fetchPricesForCompetitorDate(
+  db: SupabaseClient, competitorId: number, date: string,
+): Promise<Map<number, number | null> | null> {
+  const map = new Map<number, number | null>();
+  let from = 0;
+  for (let i = 0; i < 50; i++) {
+    const { data, error } = await db
+      .from("price_snapshots")
+      .select("product_id, price")
+      .eq("competitor_id", competitorId)
+      .eq("snapshot_date", date)
+      .order("created_at", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) return null;
+    const rows = (data || []) as { product_id: number; price: number | null }[];
+    for (const r of rows) map.set(r.product_id, r.price);
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return map;
+}
+
+// How many products' price changed between this competitor's latest run and its
+// previous run — i.e. compare the latest snapshot_date against the prior distinct
+// snapshot_date and count products whose (non-null) price differs. This is the
+// "скільки цін змінилось" figure shown under each competitor. Best-effort: any
+// failure yields null and the UI just omits the number.
+async function countPriceChanges(
+  db: SupabaseClient, competitorId: number, latestDate: string,
+): Promise<number | null> {
+  const { data: prevRows, error: pErr } = await db
+    .from("price_snapshots")
+    .select("snapshot_date")
+    .eq("competitor_id", competitorId)
+    .lt("snapshot_date", latestDate)
+    .order("snapshot_date", { ascending: false })
+    .limit(1);
+  if (pErr) return null;
+  const prevDate = prevRows?.[0]?.snapshot_date as string | undefined;
+  if (!prevDate) return 0; // first ever run for this competitor — nothing to diff
+
+  const [latest, prev] = await Promise.all([
+    fetchPricesForCompetitorDate(db, competitorId, latestDate),
+    fetchPricesForCompetitorDate(db, competitorId, prevDate),
+  ]);
+  if (!latest || !prev) return null;
+
+  let changed = 0;
+  for (const [pid, price] of latest) {
+    const before = prev.get(pid);
+    if (before != null && price != null && Number(before) !== Number(price)) changed++;
+  }
+  return changed;
+}
+
 export async function GET(request: Request) {
   const q = new URL(request.url).searchParams;
   const search = (q.get("search") || "").trim().toLowerCase();
@@ -133,16 +192,24 @@ export async function GET(request: Request) {
   //     refreshed" in the UI (incl. the daily 05:00 auto-run). One indexed
   //     order-by-limit-1 query per competitor (~3 round trips). Best-effort:
   //     a failure just yields null, never blocks the table.
+  //     Same query also yields the latest snapshot_date, which seeds the
+  //     per-competitor "price changed" count (latest run vs previous run).
   const lastUpdated: Record<number, string | null> = {};
+  const priceChanges: Record<number, number | null> = {};
   await Promise.all(
     competitors.map(async (c) => {
       const { data } = await db
         .from("price_snapshots")
-        .select("created_at")
+        .select("created_at, snapshot_date")
         .eq("competitor_id", c.id)
+        .order("snapshot_date", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(1);
-      lastUpdated[c.id] = (data?.[0]?.created_at as string | undefined) ?? null;
+      const row = data?.[0] as { created_at?: string; snapshot_date?: string } | undefined;
+      lastUpdated[c.id] = row?.created_at ?? null;
+      priceChanges[c.id] = row?.snapshot_date
+        ? await countPriceChanges(db, c.id, row.snapshot_date)
+        : null;
     }),
   );
 
@@ -177,6 +244,7 @@ export async function GET(request: Request) {
       snapshotDate: effectiveDate,
       competitors,
       lastUpdated,
+      priceChanges,
       rows: [],
       total: 0,
       page,
@@ -236,6 +304,7 @@ export async function GET(request: Request) {
     snapshotDate: effectiveDate,
     competitors,
     lastUpdated,
+    priceChanges,
     rows: paged,
     total,
     page,
