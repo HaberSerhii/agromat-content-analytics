@@ -22,7 +22,6 @@ const ALLOWED_ACTIONS = new Set([
   "prices-drop",
   "prices-depoint",
   "prices-vannaja",
-  "prices-kranok",
 ]);
 
 async function findRepoRoot(start: string): Promise<string> {

@@ -2551,7 +2551,6 @@ const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
   drop:         { color: "#e8590c", title: "Live-перепарсинг усіх товарів у Drop" },
   depoint:      { color: "#0b7285", title: "Live-перепарсинг усіх товарів у Depoint" },
   vannaja:      { color: "#9c36b5", title: "Live-перепарсинг усіх товарів у Vannaja" },
-  kranok:       { color: "#2b8a3e", title: "Live-перепарсинг усіх товарів у Kranok" },
 };
 
 function CompetitorPricesView() {
