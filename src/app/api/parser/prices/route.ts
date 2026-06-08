@@ -30,6 +30,8 @@ interface SnapshotRow {
 
 interface ProductRow {
   id: number;
+  code: number | null;
+  goods_ref: number | null;
   sku: string | null;
   name: string;
   brand: string | null;
@@ -63,6 +65,14 @@ function parseIntOr(v: string | null, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseIntList(v: string | null): number[] {
+  if (!v) return [];
+  return v
+    .split(",")
+    .map((x) => parseInt(x.trim(), 10))
+    .filter((n) => Number.isFinite(n));
+}
+
 async function fetchAllSnapshotsForDate(
   db: SupabaseClient, snapshotDate: string,
 ): Promise<SnapshotRow[]> {
@@ -86,7 +96,7 @@ async function fetchAllSnapshotsForDate(
 }
 
 async function fetchProductsByIds(
-  db: SupabaseClient, ids: number[], search: string,
+  db: SupabaseClient, ids: number[], search: string, idsInSet: Set<number>,
 ): Promise<ProductRow[]> {
   if (ids.length === 0) return [];
   const out: ProductRow[] = [];
@@ -94,7 +104,7 @@ async function fetchProductsByIds(
     const chunk = ids.slice(i, i + ID_CHUNK);
     let q = db
       .from("products")
-      .select("id, sku, name, brand, category, actual_price, url, agromat_status")
+      .select("id, code, goods_ref, sku, name, brand, category, actual_price, url, agromat_status")
       .eq("is_active", true)
       .in("id", chunk)
       // A single chunk can never overflow because chunk ≤ 500 ≤ PAGE; but
@@ -106,7 +116,16 @@ async function fetchProductsByIds(
     }
     const { data, error } = await q;
     if (error) throw new Error(error.message);
-    out.push(...((data || []) as ProductRow[]));
+    const rows = (data || []) as ProductRow[];
+    if (idsInSet.size) {
+      out.push(...rows.filter((p) =>
+        idsInSet.has(p.id) ||
+        (p.code != null && idsInSet.has(p.code)) ||
+        (p.goods_ref != null && idsInSet.has(p.goods_ref)),
+      ));
+    } else {
+      out.push(...rows);
+    }
   }
   return out;
 }
@@ -176,6 +195,8 @@ export async function GET(request: Request) {
   const page = Math.max(parseIntOr(q.get("page"), 1), 1);
   const limit = Math.min(Math.max(parseIntOr(q.get("limit"), 50), 1), 200);
   const snapshotDate = q.get("snapshot_date") || null;
+  const idsIn = parseIntList(q.get("ids_in"));
+  const idsInSet = new Set(idsIn);
 
   const db = getSupabase();
 
@@ -249,14 +270,26 @@ export async function GET(request: Request) {
       total: 0,
       page,
       limit,
+      notFoundIds: idsIn,
     });
   }
 
   let products: ProductRow[];
   try {
-    products = await fetchProductsByIds(db, productIdList, search);
+    products = await fetchProductsByIds(db, productIdList, search, idsInSet);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
+  }
+
+  let notFoundIds: number[] = [];
+  if (idsInSet.size) {
+    const present = new Set<number>();
+    for (const p of products) {
+      if (idsInSet.has(p.id)) present.add(p.id);
+      if (p.code != null && idsInSet.has(p.code)) present.add(p.code);
+      if (p.goods_ref != null && idsInSet.has(p.goods_ref)) present.add(p.goods_ref);
+    }
+    notFoundIds = idsIn.filter((id) => !present.has(id));
   }
 
   // 5) Index snapshots by product → competitor for O(1) cell lookup.
@@ -309,5 +342,6 @@ export async function GET(request: Request) {
     total,
     page,
     limit,
+    notFoundIds,
   });
 }

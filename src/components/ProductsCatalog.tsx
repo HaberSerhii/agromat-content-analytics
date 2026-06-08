@@ -2655,6 +2655,7 @@ interface PricesResponse {
   total: number;
   page: number;
   limit: number;
+  notFoundIds: number[];
 }
 
 // Mass-reparse job status returned by /api/parser/job/<id>. Mirrors Flask's
@@ -2700,7 +2701,17 @@ const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
 const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
 const LOCAL_RUNNER_URL = "http://127.0.0.1:8765";
 
-function CompetitorPricesView() {
+function CompetitorPricesView({
+  bulk,
+  onOpenBulk,
+  onClearBulk,
+  onToast,
+}: {
+  bulk: BulkFilter | null;
+  onOpenBulk: () => void;
+  onClearBulk: () => void;
+  onToast: (message: string) => void;
+}) {
   const [data, setData] = useState<PricesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -2719,20 +2730,21 @@ function CompetitorPricesView() {
     return () => window.clearTimeout(id);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [searchDebounced]);
+  useEffect(() => { setPage(1); }, [searchDebounced, bulk]);
 
   const load = useCallback(() => {
     const p = new URLSearchParams();
     p.set("page", String(page));
     p.set("limit", String(limit));
     if (searchDebounced) p.set("search", searchDebounced);
+    if (bulk && bulk.ids.length > 0) p.set("ids_in", bulk.ids.join(","));
     setLoading(true); setError("");
     fetch(`/api/parser/prices?${p.toString()}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: PricesResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
       .finally(() => setLoading(false));
-  }, [page, limit, searchDebounced]);
+  }, [page, limit, searchDebounced, bulk]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2877,6 +2889,26 @@ function CompetitorPricesView() {
           className="rounded-lg px-2 py-1 text-xs border outline-none"
           style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: search ? "#118dff" : "var(--border2)", minWidth: 320 }}
         />
+        <button
+          onClick={onOpenBulk}
+          title="Завантажити список кодів товару або goods_ref для точкової фільтрації парсерної аналітики"
+          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border"
+          style={{
+            background: bulk ? "#118dff" : "var(--bg-input)",
+            color: bulk ? "#fff" : "var(--text-mid)",
+            borderColor: bulk ? "#118dff" : "var(--border2)",
+          }}
+        >
+          📋 Набір товарів{bulk ? ` (${bulk.ids.length})` : ""}
+        </button>
+        {bulk && (
+          <button
+            onClick={onClearBulk}
+            title="Скинути набір"
+            className="text-xs px-2 py-1 rounded-lg cursor-pointer border-0"
+            style={{ background: "#d1343811", color: "#d13438" }}
+          >✕</button>
+        )}
         {data?.snapshotDate && (
           <span className="text-[11px]" style={{ color: "var(--text-dim)" }}>
             Знімок цін за <b style={{ color: "var(--text-mid)" }}>{data.snapshotDate}</b>
@@ -2930,6 +2962,53 @@ function CompetitorPricesView() {
           just finished. Dismissible after completion. */}
       {job && (
         <BulkProgressBar job={job} onDismiss={() => setJob(null)} />
+      )}
+
+      {bulk && data && (
+        (() => {
+          const notFound = data.notFoundIds || [];
+          const requested = bulk.ids.length;
+          const found = requested - notFound.length;
+          const copyMissing = async () => {
+            if (!notFound.length) return;
+            const sep = bulk.rawText.includes(",") ? ", " : "\n";
+            try {
+              await _copyText(notFound.join(sep));
+              onToast(`Скопійовано ${notFound.length} не знайдених ID`);
+            } catch (e) {
+              onToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
+            }
+          };
+          return (
+            <div className="mb-3 px-3 py-2 rounded-lg flex items-center justify-between gap-2 flex-wrap"
+              style={{ background: "#118dff11", border: "1px solid #118dff44", color: "#118dff" }}>
+              <span className="text-xs font-semibold tabular-nums">
+                📋 Набір товарів у парсері:
+                <span className="ml-1.5" style={{ color: "var(--text)" }}>
+                  {found.toLocaleString("uk-UA")} / {requested.toLocaleString("uk-UA")}
+                </span>
+                <span className="ml-1" style={{ color: "var(--text-dim)", fontWeight: 400 }}>знайдено</span>
+                {notFound.length > 0 && (
+                  <span className="ml-2" style={{ color: "#d13438" }}>
+                    · {notFound.length.toLocaleString("uk-UA")} не знайдено у знімку парсера
+                  </span>
+                )}
+              </span>
+              <div className="flex items-center gap-2">
+                {notFound.length > 0 && (
+                  <button onClick={copyMissing}
+                    className="text-xs font-semibold px-2 py-1 rounded cursor-pointer border-0"
+                    style={{ background: "#d1343811", color: "#d13438" }}
+                  >📋 Скопіювати не знайдені</button>
+                )}
+                <button onClick={onOpenBulk}
+                  className="text-xs px-2 py-1 rounded cursor-pointer border-0"
+                  style={{ background: "transparent", color: "#118dff", textDecoration: "underline" }}
+                >Редагувати</button>
+              </div>
+            </div>
+          );
+        })()
       )}
 
       {error && (
@@ -3564,7 +3643,14 @@ export function ProductsCatalog() {
       </Card>
 
       {mode === "timeline" && <ChangesTimelineView />}
-      {mode === "prices" && <CompetitorPricesView />}
+      {mode === "prices" && (
+        <CompetitorPricesView
+          bulk={bulk}
+          onOpenBulk={() => setOpenBulk(true)}
+          onClearBulk={() => setBulk(null)}
+          onToast={setToast}
+        />
+      )}
 
       {mode === "catalog" && <>
       <CategorySummaryPanel onFilter={applyCategoryFilter} />
