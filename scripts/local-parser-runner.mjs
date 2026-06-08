@@ -8,13 +8,16 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const PORT = Number(process.env.AGROMAT_LOCAL_RUNNER_PORT || "8765");
-const ALLOWED_ORIGIN_RE = new RegExp(process.env.AGROMAT_LOCAL_RUNNER_ORIGIN_RE || "^(https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?|https?://91\\.239\\.233\\.125(:\\d+)?)$");
+const ALLOWED_ORIGIN_RE = process.env.AGROMAT_LOCAL_RUNNER_ORIGIN_RE
+  ? new RegExp(process.env.AGROMAT_LOCAL_RUNNER_ORIGIN_RE)
+  : null;
 
 const jobs = new Map();
 
 function json(res, status, payload, origin = "") {
-  if (origin && ALLOWED_ORIGIN_RE.test(origin)) {
+  if (origin && (!ALLOWED_ORIGIN_RE || ALLOWED_ORIGIN_RE.test(origin))) {
     res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -67,8 +70,8 @@ function makeCommand(adapter) {
     return {
       cwd: repo,
       title: "Agromat Vannaja local parser",
-      command: `[ -x ${shellQuote(script)} ] && ${shellQuote(script)} || VANNAJA_FIRST_WAIT_SECONDS=12 VANNAJA_WAIT_SECONDS=6 ${shellQuote(fallbackPy)} ${shellQuote(fallbackScript)}`,
-      windowsCommand: `if exist ${winQuote(script)} (${winQuote(script)}) else (set VANNAJA_FIRST_WAIT_SECONDS=12 && set VANNAJA_WAIT_SECONDS=6 && ${winQuote(fallbackPy)} ${winQuote(fallbackScript)})`,
+      command: `[ -x ${shellQuote(script)} ] && ${shellQuote(script)} || VANNAJA_FIRST_WAIT_SECONDS=5 VANNAJA_WAIT_SECONDS=2 VANNAJA_MAX_PAGES=100 ${shellQuote(fallbackPy)} ${shellQuote(fallbackScript)}`,
+      windowsCommand: `if exist ${winQuote(script)} (${winQuote(script)}) else (set VANNAJA_FIRST_WAIT_SECONDS=5 && set VANNAJA_WAIT_SECONDS=2 && set VANNAJA_MAX_PAGES=100 && ${winQuote(fallbackPy)} ${winQuote(fallbackScript)})`,
     };
   }
 
@@ -112,6 +115,7 @@ function start(adapter) {
   if (!spec) return { ok: false, error: "action_not_allowed" };
 
   const jobId = `local-${adapter}-${Date.now().toString(36)}`;
+  console.log(`[${new Date().toISOString()}] Starting ${adapter} parser job ${jobId}`);
   const job = {
     ok: true,
     job_id: jobId,
@@ -130,6 +134,7 @@ function start(adapter) {
   const term = terminalCommand(spec);
   const child = spawn(term.bin, term.args, { detached: true, stdio: "ignore" });
   child.on("error", (e) => {
+    console.error(`[${new Date().toISOString()}] Failed to open terminal for ${adapter} job ${jobId}: ${String(e?.message || e)}`);
     jobs.set(jobId, {
       ...job,
       status: "error",
@@ -145,12 +150,16 @@ function start(adapter) {
     status: "running",
     label: `${adapter}: команда відкрита в локальному терміналі`,
   });
+  console.log(`[${new Date().toISOString()}] Opened local terminal for ${adapter} parser job ${jobId}`);
   return jobs.get(jobId);
 }
 
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || "";
-  if (req.method === "OPTIONS") return json(res, 204, {}, origin);
+  if (req.method === "OPTIONS") {
+    console.log(`[${new Date().toISOString()}] Received OPTIONS ${req.url || "/"} origin=${origin || "-"}`);
+    return json(res, 204, {}, origin);
+  }
 
   const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
   if (url.pathname === "/health") {
@@ -159,6 +168,7 @@ const server = http.createServer(async (req, res) => {
 
   const runMatch = url.pathname.match(/^\/run\/(santechshara|vannaja)$/);
   if (req.method === "POST" && runMatch) {
+    console.log(`[${new Date().toISOString()}] Received ${req.method} ${url.pathname} origin=${origin || "-"}`);
     await readBody(req);
     const result = start(runMatch[1]);
     return json(res, result.ok ? 200 : 400, result, origin);
