@@ -337,6 +337,24 @@ Snapshot-и створюються щодня автоматично після 
 
 ---
 
+## Локальний запуск Сантехшари/Vannaja з кнопок dashboard
+
+Кнопки `Сантехшара` і `Vannaja` у блоці цін запускають браузерний парсинг не на VPS, а на ноутбуці користувача. Для цього на ноутбуці має бути запущений local runner:
+
+```bash
+cd /path/to/Agromat-Analytics
+npm install
+npm run local-parser-runner
+```
+
+Після цього натискання кнопок у dashboard звертається до `http://127.0.0.1:8765` і runner відкриває локальний термінал з потрібною командою. Для `Vannaja` runner очікує, що репозиторій `Agromat_Parcer` лежить поруч з `Agromat-Analytics`; якщо шлях інший:
+
+```bash
+AGROMAT_PARSER_REPO=/absolute/path/to/Agromat_Parcer npm run local-parser-runner
+```
+
+---
+
 ## Змінні оточення
 
 Файл `.env.example` (скопіювати в `.env.local`):

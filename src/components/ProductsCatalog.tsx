@@ -2547,11 +2547,14 @@ interface ParserJob {
 const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
   vencon:       { color: "#118dff", title: "Live-парсинг усіх товарів у Vencon (~45 хв через REQUEST_DELAY 1.5с)" },
   teploradost:  { color: "#107c10", title: "Live-парсинг усіх товарів у Теплорадості (~45 хв)" },
-  santechshara: { color: "#8e44ad", title: "Браузерний Playwright-обхід усіх товарів у Сантехшарі (не входить в автопрогін)" },
+  santechshara: { color: "#8e44ad", title: "Локальний браузерний запуск через Agromat local runner" },
   drop:         { color: "#e8590c", title: "Live-перепарсинг усіх товарів у Drop" },
   depoint:      { color: "#0b7285", title: "Live-перепарсинг усіх товарів у Depoint" },
-  vannaja:      { color: "#9c36b5", title: "Live-перепарсинг усіх товарів у Vannaja" },
+  vannaja:      { color: "#9c36b5", title: "Локальний браузерний запуск через Agromat local runner" },
 };
+
+const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
+const LOCAL_RUNNER_URL = "http://127.0.0.1:8765";
 
 function CompetitorPricesView() {
   const [data, setData] = useState<PricesResponse | null>(null);
@@ -2639,13 +2642,36 @@ function CompetitorPricesView() {
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1;
 
-  // Mass-reparse: start the job, then poll its status every 5s until done.
-  // Auto-refetches the table when the job finishes. Generic over competitor —
-  // Flask exposes prices-vencon / prices-teploradost / prices-santechshara.
+  // Mass-reparse: regular competitors run on the server. Cloudflare-sensitive
+  // competitors run on the user's laptop via Agromat local runner.
   const startBulk = useCallback(async (adapter: string) => {
     setBulkStarting(true);
     setError("");
     try {
+      if (LOCAL_BROWSER_ADAPTERS.has(adapter)) {
+        const resp = await fetch(`${LOCAL_RUNNER_URL}/run/${adapter}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source: "agromat-dashboard" }),
+        });
+        const json = await resp.json().catch(() => ({ ok: false, error: "bad_local_runner_response" }));
+        if (!json.ok) {
+          setError(`Локальний runner не запустив ${adapter}: ${json.error || "unknown"}`);
+          return;
+        }
+        setJob({
+          ok: true,
+          job_id: json.job_id,
+          status: "done",
+          current: 0,
+          total: 0,
+          action: `prices-${adapter}`,
+          label: `${adapter}: команда відкрита в локальному терміналі`,
+          result: null,
+        });
+        return;
+      }
+
       const resp = await fetch(`/api/parser/run/prices-${adapter}`, { method: "POST" });
       const json = await resp.json();
       if (!json.ok) {
@@ -2663,7 +2689,13 @@ function CompetitorPricesView() {
         action: `prices-${adapter}`,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "network error");
+      if (LOCAL_BROWSER_ADAPTERS.has(adapter)) {
+        setError(
+          "Локальний runner не знайдено. На цьому ноутбуці відкрийте термінал у Agromat-Analytics і запустіть: npm run local-parser-runner",
+        );
+      } else {
+        setError(e instanceof Error ? e.message : "network error");
+      }
     } finally {
       setBulkStarting(false);
     }
@@ -2711,7 +2743,8 @@ function CompetitorPricesView() {
             were last refreshed + how many changed vs the previous run. Only one
             Flask job runs at a time (semaphored in app.py), so all are disabled
             while ANY job is in flight. The daily 05:00 auto-run covers every
-            competitor except Сантехшара (Cloudflare — manual only). */}
+            competitor except Сантехшара/Vannaja, which run on the user's
+            laptop through Agromat local runner. */}
         <div className="ml-auto flex gap-1 flex-wrap">
           {(data?.competitors ?? []).map((comp) => {
             const meta = COMPETITOR_BTN_META[comp.adapter_name] ?? { color: "#6b7280" };
@@ -2911,6 +2944,7 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
     vencon:       { label: "Vencon",       color: "#118dff" },
     teploradost:  { label: "Теплорадість", color: "#107c10" },
     santechshara: { label: "Сантехшара",   color: "#8e44ad" },
+    vannaja:      { label: "Vannaja",      color: "#9c36b5" },
   };
   const runColor = ADAPTERS[adapter]?.color || "#8e44ad";
   const runLabel = ADAPTERS[adapter]?.label || adapter || "—";
@@ -2931,7 +2965,7 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
               ? `Потрібна ручна браузерна сесія: ${job.error || "blocked"}`
               : `❌ Помилка: ${job.error || "unknown"}`
             : done
-              ? `✓ ${runLabel} — оброблено ${current}${total ? ` / ${total}` : ""} товарів`
+              ? job.label || `✓ ${runLabel} — оброблено ${current}${total ? ` / ${total}` : ""} товарів`
               : `↻↻ Парсинг ${runLabel} ${job.label ? `· ${job.label}` : ""}`}
         </span>
         <span className="text-[11px] tabular-nums" style={{ color: accent }}>

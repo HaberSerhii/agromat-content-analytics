@@ -9,6 +9,7 @@
     "start": "next start -p 3000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "local-parser-runner": "node scripts/local-parser-runner.mjs",
     "santechshara:login": "node scripts/santechshara-login.mjs",
     "santechshara:worker": "node scripts/santechshara-worker.mjs"
   },
