@@ -59,6 +59,8 @@ interface PricesRow {
   byCompetitor: Record<number, CompetitorCell>;
 }
 
+type ParserSegment = "all" | "sanitary" | "tile";
+
 function parseIntOr(v: string | null, fallback: number): number {
   if (!v) return fallback;
   const n = parseInt(v, 10);
@@ -71,6 +73,19 @@ function parseIntList(v: string | null): number[] {
     .split(",")
     .map((x) => parseInt(x.trim(), 10))
     .filter((n) => Number.isFinite(n));
+}
+
+function parseParserSegment(v: string | null): ParserSegment {
+  return v === "sanitary" || v === "tile" ? v : "all";
+}
+
+function matchesParserSegment(category: string | null, segment: ParserSegment): boolean {
+  if (segment === "all") return true;
+  const s = (category || "").toLowerCase();
+  if (segment === "tile") {
+    return /плит|керамогран|моза|tile|gres/.test(s);
+  }
+  return /сантех|ванн|умив|раков|зміш|смес|душ|унітаз|унитаз|інсталяц|инсталляц/.test(s);
 }
 
 async function fetchAllSnapshotsForDate(
@@ -96,7 +111,7 @@ async function fetchAllSnapshotsForDate(
 }
 
 async function fetchProductsByIds(
-  db: SupabaseClient, ids: number[], search: string, idsInSet: Set<number>,
+  db: SupabaseClient, ids: number[], search: string, idsInSet: Set<number>, segment: ParserSegment,
 ): Promise<ProductRow[]> {
   if (ids.length === 0) return [];
   const out: ProductRow[] = [];
@@ -122,9 +137,9 @@ async function fetchProductsByIds(
         idsInSet.has(p.id) ||
         (p.code != null && idsInSet.has(p.code)) ||
         (p.goods_ref != null && idsInSet.has(p.goods_ref)),
-      ));
+      ).filter((p) => matchesParserSegment(p.category, segment)));
     } else {
-      out.push(...rows);
+      out.push(...rows.filter((p) => matchesParserSegment(p.category, segment)));
     }
   }
   return out;
@@ -197,6 +212,7 @@ export async function GET(request: Request) {
   const snapshotDate = q.get("snapshot_date") || null;
   const idsIn = parseIntList(q.get("ids_in"));
   const idsInSet = new Set(idsIn);
+  const segment = parseParserSegment(q.get("segment"));
 
   const db = getSupabase();
 
@@ -276,7 +292,7 @@ export async function GET(request: Request) {
 
   let products: ProductRow[];
   try {
-    products = await fetchProductsByIds(db, productIdList, search, idsInSet);
+    products = await fetchProductsByIds(db, productIdList, search, idsInSet, segment);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isSantechsharaJobId, readSantechsharaJob } from "@/lib/parser-jobs/santechshara";
+import { isSimplePriceJobId, readSimplePriceJob } from "@/lib/parser-jobs/simple-price";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,12 @@ export async function GET(
 
   if (isSantechsharaJobId(id)) {
     const job = await readSantechsharaJob(id);
+    if (!job) return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
+    return NextResponse.json(job);
+  }
+
+  if (isSimplePriceJobId(id)) {
+    const job = await readSimplePriceJob(id);
     if (!job) return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
     return NextResponse.json(job);
   }

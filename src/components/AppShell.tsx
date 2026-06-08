@@ -18,9 +18,10 @@ const ProductsCatalog = dynamic(
   },
 );
 
-// Default points at a same-origin nginx location (`/parcer/` → 127.0.0.1:8080
-// internally on the VPS). Override via NEXT_PUBLIC_PARCER_URL for local dev
-// where Flask is reachable directly (e.g. http://91.239.233.125:8080/).
+// Default points at the production same-origin nginx location
+// (`/parcer/` → parser UI). In local Next dev, that path belongs to this app
+// unless the parser URL is explicitly configured, so we show a small placeholder
+// instead of recursively iframing the dashboard.
 const PARCER_URL = process.env.NEXT_PUBLIC_PARCER_URL || "/parcer/";
 
 // Renders both tabs in a single persistent shell hosted by the root layout.
@@ -33,6 +34,13 @@ export function AppShell() {
   const pathname = usePathname();
   const isCompetitors = pathname === "/";
   const isCatalog = pathname === "/catalog";
+  const [isLocalHost, setIsLocalHost] = useState(
+    () => typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"),
+  );
+  useEffect(() => {
+    setIsLocalHost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  }, []);
+  const parserUrl = process.env.NEXT_PUBLIC_PARCER_URL || (isLocalHost ? "" : PARCER_URL);
 
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
@@ -43,23 +51,45 @@ export function AppShell() {
 
   return (
     <>
-      <div
-        className="rounded-2xl overflow-hidden border"
-        style={{
-          display: isCompetitors ? "block" : "none",
-          borderColor: "var(--border)",
-          background: "var(--bg-card)",
-          boxShadow: "var(--shadow-sm)",
-          height: "calc(100vh - 90px)",
-        }}
-      >
-        <iframe
-          src={PARCER_URL}
-          title="Аналіз цін конкурентів"
-          className="w-full h-full block"
-          style={{ border: 0 }}
-        />
-      </div>
+      {parserUrl && (
+        <div
+          className="rounded-2xl overflow-hidden border"
+          style={{
+            display: isCompetitors ? "block" : "none",
+            borderColor: "var(--border)",
+            background: "var(--bg-card)",
+            boxShadow: "var(--shadow-sm)",
+            height: "calc(100vh - 90px)",
+          }}
+        >
+          <iframe
+            src={parserUrl}
+            title="Аналіз цін конкурентів"
+            className="w-full h-full block"
+            style={{ border: 0 }}
+          />
+        </div>
+      )}
+
+      {isCompetitors && !parserUrl && (
+        <div
+          className="rounded-2xl border p-6"
+          style={{
+            borderColor: "var(--border)",
+            background: "var(--bg-card)",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
+          <div className="text-sm font-bold mb-2" style={{ color: "var(--text)" }}>
+            Основний дашборд парсера цін не підключений локально
+          </div>
+          <div className="text-xs leading-5" style={{ color: "var(--text-dim)" }}>
+            Для цієї вкладки потрібен зовнішній Flask/parser UI через <b>NEXT_PUBLIC_PARCER_URL</b>.
+            Дані Plitka.ua і LeoCeramika вже завантажені в Supabase; дивись їх у вкладці
+            <b> Аналіз карток товара → Ціни конкурентів</b>.
+          </div>
+        </div>
+      )}
 
       {catalogVisited && (
         <div style={{ display: isCatalog ? "block" : "none" }}>

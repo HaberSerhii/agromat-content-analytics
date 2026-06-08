@@ -9,6 +9,14 @@ import {
   readActiveSantechsharaJob,
   writeSantechsharaJob,
 } from "@/lib/parser-jobs/santechshara";
+import {
+  isSimplePriceAdapter,
+  isSimplePriceJobInFlight,
+  makeSimplePriceJobId,
+  newSimplePriceJob,
+  readActiveSimplePriceJob,
+  writeSimplePriceJob,
+} from "@/lib/parser-jobs/simple-price";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +30,8 @@ const ALLOWED_ACTIONS = new Set([
   "prices-drop",
   "prices-depoint",
   "prices-vannaja",
+  "prices-plitka",
+  "prices-leoceramika",
 ]);
 
 async function findRepoRoot(start: string): Promise<string> {
@@ -30,6 +40,7 @@ async function findRepoRoot(start: string): Promise<string> {
     try {
       await fs.access(path.join(dir, "package.json"));
       await fs.access(path.join(dir, "scripts", "santechshara-worker.mjs"));
+      await fs.access(path.join(dir, "scripts", "simple-price-worker.mjs"));
       return dir;
     } catch {
       const parent = path.dirname(dir);
@@ -62,6 +73,29 @@ async function startSantechsharaJob() {
   return NextResponse.json({ ok: true, job_id: jobId, status: "starting" });
 }
 
+async function startSimplePriceJob(adapter: "plitka" | "leoceramika") {
+  const active = await readActiveSimplePriceJob(adapter);
+  if (isSimplePriceJobInFlight(active)) {
+    return NextResponse.json({ ok: false, error: "busy", active_job_id: active?.job_id }, { status: 409 });
+  }
+
+  const jobId = makeSimplePriceJobId(adapter);
+  const job = newSimplePriceJob(adapter, jobId);
+  await writeSimplePriceJob(job);
+
+  const root = await findRepoRoot(process.cwd());
+  const script = path.join(root, "scripts", "simple-price-worker.mjs");
+  const child = spawn(process.execPath, [script, "--adapter", adapter, "--job-id", jobId], {
+    cwd: root,
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
+  child.unref();
+
+  return NextResponse.json({ ok: true, job_id: jobId, status: "starting" });
+}
+
 // Forwards a "start background job" request to the legacy Flask parser
 // (`/api/run/<action>`). Flask requires a password field in the body — we
 // inject it from PARCER_RUN_PASSWORD so the dashboard's user doesn't need
@@ -78,6 +112,11 @@ export async function POST(
 
   if (action === "prices-santechshara") {
     return startSantechsharaJob();
+  }
+
+  const simpleAdapter = action.replace(/^prices-/, "");
+  if (isSimplePriceAdapter(simpleAdapter)) {
+    return startSimplePriceJob(simpleAdapter);
   }
 
   const base = process.env.PARCER_INTERNAL_URL || "http://127.0.0.1:8080";

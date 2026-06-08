@@ -2658,6 +2658,8 @@ interface PricesResponse {
   notFoundIds: number[];
 }
 
+type ParserSegment = "all" | "sanitary" | "tile";
+
 // Mass-reparse job status returned by /api/parser/job/<id>. Mirrors Flask's
 // _jobs payload shape from Agromat_Parcer/app.py. On completion `result`
 // carries a flattened orchestrator summary — Flask collapses list fields
@@ -2696,10 +2698,18 @@ const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
   drop:         { color: "#e8590c", title: "Live-перепарсинг усіх товарів у Drop" },
   depoint:      { color: "#0b7285", title: "Live-перепарсинг усіх товарів у Depoint" },
   vannaja:      { color: "#9c36b5", title: "Локальний браузерний запуск через Agromat local runner" },
+  plitka:       { color: "#0b7285", title: "Швидкий HTTP-парсинг plitka.ua з JSON-LD Product/offers" },
+  leoceramika:  { color: "#2f9e44", title: "Швидкий HTTP-парсинг leoceramika.com з meta price / #site_price" },
 };
 
 const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
 const LOCAL_RUNNER_URL = "http://127.0.0.1:8765";
+
+function canonicalParserAdapter(adapter: string): string {
+  if (adapter === "plitka.ua") return "plitka";
+  if (adapter === "leoceramika.com" || adapter === "leo-ceramika") return "leoceramika";
+  return adapter;
+}
 
 function CompetitorPricesView({
   bulk,
@@ -2717,6 +2727,7 @@ function CompetitorPricesView({
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
+  const [segment, setSegment] = useState<ParserSegment>("all");
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
   // per-cell loading state keyed by `${productId}:${competitorId}`
@@ -2730,7 +2741,7 @@ function CompetitorPricesView({
     return () => window.clearTimeout(id);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [searchDebounced, bulk]);
+  useEffect(() => { setPage(1); }, [searchDebounced, bulk, segment]);
 
   const load = useCallback(() => {
     const p = new URLSearchParams();
@@ -2738,13 +2749,14 @@ function CompetitorPricesView({
     p.set("limit", String(limit));
     if (searchDebounced) p.set("search", searchDebounced);
     if (bulk && bulk.ids.length > 0) p.set("ids_in", bulk.ids.join(","));
+    if (segment !== "all") p.set("segment", segment);
     setLoading(true); setError("");
     fetch(`/api/parser/prices?${p.toString()}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: PricesResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
       .finally(() => setLoading(false));
-  }, [page, limit, searchDebounced, bulk]);
+  }, [page, limit, searchDebounced, bulk, segment]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2800,7 +2812,8 @@ function CompetitorPricesView({
 
   // Mass-reparse: regular competitors run on the server. Cloudflare-sensitive
   // competitors run on the user's laptop via Agromat local runner.
-  const startBulk = useCallback(async (adapter: string) => {
+  const startBulk = useCallback(async (rawAdapter: string) => {
+    const adapter = canonicalParserAdapter(rawAdapter);
     setBulkStarting(true);
     setError("");
     try {
@@ -2901,6 +2914,29 @@ function CompetitorPricesView({
         >
           📋 Набір товарів{bulk ? ` (${bulk.ids.length})` : ""}
         </button>
+        <div className="inline-flex rounded-lg p-0.5 border" style={{ background: "var(--bg-input)", borderColor: "var(--border2)" }}>
+          {([
+            ["all", "Всі"],
+            ["sanitary", "Сантехніка"],
+            ["tile", "Плитка"],
+          ] as [ParserSegment, string][]).map(([value, label]) => {
+            const active = segment === value;
+            return (
+              <button
+                key={value}
+                onClick={() => setSegment(value)}
+                className="px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer border-0 whitespace-nowrap"
+                style={{
+                  background: active ? "#118dff" : "transparent",
+                  color: active ? "#fff" : "var(--text-mid)",
+                }}
+                title={`Швидкий фільтр аналітики парсера: ${label}`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
         {bulk && (
           <button
             onClick={onClearBulk}
@@ -2923,13 +2959,14 @@ function CompetitorPricesView({
             laptop through Agromat local runner. */}
         <div className="ml-auto flex gap-1 flex-wrap">
           {(data?.competitors ?? []).map((comp) => {
-            const meta = COMPETITOR_BTN_META[comp.adapter_name] ?? { color: "#6b7280" };
+            const adapter = canonicalParserAdapter(comp.adapter_name);
+            const meta = COMPETITOR_BTN_META[adapter] ?? { color: "#6b7280" };
             const ts = data?.lastUpdated?.[comp.id] ?? null;
             const changed = data?.priceChanges?.[comp.id] ?? null;
             return (
               <div key={comp.id} className="flex flex-col items-stretch gap-0.5">
                 <button
-                  onClick={() => startBulk(comp.adapter_name)}
+                  onClick={() => startBulk(adapter)}
                   disabled={bulkStarting || (job?.status === "running" || job?.status === "starting")}
                   className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border disabled:opacity-60 whitespace-nowrap"
                   style={{ background: `${meta.color}11`, color: meta.color, borderColor: `${meta.color}55` }}
@@ -3139,6 +3176,94 @@ function CompetitorCellView({ cell, ourPrice, busy, onReparse }: {
   );
 }
 
+export function ParserPricesDashboard() {
+  const [bulk, setBulk] = useState<BulkFilter | null>(null);
+  const [savedBulkSets, setSavedBulkSets] = useState<SavedBulkSet[]>([]);
+  const [openBulk, setOpenBulk] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(BULK_SETS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSavedBulkSets(
+          parsed
+            .filter((s) => s && typeof s.id === "string" && typeof s.name === "string" && Array.isArray(s.ids))
+            .map(({ type: _drop, ...s }) => s as SavedBulkSet),
+        );
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 1800);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  const persistBulkSets = useCallback((next: SavedBulkSet[]) => {
+    setSavedBulkSets(next);
+    try { window.localStorage.setItem(BULK_SETS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+
+  const saveBulkSet = useCallback(async (name: string, ids: number[], rawText: string) => {
+    const clean = name.trim();
+    if (!clean || ids.length === 0) return;
+    const nextSet: SavedBulkSet = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: clean,
+      ids,
+      rawText,
+      createdAt: Date.now(),
+    };
+    const without = savedBulkSets.filter((s) => s.name.toLowerCase() !== clean.toLowerCase());
+    persistBulkSets([nextSet, ...without]);
+  }, [persistBulkSets, savedBulkSets]);
+
+  const deleteBulkSet = useCallback((id: string) => {
+    persistBulkSets(savedBulkSets.filter((s) => s.id !== id));
+  }, [persistBulkSets, savedBulkSets]);
+
+  return (
+    <>
+      <CompetitorPricesView
+        bulk={bulk}
+        onOpenBulk={() => setOpenBulk(true)}
+        onClearBulk={() => setBulk(null)}
+        onToast={setToast}
+      />
+
+      {openBulk && (
+        <BulkFilterModal
+          initialText={bulk?.rawText ?? ""}
+          savedSets={savedBulkSets}
+          onApply={(ids, raw) => setBulk({ ids, rawText: raw })}
+          onSaveSet={saveBulkSet}
+          onDeleteSet={deleteBulkSet}
+          onClose={() => setOpenBulk(false)}
+        />
+      )}
+
+      {toast && (
+        <div
+          className="fixed z-[300] px-4 py-2 rounded-lg text-xs font-semibold shadow-lg"
+          style={{
+            bottom: 24, right: 24,
+            background: "#107c10", color: "#fff",
+            animation: "fadeIn 0.15s ease-out",
+          }}
+          role="status"
+          aria-live="polite"
+        >
+          ✓ {toast}
+        </div>
+      )}
+    </>
+  );
+}
+
 function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => void }) {
   const current = job.current ?? 0;
   const total = job.total ?? 0;
@@ -3168,6 +3293,8 @@ function BulkProgressBar({ job, onDismiss }: { job: ParserJob; onDismiss: () => 
     teploradost:  { label: "Теплорадість", color: "#107c10" },
     santechshara: { label: "Сантехшара",   color: "#8e44ad" },
     vannaja:      { label: "Vannaja",      color: "#9c36b5" },
+    plitka:       { label: "Plitka.ua",     color: "#0b7285" },
+    leoceramika:  { label: "LeoCeramika",   color: "#2f9e44" },
   };
   const runColor = ADAPTERS[adapter]?.color || "#8e44ad";
   const runLabel = ADAPTERS[adapter]?.label || adapter || "—";
