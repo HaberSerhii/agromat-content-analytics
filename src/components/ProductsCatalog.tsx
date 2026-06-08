@@ -2225,10 +2225,27 @@ interface TimelineResponse {
   events: TimelineEventResp[];
   total: number;
   counts: Record<TimelineGroupKey, number>;
+  priceSummary: TimelinePriceSummary | null;
   limit: number;
   offset: number;
   sort: "asc" | "desc";
   syncedAt: string | null;
+}
+
+interface TimelinePriceSummary {
+  skuCount: number;
+  eventCount: number;
+  avgAbsPct: number | null;
+  avgSignedPct: number | null;
+  upCount: number;
+  downCount: number;
+  categories: {
+    categoryId: number;
+    categoryName: string;
+    skuCount: number;
+    eventCount: number;
+    avgAbsPct: number | null;
+  }[];
 }
 
 function ChangesTimelineView() {
@@ -2236,16 +2253,23 @@ function ChangesTimelineView() {
   const [sort, setSort] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
+  const [filters, setFilters] = useState<FiltersResp | null>(null);
+  const [statusIds, setStatusIds] = useState<number[]>([]);
+  const [categoryId, setCategoryId] = useState<number | null>(null);
   // Date range — default: last 7 days. Both endpoints inclusive.
   const today = new Date().toISOString().slice(0, 10);
-  const sevenAgo = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+  const sevenAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
   const [since, setSince] = useState<string>(sevenAgo);
   const [until, setUntil] = useState<string>(today);
   const [data, setData] = useState<TimelineResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => { setPage(1); }, [group, sort, since, until]);
+  useEffect(() => {
+    fetch("/api/products/filters").then((r) => r.json()).then(setFilters).catch(() => {});
+  }, []);
+
+  useEffect(() => { setPage(1); }, [group, sort, since, until, statusIds, categoryId]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -2255,13 +2279,15 @@ function ChangesTimelineView() {
     params.set("sort", sort);
     if (since) params.set("since", `${since}T00:00:00.000Z`);
     if (until) params.set("until", `${until}T23:59:59.999Z`);
+    if (group === "prices" && statusIds.length) params.set("status_ids", statusIds.join(","));
+    if (group === "prices" && categoryId != null) params.set("category_id", String(categoryId));
     setLoading(true); setError("");
     fetch(`/api/products/changes?${params.toString()}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: TimelineResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
       .finally(() => setLoading(false));
-  }, [group, sort, since, until, page, limit]);
+  }, [group, sort, since, until, page, limit, statusIds, categoryId]);
 
   const tabs: { key: TimelineGroupKey; label: string; color: string }[] = [
     { key: "photos",     label: "Фото",      color: "#d13438" },
@@ -2271,6 +2297,18 @@ function ChangesTimelineView() {
     { key: "prices",     label: "Ціни",      color: "#118dff" },
   ];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1;
+  const selectedCategory = data?.priceSummary?.categories.find((c) => c.categoryId === categoryId)?.categoryName
+    ?? filters?.categories.find((c) => c.id === categoryId)?.name
+    ?? null;
+  const periodDays = (() => {
+    const start = since ? Date.parse(`${since}T00:00:00`) : NaN;
+    const end = until ? Date.parse(`${until}T00:00:00`) : NaN;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+    return Math.floor((end - start) / 86400_000) + 1;
+  })();
+  const toggleTimelineStatus = (id: number) => {
+    setStatusIds((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  };
 
   return (
     <Card>
@@ -2310,11 +2348,51 @@ function ChangesTimelineView() {
           title="Перемкнути порядок сортування за датою">
           📅 {sort === "desc" ? "Новіші першими" : "Старіші першими"}
         </button>
+        {group === "prices" && (
+          <div className="flex items-center gap-1 flex-wrap rounded-lg p-0.5"
+            style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
+            <button
+              onClick={() => setStatusIds([])}
+              className="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border-0 whitespace-nowrap"
+              style={statusIds.length === 0 ? { background: "#118dff", color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
+              title="Показати всі статуси">
+              Усі статуси
+            </button>
+            {(filters?.statuses || []).map((s) => {
+              const active = statusIds.includes(s.id);
+              const color = statusColor(s.id);
+              return (
+                <button key={s.id} onClick={() => toggleTimelineStatus(s.id)} title={s.name}
+                  className="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border-0 whitespace-nowrap"
+                  style={active ? { background: color, color: "#fff" } : { background: "transparent", color }}
+                >● {s.name}</button>
+              );
+            })}
+          </div>
+        )}
+        {group === "prices" && categoryId != null && (
+          <button onClick={() => setCategoryId(null)}
+            className="px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer border-0"
+            style={{ background: "#d1343811", color: "#d13438" }}
+            title="Повернути всі категорії">
+            ✕ {selectedCategory || `Категорія #${categoryId}`}
+          </button>
+        )}
         <div className="text-[10px] ml-auto" style={{ color: "var(--text-dim)" }}>
           Без товарів, які щойно з&apos;явилися в каталозі ·{" "}
           {data?.syncedAt && <>останній sync: {fmtDateTime(data.syncedAt)}</>}
         </div>
       </div>
+
+      {group === "prices" && data?.priceSummary && (
+        <TimelinePriceSummaryPanel
+          summary={data.priceSummary}
+          periodDays={periodDays}
+          selectedCategoryId={categoryId}
+          selectedCategoryName={selectedCategory}
+          onSelectCategory={setCategoryId}
+        />
+      )}
 
       {/* Body */}
       {loading && !data && <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>Завантаження…</div>}
@@ -2372,6 +2450,72 @@ function ChangesTimelineView() {
         </div>
       )}
     </Card>
+  );
+}
+
+function TimelinePriceSummaryPanel({
+  summary,
+  periodDays,
+  selectedCategoryId,
+  selectedCategoryName,
+  onSelectCategory,
+}: {
+  summary: TimelinePriceSummary;
+  periodDays: number | null;
+  selectedCategoryId: number | null;
+  selectedCategoryName: string | null;
+  onSelectCategory: (id: number | null) => void;
+}) {
+  const avg = summary.avgAbsPct == null ? "—" : `${summary.avgAbsPct.toFixed(summary.avgAbsPct >= 10 ? 0 : 1)}%`;
+  const period = periodDays ? `За останні ${periodDays} дн.` : "За обраний період";
+  const categoryLabel = selectedCategoryId != null
+    ? ` в категорії ${selectedCategoryName || `#${selectedCategoryId}`}`
+    : "";
+  const visibleCategories = summary.categories.slice(0, 12);
+
+  return (
+    <div className="rounded-xl p-3 mb-3"
+      style={{ background: "#eff6ff", border: "1px solid #93c5fd", color: "#1e3a8a" }}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-sm font-bold tabular-nums" style={{ color: "#1e40af" }}>
+            {period}, було переоцінено {fmtNum(summary.skuCount)} SKU{categoryLabel} в середньому на {avg}
+          </div>
+          <div className="text-[11px] mt-1 tabular-nums" style={{ color: "#3b82f6" }}>
+            {fmtNum(summary.eventCount)} змін ціни · підвищень {fmtNum(summary.upCount)} · знижень {fmtNum(summary.downCount)}
+          </div>
+        </div>
+        {selectedCategoryId != null && (
+          <button onClick={() => onSelectCategory(null)}
+            className="px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer border-0"
+            style={{ background: "#118dff", color: "#fff" }}>
+            Всі категорії
+          </button>
+        )}
+      </div>
+
+      {visibleCategories.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {visibleCategories.map((c) => {
+            const active = c.categoryId === selectedCategoryId;
+            const cAvg = c.avgAbsPct == null ? "—" : `${c.avgAbsPct.toFixed(c.avgAbsPct >= 10 ? 0 : 1)}%`;
+            return (
+              <button
+                key={c.categoryId}
+                onClick={() => onSelectCategory(active ? null : c.categoryId)}
+                className="px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer border tabular-nums"
+                style={active
+                  ? { background: "#118dff", color: "#fff", borderColor: "#118dff" }
+                  : { background: "#fff", color: "#1e40af", borderColor: "#bfdbfe" }}
+                title={`${c.categoryName}: ${fmtNum(c.skuCount)} SKU, ${fmtNum(c.eventCount)} змін, середнє ${cAvg}`}
+              >
+                {c.categoryName} · {fmtNum(c.skuCount)} SKU · {cAvg}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

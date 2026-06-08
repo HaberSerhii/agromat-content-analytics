@@ -70,8 +70,8 @@ function makeCommand(adapter) {
     return {
       cwd: repo,
       title: "Agromat Vannaja local parser",
-      command: `[ -x ${shellQuote(script)} ] && ${shellQuote(script)} || VANNAJA_FIRST_WAIT_SECONDS=5 VANNAJA_WAIT_SECONDS=2 VANNAJA_MAX_PAGES=100 ${shellQuote(fallbackPy)} ${shellQuote(fallbackScript)}`,
-      windowsCommand: `if exist ${winQuote(script)} (${winQuote(script)}) else (set VANNAJA_FIRST_WAIT_SECONDS=5 && set VANNAJA_WAIT_SECONDS=2 && set VANNAJA_MAX_PAGES=100 && ${winQuote(fallbackPy)} ${winQuote(fallbackScript)})`,
+      command: `[ -x ${shellQuote(script)} ] && ${shellQuote(script)} || VANNAJA_FIRST_WAIT_SECONDS=5 VANNAJA_WAIT_SECONDS=2 VANNAJA_MAX_PAGES=800 ${shellQuote(fallbackPy)} ${shellQuote(fallbackScript)}`,
+      windowsCommand: `if exist ${winQuote(script)} (${winQuote(script)}) else (set VANNAJA_FIRST_WAIT_SECONDS=5 && set VANNAJA_WAIT_SECONDS=2 && set VANNAJA_MAX_PAGES=800 && ${winQuote(fallbackPy)} ${winQuote(fallbackScript)})`,
     };
   }
 

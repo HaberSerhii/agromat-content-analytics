@@ -246,11 +246,27 @@ export interface TimelineQuery {
   offset?: number;      // default 0
   sort?: "asc" | "desc"; // default desc (newest first)
   excludeNewFirstSeenAt?: string | null; // events with firstSeenAt === this are dropped
+  statusIds?: Set<number>;
+  categoryId?: number | null;
 }
 
 export interface TimelineResult {
   events: TimelineEvent[];
   total: number;       // total matching (before paging) — best-effort
+}
+
+function matchesTimelineFilters(
+  e: TimelineEvent,
+  opts: {
+    excludeNewFirstSeenAt?: string | null;
+    statusIds?: Set<number>;
+    categoryId?: number | null;
+  },
+): boolean {
+  if (opts.excludeNewFirstSeenAt && e.firstSeenAt === opts.excludeNewFirstSeenAt) return false;
+  if (opts.statusIds && opts.statusIds.size > 0 && !opts.statusIds.has(e.statusId)) return false;
+  if (opts.categoryId != null && e.categoryId !== opts.categoryId) return false;
+  return true;
 }
 
 export async function readTimeline(q: TimelineQuery): Promise<TimelineResult> {
@@ -274,12 +290,7 @@ export async function readTimeline(q: TimelineQuery): Promise<TimelineResult> {
       parsed.push(JSON.parse(raw) as TimelineEvent);
     } catch { /* skip corrupt */ }
   }
-  // Filter out events whose product is currently marked NEW (firstSeenAt is
-  // the latest sync time). The denormalized firstSeenAt was captured at the
-  // event's sync but never changes per product, so this comparison is stable.
-  const filtered = q.excludeNewFirstSeenAt
-    ? parsed.filter((e) => e.firstSeenAt !== q.excludeNewFirstSeenAt)
-    : parsed;
+  const filtered = parsed.filter((e) => matchesTimelineFilters(e, q));
   const total = filtered.length;
   const limit = q.limit ?? 50;
   const offset = q.offset ?? 0;
@@ -294,6 +305,8 @@ export async function readTimelineCounts(
   excludeNewFirstSeenAt: string | null,
   sinceMs?: number,
   untilMs?: number,
+  statusIds?: Set<number>,
+  categoryId?: number | null,
 ): Promise<Record<TimelineGroup, number>> {
   const redis = getRedis();
   const min = sinceMs ?? 0;
@@ -308,17 +321,123 @@ export async function readTimelineCounts(
   };
   TIMELINE_GROUPS.forEach((g, i) => {
     const arr = results[i] || [];
-    if (!excludeNewFirstSeenAt) { out[g] = arr.length; return; }
     let n = 0;
     for (const raw of arr) {
       try {
         const e = JSON.parse(raw) as TimelineEvent;
-        if (e.firstSeenAt !== excludeNewFirstSeenAt) n++;
+        if (matchesTimelineFilters(e, { excludeNewFirstSeenAt, statusIds, categoryId })) n++;
       } catch { /* skip */ }
     }
     out[g] = n;
   });
   return out;
+}
+
+export interface TimelinePriceCategorySummary {
+  categoryId: number;
+  categoryName: string;
+  skuCount: number;
+  eventCount: number;
+  avgAbsPct: number | null;
+}
+
+export interface TimelinePriceSummary {
+  skuCount: number;
+  eventCount: number;
+  avgAbsPct: number | null;
+  avgSignedPct: number | null;
+  upCount: number;
+  downCount: number;
+  categories: TimelinePriceCategorySummary[];
+}
+
+export async function readTimelinePriceSummary(opts: {
+  sinceMs?: number;
+  untilMs?: number;
+  excludeNewFirstSeenAt?: string | null;
+  statusIds?: Set<number>;
+  categoryId?: number | null;
+}): Promise<TimelinePriceSummary> {
+  const redis = getRedis();
+  const min = opts.sinceMs ?? 0;
+  const max = opts.untilMs ?? Date.now() + 60_000;
+  const raws = (await redis.zrange(K.timeline("prices"), min, max, { byScore: true })) as string[];
+
+  const seenProducts = new Set<number>();
+  const byCategory = new Map<number, {
+    categoryId: number;
+    categoryName: string;
+    products: Set<number>;
+    eventCount: number;
+    absPctSum: number;
+    pctN: number;
+  }>();
+  let eventCount = 0;
+  let absPctSum = 0;
+  let signedPctSum = 0;
+  let pctN = 0;
+  let upCount = 0;
+  let downCount = 0;
+
+  for (const raw of raws) {
+    let e: TimelineEvent;
+    try {
+      e = JSON.parse(raw) as TimelineEvent;
+    } catch {
+      continue;
+    }
+    if (!matchesTimelineFilters(e, opts)) continue;
+    eventCount++;
+    seenProducts.add(e.productId);
+    let cat = byCategory.get(e.categoryId);
+    if (!cat) {
+      cat = {
+        categoryId: e.categoryId,
+        categoryName: e.categoryName,
+        products: new Set<number>(),
+        eventCount: 0,
+        absPctSum: 0,
+        pctN: 0,
+      };
+      byCategory.set(e.categoryId, cat);
+    }
+    cat.products.add(e.productId);
+    cat.eventCount++;
+
+    const from = e.fromPrice ?? 0;
+    const to = e.toPrice ?? 0;
+    if (from > 0 && to > 0) {
+      const pct = ((to - from) / from) * 100;
+      if (pct > 0) upCount++;
+      if (pct < 0) downCount++;
+      const absPct = Math.abs(pct);
+      absPctSum += absPct;
+      signedPctSum += pct;
+      pctN++;
+      cat.absPctSum += absPct;
+      cat.pctN++;
+    }
+  }
+
+  const categories = Array.from(byCategory.values())
+    .map((c) => ({
+      categoryId: c.categoryId,
+      categoryName: c.categoryName,
+      skuCount: c.products.size,
+      eventCount: c.eventCount,
+      avgAbsPct: c.pctN ? c.absPctSum / c.pctN : null,
+    }))
+    .sort((a, b) => b.skuCount - a.skuCount || a.categoryName.localeCompare(b.categoryName, "uk"));
+
+  return {
+    skuCount: seenProducts.size,
+    eventCount,
+    avgAbsPct: pctN ? absPctSum / pctN : null,
+    avgSignedPct: pctN ? signedPctSum / pctN : null,
+    upCount,
+    downCount,
+    categories,
+  };
 }
 
 const SNAPSHOT_KEEP_DAYS = 4;

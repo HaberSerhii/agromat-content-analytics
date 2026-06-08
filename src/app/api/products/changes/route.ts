@@ -4,6 +4,7 @@ import {
   TIMELINE_GROUPS,
   readTimeline,
   readTimelineCounts,
+  readTimelinePriceSummary,
   readLiteSyncedAt,
 } from "@/lib/products-store";
 
@@ -22,6 +23,14 @@ function parseDateMs(v: string | null): number | undefined {
   if (Number.isFinite(asNum) && asNum > 10_000_000_000) return asNum;
   const p = Date.parse(v);
   return Number.isFinite(p) ? p : undefined;
+}
+
+function parseIntList(v: string | null): number[] {
+  if (!v) return [];
+  return v
+    .split(",")
+    .map((x) => parseInt(x.trim(), 10))
+    .filter((n) => Number.isFinite(n));
 }
 
 function isGroup(v: string | null): v is TimelineGroup {
@@ -45,11 +54,15 @@ export async function GET(request: Request) {
   const sortRaw = q.get("sort");
   const sort: "asc" | "desc" = sortRaw === "asc" ? "asc" : "desc";
   const excludeNew = q.get("exclude_new") !== "false"; // default true
+  const statusIdsList = parseIntList(q.get("status_ids"));
+  const statusIds = statusIdsList.length ? new Set(statusIdsList) : undefined;
+  const categoryIdRaw = parseInt(q.get("category_id") || "", 10);
+  const categoryId = Number.isFinite(categoryIdRaw) ? categoryIdRaw : null;
 
   const syncedAt = await readLiteSyncedAt();
   const excludeNewFirstSeenAt = excludeNew ? syncedAt : null;
 
-  const [{ events, total }, counts] = await Promise.all([
+  const [{ events, total }, counts, priceSummary] = await Promise.all([
     readTimeline({
       group,
       sinceMs: since,
@@ -58,12 +71,17 @@ export async function GET(request: Request) {
       offset,
       sort,
       excludeNewFirstSeenAt,
+      statusIds,
+      categoryId,
     }),
-    readTimelineCounts(excludeNewFirstSeenAt, since, until),
+    readTimelineCounts(excludeNewFirstSeenAt, since, until, statusIds, categoryId),
+    group === "prices"
+      ? readTimelinePriceSummary({ sinceMs: since, untilMs: until, excludeNewFirstSeenAt, statusIds, categoryId })
+      : Promise.resolve(null),
   ]);
 
   return NextResponse.json(
-    { group, events, total, counts, limit, offset, sort, syncedAt },
+    { group, events, total, counts, limit, offset, sort, syncedAt, priceSummary, filters: { statusIds: statusIdsList, categoryId } },
     {
       // Sync runs hourly — short edge cache is plenty and keeps dashboard fresh.
       headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=600" },
