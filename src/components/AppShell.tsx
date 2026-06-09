@@ -45,6 +45,7 @@ const PARCER_URL = process.env.NEXT_PUBLIC_PARCER_URL || "/parcer/";
 export function AppShell() {
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
+  const [parserFrameReady, setParserFrameReady] = useState(false);
   const isCompetitors = pathname === "/";
   const isCatalog = pathname === "/catalog";
   const isSales = pathname === "/sales";
@@ -56,6 +57,26 @@ export function AppShell() {
     setIsLocalHost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   }, []);
   const parserUrl = process.env.NEXT_PUBLIC_PARCER_URL || (isLocalHost ? "" : PARCER_URL);
+
+  useEffect(() => {
+    if (!isCompetitors || !parserUrl) {
+      setParserFrameReady(false);
+      return;
+    }
+    const win = window as typeof window & { requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number; cancelIdleCallback?: (id: number) => void };
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let idleId: number | null = null;
+    const show = () => setParserFrameReady(true);
+    if (win.requestIdleCallback) {
+      idleId = win.requestIdleCallback(show, { timeout: 900 });
+    } else {
+      timeoutId = setTimeout(show, 450);
+    }
+    return () => {
+      if (idleId != null) win.cancelIdleCallback?.(idleId);
+      if (timeoutId != null) clearTimeout(timeoutId);
+    };
+  }, [isCompetitors, parserUrl]);
 
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
@@ -85,12 +106,20 @@ export function AppShell() {
             height: "calc(100vh - 90px)",
           }}
         >
-          <iframe
-            src={parserUrl}
-            title="Аналіз цін конкурентів"
-            className="w-full h-full block"
-            style={{ border: 0 }}
-          />
+          {parserFrameReady ? (
+            <iframe
+              src={parserUrl}
+              title="Аналіз цін конкурентів"
+              className="w-full h-full block"
+              style={{ border: 0 }}
+            />
+          ) : (
+            <div className="h-full w-full flex items-center justify-center bg-white">
+              <div className="text-sm font-semibold" style={{ color: "var(--text-dim)" }}>
+                Завантаження аналізу цін…
+              </div>
+            </div>
+          )}
         </div>
       )}
 
