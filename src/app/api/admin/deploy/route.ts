@@ -7,8 +7,21 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 const LOG = process.env.DEPLOY_LOG || "/tmp/agromat-deploy.log";
-// process.cwd() is the project root when Next.js runs `npm start` from there.
-const SCRIPT = path.join(process.cwd(), "scripts", "deploy.sh");
+
+async function findRepoRoot(start: string): Promise<string | null> {
+  let dir = start;
+  for (;;) {
+    try {
+      await fs.access(path.join(dir, ".git"));
+      await fs.access(path.join(dir, "scripts", "deploy.sh"));
+      return dir;
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  }
+}
 
 function authorize(req: Request): boolean {
   const cron = process.env.CRON_SECRET;
@@ -26,17 +39,17 @@ export async function POST(req: Request) {
   if (!authorize(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  try {
-    await fs.access(SCRIPT);
-  } catch {
-    return NextResponse.json({ error: `Deploy script not found at ${SCRIPT}` }, { status: 500 });
+  const repoRoot = await findRepoRoot(process.cwd());
+  if (!repoRoot) {
+    return NextResponse.json({ error: `Deploy script not found from ${process.cwd()}` }, { status: 500 });
   }
+  const script = path.join(repoRoot, "scripts", "deploy.sh");
   // setsid + detached + stdio:'ignore' so the child has no pipe to this
   // process. When pm2 kills us at the end of deploy, the child continues.
-  const child = spawn("setsid", ["bash", SCRIPT], {
+  const child = spawn("setsid", ["bash", script], {
     detached: true,
     stdio: "ignore",
-    env: { ...process.env, APP_DIR: process.cwd() },
+    env: { ...process.env, APP_DIR: repoRoot },
   });
   child.unref();
   return NextResponse.json({ ok: true, started: new Date().toISOString(), pid: child.pid, log: LOG });
