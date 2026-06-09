@@ -63,17 +63,9 @@ export function AppShell() {
       setParserFrameReady(false);
       return;
     }
-    const win = window as typeof window & { requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number; cancelIdleCallback?: (id: number) => void };
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let idleId: number | null = null;
-    const show = () => setParserFrameReady(true);
-    if (win.requestIdleCallback) {
-      idleId = win.requestIdleCallback(show, { timeout: 900 });
-    } else {
-      timeoutId = setTimeout(show, 450);
-    }
+    timeoutId = setTimeout(() => setParserFrameReady(true), 1200);
     return () => {
-      if (idleId != null) win.cancelIdleCallback?.(idleId);
       if (timeoutId != null) clearTimeout(timeoutId);
     };
   }, [isCompetitors, parserUrl]);
@@ -110,6 +102,7 @@ export function AppShell() {
             <iframe
               src={parserUrl}
               title="Аналіз цін конкурентів"
+              loading="lazy"
               className="w-full h-full block"
               style={{ border: 0 }}
             />
