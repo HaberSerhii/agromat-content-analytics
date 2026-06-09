@@ -31,10 +31,11 @@ class IORedisPipelineAdapter implements RedisPipelineLike {
 
   zrange(key: string, start: number, stop: number, opts?: ZRangeOptions): RedisPipelineLike {
     if (opts?.byScore) {
-      const args = opts.rev
-        ? [key, String(start), String(stop), "BYSCORE", "REV"]
-        : [key, String(start), String(stop), "BYSCORE"];
-      (this.pipe as unknown as { call(command: string, ...args: string[]): unknown }).call("zrange", ...args);
+      if (opts.rev) {
+        this.pipe.zrevrangebyscore(key, String(start), String(stop));
+      } else {
+        this.pipe.zrangebyscore(key, String(start), String(stop));
+      }
     } else {
       this.pipe.zrange(key, start, stop);
     }
@@ -81,10 +82,10 @@ class IORedisAdapter implements RedisLike {
 
   zrange(key: string, start: number, stop: number, opts?: ZRangeOptions): Promise<string[]> {
     if (opts?.byScore) {
-      const args = opts.rev
-        ? [key, String(start), String(stop), "BYSCORE", "REV"]
-        : [key, String(start), String(stop), "BYSCORE"];
-      return this.client.call("zrange", ...args) as Promise<string[]>;
+      if (opts.rev) {
+        return this.client.zrevrangebyscore(key, String(start), String(stop));
+      }
+      return this.client.zrangebyscore(key, String(start), String(stop));
     }
     return this.client.zrange(key, start, stop);
   }
