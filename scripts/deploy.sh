@@ -63,6 +63,19 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   # (typescript/tailwind/postcss live in devDependencies). Force dev deps in.
   NODE_ENV=development npm ci --include=dev --no-audit --no-fund
 
+  CURRENT_STEP="ensure persistent snapshot directory"
+  echo "▸ $CURRENT_STEP"
+  SNAPSHOT_DIR="${PRODUCT_SNAPSHOTS_DIR:-}"
+  if [ -z "$SNAPSHOT_DIR" ] && [ -f ".env" ]; then
+    SNAPSHOT_DIR=$(awk -F= '/^PRODUCT_SNAPSHOTS_DIR=/{print substr($0, index($0, "=") + 1)}' .env | tail -1)
+  fi
+  if [ -n "$SNAPSHOT_DIR" ]; then
+    mkdir -p "$SNAPSHOT_DIR"
+    echo "  snapshot dir: $SNAPSHOT_DIR"
+  else
+    echo "  PRODUCT_SNAPSHOTS_DIR not set — using app-local data/product-snapshots"
+  fi
+
   CURRENT_STEP="npm run build"
   echo "▸ $CURRENT_STEP"
   npm run build
@@ -76,6 +89,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     mkdir -p .next/standalone/public
     cp -r .next/static .next/standalone/.next/
     [ -d public ] && cp -r public/. .next/standalone/public/
+    [ -d scripts ] && cp -r scripts .next/standalone/
     [ -f .env ] && cp .env .next/standalone/
   fi
 

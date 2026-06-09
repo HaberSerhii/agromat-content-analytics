@@ -18,6 +18,18 @@ const ProductsCatalog = dynamic(
   },
 );
 
+const SalesDashboard = dynamic(
+  () => import("@/components/SalesDashboard").then((m) => m.SalesDashboard),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>
+        Завантаження продажів…
+      </div>
+    ),
+  },
+);
+
 // Default points at the production same-origin nginx location
 // (`/parcer/` → parser UI). In local Next dev, that path belongs to this app
 // unless the parser URL is explicitly configured, so we show a small placeholder
@@ -32,12 +44,15 @@ const PARCER_URL = process.env.NEXT_PUBLIC_PARCER_URL || "/parcer/";
 // JS nor its API requests fire.
 export function AppShell() {
   const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
   const isCompetitors = pathname === "/";
   const isCatalog = pathname === "/catalog";
+  const isSales = pathname === "/sales";
   const [isLocalHost, setIsLocalHost] = useState(
     () => typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"),
   );
   useEffect(() => {
+    setMounted(true);
     setIsLocalHost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   }, []);
   const parserUrl = process.env.NEXT_PUBLIC_PARCER_URL || (isLocalHost ? "" : PARCER_URL);
@@ -45,9 +60,17 @@ export function AppShell() {
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
   const [catalogVisited, setCatalogVisited] = useState(isCatalog);
+  const [salesVisited, setSalesVisited] = useState(isSales);
   useEffect(() => {
     if (isCatalog) setCatalogVisited(true);
   }, [isCatalog]);
+  useEffect(() => {
+    if (isSales) setSalesVisited(true);
+  }, [isSales]);
+
+  if (!mounted) {
+    return null;
+  }
 
   return (
     <>
@@ -94,6 +117,12 @@ export function AppShell() {
       {catalogVisited && (
         <div style={{ display: isCatalog ? "block" : "none" }}>
           <ProductsCatalog />
+        </div>
+      )}
+
+      {salesVisited && (
+        <div style={{ display: isSales ? "block" : "none" }}>
+          <SalesDashboard />
         </div>
       )}
     </>

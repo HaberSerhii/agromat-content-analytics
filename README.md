@@ -257,7 +257,7 @@ npm run dev                       # http://localhost:3000
 | Розділ                       | Контрол                                                                                                                              |
 |------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | **Синхронізація з API**      | Кнопка `Sync now` → `POST /api/products/sync` з `Bearer NEXT_PUBLIC_DASHBOARD_SECRET`. Поки йде sync — кнопка дизейблиться, з'являється прогрес-бар (`X/Y сторінок · NN% · K тов.`). Опитується `GET /api/products/sync/status` кожні 2 сек. |
-| **Перегляд стану на дату**   | `SnapshotPicker` — список доступних snapshot-ів (зберігаються 14 днів). `● Поточний` повертає в live-режим; вибір дати → банер у шапці.  |
+| **Перегляд стану на дату**   | `SnapshotPicker` — список доступних snapshot-ів (зберігаються 30 днів на диску VPS). `● Поточний` повертає в live-режим; вибір дати → банер у шапці.  |
 | **Обов'язкові атрибути**     | Кнопка `⚙ Відкрити налаштування` → закриває цю модалку і відкриває `RequiredAttrsModal`.                                            |
 | Футер «Останній синк»        | Дата останнього успішного синку + статистика (товари / нові / зміни статусу) + посилання `Звіт ↗` на `SyncReportModal`.              |
 
@@ -295,8 +295,9 @@ src/
 │   └── ui/index.tsx              ← <Card />, базові примітиви
 └── lib/
     ├── constants.ts              ← IS_DEV та інші константи
-    ├── redis.ts                  ← Upstash Redis client
+    ├── redis.ts                  ← Redis/Valkey client (REDIS_URL) + Upstash fallback
     ├── products-store.ts         ← read/write нормалізованого каталогу в Redis (типи ProductLite / ProductFull / SyncState)
+    ├── products-daily-snapshots.ts ← 30-денні gzip snapshot-и на диску VPS
     ├── products-api.ts           ← клієнт до зовнішнього Agromat API (X-API-Key)
     ├── products-sync.ts          ← оркестрація повного синку
     └── utils.ts                  ← cn() та інші утиліти
@@ -308,17 +309,38 @@ src/
 Зовнішній Agromat API (https://www.agromat.ua/api/v1)
         │
         ▼  products-sync.ts (тригер: cron на VPS або кнопка Sync now)
-Upstash Redis
+Redis / Valkey (live-каталог, sync state, changes, timeline)
         │  ▲
         │  │
-        ▼  │  кеш на 60с в /api/products
+        ▼  │  daily snapshot-и: .json.gz на диску VPS
 Next.js API routes (/api/products/*)
         │
         ▼  fetch + URLSearchParams
 ProductsCatalog (React) → користувач
 ```
 
-Snapshot-и створюються щодня автоматично після успішного синку. Зберігається останні 14 днів.
+Snapshot-и створюються щодня автоматично після успішного синку. Зберігаються останні 30 днів у `PRODUCT_SNAPSHOTS_DIR`.
+
+### Автоматизація на VPS
+
+Для VPS-деплою є два скрипти:
+
+```bash
+APP_DIR=/path/to/Agromat-Analytics ./scripts/setup-vps-storage.sh
+```
+
+`setup-vps-storage.sh` встановлює Redis server, закриває його на `127.0.0.1`, вмикає AOF persistence, створює `PRODUCT_SNAPSHOTS_DIR`, прописує `REDIS_URL` / `PRODUCT_SNAPSHOTS_DIR` у `.env` і додає hourly cron на `scripts/run-products-sync.sh`.
+
+Перевірка після налаштування:
+
+```bash
+redis-cli -h 127.0.0.1 ping
+crontab -l | grep run-products-sync
+tail -f /var/log/agromat-products-sync.log
+curl -s http://127.0.0.1:3000/api/products/snapshots
+```
+
+`GET /api/products/snapshots` повертає не тільки список дат, а й `storage`: шлях до папки, кількість snapshot-ів, сумарний розмір, найстарішу та найновішу дату.
 
 ---
 
@@ -364,9 +386,21 @@ AGROMAT_PARSER_REPO=/absolute/path/to/Agromat_Parcer npm run local-parser-runner
 AGROMAT_API_KEY=
 AGROMAT_API_BASE_URL=https://www.agromat.ua/api/v1
 
-# Upstash Redis — для каталогу / snapshot-ів / sync state
+# Redis / Valkey — для live-каталогу, sync state, changes і timeline.
+# На VPS краще використовувати локальний Redis:
+REDIS_URL=redis://127.0.0.1:6379
+
+# Upstash Redis fallback — залишити порожнім, якщо використовується REDIS_URL
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
+
+# Daily snapshots зберігаються на диску як .json.gz за останні 30 днів.
+# За замовчуванням: <project>/data/product-snapshots
+PRODUCT_SNAPSHOTS_DIR=/var/lib/agromat-analytics/product-snapshots
+
+# VPS cron runner
+APP_PORT=3000
+SYNC_LOG=/var/log/agromat-products-sync.log
 
 # Bearer для cron на VPS і тригера з UI
 CRON_SECRET=
