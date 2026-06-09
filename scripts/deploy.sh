@@ -37,6 +37,17 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   APP_DIR="$PWD"
   echo "▸ app dir: $APP_DIR"
 
+  # This script is launched by the running Next.js standalone server. Its
+  # process env contains private runtime-only Next variables; if inherited by
+  # `next build`, Next can fail before printing a useful stack trace with
+  # "[TypeError: generate is not a function]". Build from a clean Next env.
+  unset __NEXT_PRIVATE_STANDALONE_CONFIG
+  unset __NEXT_PRIVATE_ORIGIN
+  unset __NEXT_PRIVATE_RUNTIME_TYPE
+  unset __NEXT_PRIVATE_PREBUNDLED_REACT
+  unset NEXT_DEPLOYMENT_ID
+  unset NEXT_OTEL_FETCH_DISABLED
+
   CURRENT_STEP="git fetch + reset"
   echo "▸ $CURRENT_STEP"
   git fetch --quiet origin main
