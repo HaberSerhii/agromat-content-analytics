@@ -96,6 +96,9 @@ type SalesDataset = {
   };
 };
 
+type SavedProductSet = { id: string; name: string; ids: number[]; rawText: string; createdAt: number };
+const SALES_SETS_KEY = "agromat.analytics.salesSets.v1";
+
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
 const pctFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 1 });
 const STATUS_FILTERS = [
@@ -115,15 +118,6 @@ function fmtNum(value: number) {
 
 function fmtPct(value: number | null) {
   return value == null ? "—" : `${pctFmt.format(value)}%`;
-}
-
-function fmtDate(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("uk-UA", {
-    dateStyle: "medium",
-    timeStyle: value.includes("T") ? "short" : undefined,
-    timeZone: "Europe/Kyiv",
-  }).format(new Date(value));
 }
 
 function fmtIsoDateShort(value: string) {
@@ -295,6 +289,18 @@ function ProductSetModal({ initialText, onApply, onClose }: {
   );
 }
 
+async function copyText(text: string) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand("copy");
+  area.remove();
+}
+
 function toInputDate(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -324,11 +330,25 @@ export function SalesDashboard() {
   const [productSet, setProductSet] = useState<{ ids: number[]; rawText: string } | null>(null);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [showProductSetModal, setShowProductSetModal] = useState(false);
+  const [savedSets, setSavedSets] = useState<SavedProductSet[]>([]);
+  const [setName, setSetName] = useState("");
   const [data, setData] = useState<SalesDataset | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const hasLoadedRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(SALES_SETS_KEY) || "[]");
+      if (Array.isArray(value)) setSavedSets(value);
+    } catch {}
+  }, []);
+
+  const persistSavedSets = (next: SavedProductSet[]) => {
+    setSavedSets(next);
+    localStorage.setItem(SALES_SETS_KEY, JSON.stringify(next));
+  };
 
   useEffect(() => {
     let alive = true;
@@ -371,10 +391,6 @@ export function SalesDashboard() {
       controller.abort();
     };
   }, [dateFrom, dateTo, productSet, selectedStatuses]);
-  const maxSegmentRevenue = useMemo(
-    () => Math.max(1, ...(data?.summary.segments || []).map((item) => item.revenue)),
-    [data],
-  );
   const maxBrandRevenue = useMemo(
     () => Math.max(1, ...(data?.summary.brands || []).map((item) => item.revenue)),
     [data],
@@ -441,9 +457,6 @@ export function SalesDashboard() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-black m-0" style={{ color: "var(--text)" }}>Аналіз продаж</h1>
-          <div className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
-            AWS S3: {data.source.bucket}/{data.source.key} · оновлено {fmtDate(data.source.lastModified)}
-          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {refreshing && (
@@ -456,9 +469,6 @@ export function SalesDashboard() {
               {error}
             </div>
           )}
-          <div className="text-xs rounded-lg border px-3 py-2" style={{ borderColor: "var(--border)", color: "var(--text-dim)", background: "var(--bg-card)" }}>
-            Дані оновлюються щодня після 06:00 за Києвом · наступна перевірка {fmtDate(data.source.nextRefreshAt)}
-          </div>
         </div>
       </div>
 
@@ -515,6 +525,35 @@ export function SalesDashboard() {
             Набір товарів: запитано <b style={{ color: "var(--text)" }}>{fmtNum(productSet.ids.length)}</b>, знайдено у продажах <b style={{ color: "var(--text)" }}>{fmtNum(data.filter.matchedProductCodes.length)}</b>.
           </div>
         )}
+        {productSet && (
+          <div className="mt-3 flex gap-2 flex-wrap">
+            <input value={setName} onChange={(event) => setSetName(event.target.value)} placeholder="Назва сегмента"
+              className="h-9 rounded-lg border px-3 text-xs" style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }} />
+            <button type="button" onClick={() => {
+              const name = setName.trim();
+              if (!name) return;
+              const next = { id: `${Date.now()}`, name, ...productSet, createdAt: Date.now() };
+              persistSavedSets([next, ...savedSets.filter((item) => item.name.toLowerCase() !== name.toLowerCase())]);
+              setSetName("");
+            }} className="h-9 rounded-lg px-3 text-xs font-bold border" style={{ borderColor: "#118dff", background: "#118dff", color: "#fff" }}>
+              Зберегти сегмент
+            </button>
+          </div>
+        )}
+        {savedSets.length > 0 && (
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {savedSets.map((set) => (
+              <div key={set.id} className="rounded-lg border px-3 py-2 flex items-center gap-2" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
+                <button type="button" onClick={() => setProductSet({ ids: set.ids, rawText: set.rawText })} className="text-left border-0 bg-transparent flex-1 min-w-0">
+                  <div className="text-xs font-bold truncate" style={{ color: "var(--text)" }}>{set.name}</div>
+                  <div className="text-[10px]" style={{ color: "var(--text-dim)" }}>{fmtNum(set.ids.length)} IDD</div>
+                </button>
+                <button type="button" title="Скопіювати всі IDD" onClick={() => copyText(set.ids.join("\n"))} className="h-8 px-2 rounded-lg border text-xs" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>Копіювати</button>
+                <button type="button" title="Видалити" onClick={() => persistSavedSets(savedSets.filter((item) => item.id !== set.id))} className="h-8 px-2 rounded-lg border text-xs" style={{ borderColor: "rgba(239,68,68,.35)", color: "#b91c1c", background: "rgba(239,68,68,.08)" }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <StatusFilter
@@ -543,7 +582,7 @@ export function SalesDashboard() {
               <div style={{ color: "var(--text-dim)" }}>Прогноз: <b style={{ color: "var(--text)" }}>{plan.forecastRevenue ? fmtMoney(plan.forecastRevenue) : "—"}</b></div>
               <div style={{ color: "var(--text-dim)" }}>Прогноз плану: <b style={{ color: "var(--text)" }}>{fmtPct(forecastPct)}</b></div>
             </div>
-            <div className="mt-4 grid gap-2 md:grid-cols-3">
+            <div className="mt-4 grid gap-2 md:grid-cols-2">
               {plan.segments.filter((segment) => segment.segment !== "Інше").map((segment) => (
                 <div key={segment.segment} className="rounded-lg border p-3" style={{ borderColor: "var(--border)", background: "rgba(255,255,255,.54)" }}>
                   <div className="text-xs font-bold" style={{ color: "var(--text)" }}>{segment.segment}</div>
@@ -560,7 +599,7 @@ export function SalesDashboard() {
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Сума документів" value={fmtMoney(data.summary.selected.revenue)} hint={`${fmtNum(data.summary.selected.docs)} документів · ${statusLabel}`} accent="#118dff" />
         <KpiCard label="Товарів у документах" value={fmtNum(data.summary.selected.goods)} hint={`за фільтром ${statusLabel}`} accent="#22c55e" />
-        <KpiCard label="Повернення" value={fmtMoney(data.summary.selected.returnedRevenue)} hint="return_sum з CSV по обраному статусу" accent="#f59e0b" />
+        <KpiCard label="Повернення" value={fmtMoney(data.summary.selected.returnedRevenue)} accent="#f59e0b" />
         <KpiCard label="Скасовано" value={fmtNum(data.summary.selected.canceledDocs)} hint={fmtMoney(data.summary.selected.canceledRevenue)} accent="#ef4444" />
       </div>
 
@@ -600,10 +639,7 @@ export function SalesDashboard() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        <RankingList title="Сегменти продажів" items={data.summary.segments} maxRevenue={maxSegmentRevenue} color="#7c3aed" />
-        <RankingList title="Бренди" items={data.summary.brands} maxRevenue={maxBrandRevenue} color="#22c55e" />
-      </section>
+      <RankingList title="Бренди" items={data.summary.brands} maxRevenue={maxBrandRevenue} color="#22c55e" />
 
       <section className="grid gap-4 xl:grid-cols-[1.25fr_.75fr]">
         <RankingList title="Категорії" items={data.summary.categories} maxRevenue={maxCategoryRevenue} color="#f59e0b" />

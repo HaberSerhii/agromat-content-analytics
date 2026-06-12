@@ -9,6 +9,7 @@ APP_PORT="${APP_PORT:-3000}"
 APP_USER="${APP_USER:-$(id -un)}"
 SNAPSHOT_DIR="${PRODUCT_SNAPSHOTS_DIR:-/var/lib/agromat-analytics/product-snapshots}"
 SYNC_LOG="${SYNC_LOG:-/var/log/agromat-products-sync.log}"
+SIMPLE_PRICE_LOG="${SIMPLE_PRICE_LOG:-/var/log/agromat-simple-price.log}"
 REDIS_URL_VALUE="${REDIS_URL:-redis://127.0.0.1:6379}"
 
 if [ ! -d "$APP_DIR" ]; then
@@ -77,6 +78,8 @@ run_root mkdir -p "$SNAPSHOT_DIR"
 run_root chown -R "$APP_USER":"$APP_USER" "$(dirname "$SNAPSHOT_DIR")"
 run_root touch "$SYNC_LOG"
 run_root chown "$APP_USER":"$APP_USER" "$SYNC_LOG"
+run_root touch "$SIMPLE_PRICE_LOG"
+run_root chown "$APP_USER":"$APP_USER" "$SIMPLE_PRICE_LOG"
 
 echo "==> Updating $APP_DIR/.env"
 set_env "REDIS_URL" "$REDIS_URL_VALUE" "$APP_DIR/.env"
@@ -90,12 +93,16 @@ fi
 
 echo "==> Making sync runner executable"
 chmod +x "$APP_DIR/scripts/run-products-sync.sh"
+chmod +x "$APP_DIR/scripts/run-simple-price-auto.sh"
 
 echo "==> Installing hourly cron"
 CRON_LINE="0 * * * * APP_DIR=$APP_DIR APP_PORT=$APP_PORT SYNC_LOG=$SYNC_LOG $APP_DIR/scripts/run-products-sync.sh"
+PRICE_CRON_LINE="0 18 * * * APP_DIR=$APP_DIR SIMPLE_PRICE_LOG=$SIMPLE_PRICE_LOG $APP_DIR/scripts/run-simple-price-auto.sh"
 TMP_CRON="$(mktemp)"
-crontab -l 2>/dev/null | grep -v "run-products-sync.sh" > "$TMP_CRON" || true
+crontab -l 2>/dev/null | grep -v "run-products-sync.sh" | grep -v "run-simple-price-auto.sh" > "$TMP_CRON" || true
 echo "$CRON_LINE" >> "$TMP_CRON"
+echo "CRON_TZ=Europe/Kyiv" >> "$TMP_CRON"
+echo "$PRICE_CRON_LINE" >> "$TMP_CRON"
 crontab "$TMP_CRON"
 rm -f "$TMP_CRON"
 
@@ -106,3 +113,5 @@ echo "Done."
 echo "Snapshot dir: $SNAPSHOT_DIR"
 echo "Sync log:     $SYNC_LOG"
 echo "Cron:         $CRON_LINE"
+echo "Price log:    $SIMPLE_PRICE_LOG"
+echo "Price cron:   $PRICE_CRON_LINE"

@@ -4,7 +4,6 @@ import {
   TIMELINE_GROUPS,
   readTimeline,
   readTimelineCounts,
-  readTimelinePriceSummary,
   readLiteSyncedAt,
 } from "@/lib/products-store";
 
@@ -62,7 +61,7 @@ export async function GET(request: Request) {
   const syncedAt = await readLiteSyncedAt();
   const excludeNewFirstSeenAt = excludeNew ? syncedAt : null;
 
-  const [{ events, total }, counts, priceSummary] = await Promise.all([
+  const [{ events, total }, counts] = await Promise.all([
     readTimeline({
       group,
       sinceMs: since,
@@ -75,13 +74,10 @@ export async function GET(request: Request) {
       categoryId,
     }),
     readTimelineCounts(excludeNewFirstSeenAt, since, until, statusIds, categoryId),
-    group === "prices"
-      ? readTimelinePriceSummary({ sinceMs: since, untilMs: until, excludeNewFirstSeenAt, statusIds, categoryId })
-      : Promise.resolve(null),
   ]);
 
   return NextResponse.json(
-    { group, events, total, counts, limit, offset, sort, syncedAt, priceSummary, filters: { statusIds: statusIdsList, categoryId } },
+    { group, events, total, counts, limit, offset, sort, syncedAt, filters: { statusIds: statusIdsList, categoryId } },
     {
       // Sync runs hourly — short edge cache is plenty and keeps dashboard fresh.
       headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=600" },

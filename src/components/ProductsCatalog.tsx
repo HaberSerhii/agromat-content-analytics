@@ -33,9 +33,8 @@ interface ListResponse {
   asOf: string | null;
   stats: {
     totalAll: number;
-    newCount24h: number;
-    newCount7d: number;
-    statusChanged7d: number;
+    newCountRange: number;
+    statusChangedRange: number;
     noImages: number;
     noAttributes: number;
     noReviews: number;
@@ -106,6 +105,14 @@ function fmtDateTime(iso: string | null | undefined): string {
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
+}
+function kyivDateInput(iso: string): string {
+  return new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" });
+}
+function shiftDateInput(value: string, days: number): string {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 function statusColor(id: number): string {
   switch (id) {
@@ -1244,16 +1251,15 @@ function KpiRow({ stats, total }: { stats: ListResponse["stats"]; total: number 
       value: fmtNum(total),
       color: filtered ? "#118dff" : "var(--text)",
     },
-    { label: "Нових за 24г", value: fmtNum(stats.newCount24h), color: "#107c10" },
-    { label: "Нових за 7д", value: fmtNum(stats.newCount7d), color: "#107c10" },
-    { label: "Зміни статусу 7д", value: fmtNum(stats.statusChanged7d), color: "#118dff" },
+    { label: "Нові картки", value: fmtNum(stats.newCountRange), color: "#107c10" },
+    { label: "Змінили статус", value: fmtNum(stats.statusChangedRange), color: "#118dff" },
     { label: "Без фото", value: fmtNum(stats.noImages), color: "#e66c37" },
     { label: "Без атрибутів", value: fmtNum(stats.noAttributes), color: "#e66c37" },
     { label: "Без відгуків", value: fmtNum(stats.noReviews), color: "#a19f9d" },
     { label: "Без артикулу", value: fmtNum(stats.noSku), color: "#e66c37" },
   ];
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
+    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
       {items.map((i) => (
         <div key={i.label} className="rounded-xl p-3 text-center"
           style={{ background: "var(--bg-input)", border: "1px solid var(--border)" }}>
@@ -2225,42 +2231,20 @@ interface TimelineResponse {
   events: TimelineEventResp[];
   total: number;
   counts: Record<TimelineGroupKey, number>;
-  priceSummary: TimelinePriceSummary | null;
   limit: number;
   offset: number;
   sort: "asc" | "desc";
   syncedAt: string | null;
 }
 
-interface TimelinePriceSummary {
-  skuCount: number;
-  eventCount: number;
-  avgAbsPct: number | null;
-  avgSignedPct: number | null;
-  upCount: number;
-  downCount: number;
-  categories: {
-    categoryId: number;
-    categoryName: string;
-    skuCount: number;
-    eventCount: number;
-    avgAbsPct: number | null;
-  }[];
-}
-
 function ChangesTimelineView() {
   const [group, setGroup] = useState<TimelineGroupKey>("photos");
-  const [sort, setSort] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
   const [filters, setFilters] = useState<FiltersResp | null>(null);
   const [statusIds, setStatusIds] = useState<number[]>([]);
-  const [categoryId, setCategoryId] = useState<number | null>(null);
-  // Date range — default: last 7 days. Both endpoints inclusive.
-  const today = new Date().toISOString().slice(0, 10);
-  const sevenAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
-  const [since, setSince] = useState<string>(sevenAgo);
-  const [until, setUntil] = useState<string>(today);
+  const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
   const [data, setData] = useState<TimelineResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -2269,25 +2253,31 @@ function ChangesTimelineView() {
     fetch("/api/products/filters").then((r) => r.json()).then(setFilters).catch(() => {});
   }, []);
 
-  useEffect(() => { setPage(1); }, [group, sort, since, until, statusIds, categoryId]);
+  useEffect(() => {
+    if (!filters?.syncedAt || since || until) return;
+    const lastUpdateDay = filters.syncedAt.slice(0, 10);
+    setSince(lastUpdateDay);
+    setUntil(lastUpdateDay);
+  }, [filters?.syncedAt, since, until]);
+
+  useEffect(() => { setPage(1); }, [group, since, until, statusIds]);
 
   useEffect(() => {
+    if (!since || !until) return;
     const params = new URLSearchParams();
     params.set("group", group);
     params.set("limit", String(limit));
     params.set("offset", String((page - 1) * limit));
-    params.set("sort", sort);
-    if (since) params.set("since", `${since}T00:00:00.000Z`);
-    if (until) params.set("until", `${until}T23:59:59.999Z`);
-    if (group === "prices" && statusIds.length) params.set("status_ids", statusIds.join(","));
-    if (group === "prices" && categoryId != null) params.set("category_id", String(categoryId));
+    params.set("since", `${since}T00:00:00.000Z`);
+    params.set("until", `${until}T23:59:59.999Z`);
+    if (statusIds.length) params.set("status_ids", statusIds.join(","));
     setLoading(true); setError("");
     fetch(`/api/products/changes?${params.toString()}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: TimelineResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
       .finally(() => setLoading(false));
-  }, [group, sort, since, until, page, limit, statusIds, categoryId]);
+  }, [group, since, until, page, limit, statusIds]);
 
   const tabs: { key: TimelineGroupKey; label: string; color: string }[] = [
     { key: "photos",     label: "Фото",      color: "#d13438" },
@@ -2297,21 +2287,51 @@ function ChangesTimelineView() {
     { key: "prices",     label: "Ціни",      color: "#118dff" },
   ];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1;
-  const selectedCategory = data?.priceSummary?.categories.find((c) => c.categoryId === categoryId)?.categoryName
-    ?? filters?.categories.find((c) => c.id === categoryId)?.name
-    ?? null;
-  const periodDays = (() => {
-    const start = since ? Date.parse(`${since}T00:00:00`) : NaN;
-    const end = until ? Date.parse(`${until}T00:00:00`) : NaN;
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
-    return Math.floor((end - start) / 86400_000) + 1;
-  })();
   const toggleTimelineStatus = (id: number) => {
     setStatusIds((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  };
+  const shiftPeriod = (days: number) => {
+    const shift = (value: string) => {
+      const date = new Date(`${value}T12:00:00Z`);
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+    setSince(shift(since));
+    setUntil(shift(until));
+  };
+  const onSinceChange = (value: string) => {
+    setSince(value);
+    if (value > until) setUntil(value);
+  };
+  const onUntilChange = (value: string) => {
+    setUntil(value);
+    if (value < since) setSince(value);
   };
 
   return (
     <Card>
+      {/* Common status filter */}
+      <div className="flex items-center gap-1 flex-wrap rounded-lg p-0.5 mb-3 w-fit max-w-full"
+        style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
+        <button
+          onClick={() => setStatusIds([])}
+          className="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border-0 whitespace-nowrap"
+          style={statusIds.length === 0 ? { background: "#118dff", color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
+          title="Показати всі статуси">
+          Усі статуси
+        </button>
+        {(filters?.statuses || []).map((s) => {
+          const active = statusIds.includes(s.id);
+          const color = statusColor(s.id);
+          return (
+            <button key={s.id} onClick={() => toggleTimelineStatus(s.id)} title={s.name}
+              className="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border-0 whitespace-nowrap"
+              style={active ? { background: color, color: "#fff" } : { background: "transparent", color }}
+            >● {s.name}</button>
+          );
+        })}
+      </div>
+
       {/* Sub-tabs */}
       <div className="flex gap-1 mb-3 flex-wrap rounded-xl p-0.5" style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
         {tabs.map((t) => {
@@ -2334,65 +2354,31 @@ function ChangesTimelineView() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <span className="text-xs" style={{ color: "var(--text-dim)" }}>Період:</span>
-        <input type="date" value={since} max={until || undefined} onChange={(e) => setSince(e.target.value)}
-          className="rounded-lg px-2 py-1 text-xs border outline-none tabular-nums"
-          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }} />
-        <span style={{ color: "var(--text-dim)" }}>—</span>
-        <input type="date" value={until} min={since || undefined} onChange={(e) => setUntil(e.target.value)}
-          className="rounded-lg px-2 py-1 text-xs border outline-none tabular-nums"
-          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }} />
-        <button onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
-          className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
+        <button type="button" onClick={() => shiftPeriod(-1)} disabled={!since || !until}
+          className="rounded-lg w-8 h-8 text-base font-bold border cursor-pointer disabled:opacity-30"
           style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
-          title="Перемкнути порядок сортування за датою">
-          📅 {sort === "desc" ? "Новіші першими" : "Старіші першими"}
+          title="Попередній день" aria-label="Попередній день">
+          ←
         </button>
-        {group === "prices" && (
-          <div className="flex items-center gap-1 flex-wrap rounded-lg p-0.5"
-            style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
-            <button
-              onClick={() => setStatusIds([])}
-              className="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border-0 whitespace-nowrap"
-              style={statusIds.length === 0 ? { background: "#118dff", color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
-              title="Показати всі статуси">
-              Усі статуси
-            </button>
-            {(filters?.statuses || []).map((s) => {
-              const active = statusIds.includes(s.id);
-              const color = statusColor(s.id);
-              return (
-                <button key={s.id} onClick={() => toggleTimelineStatus(s.id)} title={s.name}
-                  className="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border-0 whitespace-nowrap"
-                  style={active ? { background: color, color: "#fff" } : { background: "transparent", color }}
-                >● {s.name}</button>
-              );
-            })}
-          </div>
-        )}
-        {group === "prices" && categoryId != null && (
-          <button onClick={() => setCategoryId(null)}
-            className="px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer border-0"
-            style={{ background: "#d1343811", color: "#d13438" }}
-            title="Повернути всі категорії">
-            ✕ {selectedCategory || `Категорія #${categoryId}`}
-          </button>
-        )}
+        <span className="text-xs" style={{ color: "var(--text-dim)" }}>Дата від:</span>
+        <input type="date" value={since} max={until || undefined} onChange={(e) => onSinceChange(e.target.value)}
+          className="rounded-lg px-2 py-1 text-xs border outline-none tabular-nums"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }} />
+        <span className="text-xs" style={{ color: "var(--text-dim)" }}>Дата до:</span>
+        <input type="date" value={until} min={since || undefined} onChange={(e) => onUntilChange(e.target.value)}
+          className="rounded-lg px-2 py-1 text-xs border outline-none tabular-nums"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }} />
+        <button type="button" onClick={() => shiftPeriod(1)} disabled={!since || !until}
+          className="rounded-lg w-8 h-8 text-base font-bold border cursor-pointer disabled:opacity-30"
+          style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
+          title="Наступний день" aria-label="Наступний день">
+          →
+        </button>
         <div className="text-[10px] ml-auto" style={{ color: "var(--text-dim)" }}>
           Без товарів, які щойно з&apos;явилися в каталозі ·{" "}
           {data?.syncedAt && <>останній sync: {fmtDateTime(data.syncedAt)}</>}
         </div>
       </div>
-
-      {group === "prices" && data?.priceSummary && (
-        <TimelinePriceSummaryPanel
-          summary={data.priceSummary}
-          periodDays={periodDays}
-          selectedCategoryId={categoryId}
-          selectedCategoryName={selectedCategory}
-          onSelectCategory={setCategoryId}
-        />
-      )}
 
       {/* Body */}
       {loading && !data && <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>Завантаження…</div>}
@@ -2450,72 +2436,6 @@ function ChangesTimelineView() {
         </div>
       )}
     </Card>
-  );
-}
-
-function TimelinePriceSummaryPanel({
-  summary,
-  periodDays,
-  selectedCategoryId,
-  selectedCategoryName,
-  onSelectCategory,
-}: {
-  summary: TimelinePriceSummary;
-  periodDays: number | null;
-  selectedCategoryId: number | null;
-  selectedCategoryName: string | null;
-  onSelectCategory: (id: number | null) => void;
-}) {
-  const avg = summary.avgAbsPct == null ? "—" : `${summary.avgAbsPct.toFixed(summary.avgAbsPct >= 10 ? 0 : 1)}%`;
-  const period = periodDays ? `За останні ${periodDays} дн.` : "За обраний період";
-  const categoryLabel = selectedCategoryId != null
-    ? ` в категорії ${selectedCategoryName || `#${selectedCategoryId}`}`
-    : "";
-  const visibleCategories = summary.categories.slice(0, 12);
-
-  return (
-    <div className="rounded-xl p-3 mb-3"
-      style={{ background: "#eff6ff", border: "1px solid #93c5fd", color: "#1e3a8a" }}>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="text-sm font-bold tabular-nums" style={{ color: "#1e40af" }}>
-            {period}, було переоцінено {fmtNum(summary.skuCount)} SKU{categoryLabel} в середньому на {avg}
-          </div>
-          <div className="text-[11px] mt-1 tabular-nums" style={{ color: "#3b82f6" }}>
-            {fmtNum(summary.eventCount)} змін ціни · підвищень {fmtNum(summary.upCount)} · знижень {fmtNum(summary.downCount)}
-          </div>
-        </div>
-        {selectedCategoryId != null && (
-          <button onClick={() => onSelectCategory(null)}
-            className="px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer border-0"
-            style={{ background: "#118dff", color: "#fff" }}>
-            Всі категорії
-          </button>
-        )}
-      </div>
-
-      {visibleCategories.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {visibleCategories.map((c) => {
-            const active = c.categoryId === selectedCategoryId;
-            const cAvg = c.avgAbsPct == null ? "—" : `${c.avgAbsPct.toFixed(c.avgAbsPct >= 10 ? 0 : 1)}%`;
-            return (
-              <button
-                key={c.categoryId}
-                onClick={() => onSelectCategory(active ? null : c.categoryId)}
-                className="px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer border tabular-nums"
-                style={active
-                  ? { background: "#118dff", color: "#fff", borderColor: "#118dff" }
-                  : { background: "#fff", color: "#1e40af", borderColor: "#bfdbfe" }}
-                title={`${c.categoryName}: ${fmtNum(c.skuCount)} SKU, ${fmtNum(c.eventCount)} змін, середнє ${cAvg}`}
-              >
-                {c.categoryName} · {fmtNum(c.skuCount)} SKU · {cAvg}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -3371,6 +3291,343 @@ function Stat({ label, value, color }: { label: string; value: number | undefine
   );
 }
 
+interface ProductAnalyticsBucket {
+  key: string;
+  name: string;
+  total: number;
+  up: number;
+  down: number;
+  withoutDiscount: number;
+  withDiscount: number;
+}
+
+interface ProductAnalyticsResponse {
+  from: string;
+  to: string;
+  statusIds: number[];
+  statuses: { id: number; name: string }[];
+  syncedAt: string | null;
+  newCount: number;
+  disabledCount: number;
+  repricedCount: number;
+  repricedUpCount: number;
+  repricedDownCount: number;
+  withoutDiscountCount: number;
+  withDiscountCount: number;
+  categories: ProductAnalyticsBucket[];
+  brands: ProductAnalyticsBucket[];
+}
+
+type ProductAnalyticsSortKey = keyof ProductAnalyticsBucket | "withoutDiscountPct";
+
+const PRODUCT_ANALYTICS_COLUMNS: {
+  key: ProductAnalyticsSortKey;
+  label: string;
+  align: "left" | "right";
+}[] = [
+  { key: "name", label: "Назва", align: "left" },
+  { key: "up", label: "Переоцінено ↑", align: "right" },
+  { key: "down", label: "Переоцінено ↓", align: "right" },
+  { key: "withoutDiscount", label: "Без знижки", align: "right" },
+  { key: "withDiscount", label: "Зі знижкою", align: "right" },
+  { key: "total", label: "Всього", align: "right" },
+  { key: "withoutDiscountPct", label: "% без знижки", align: "right" },
+];
+
+function ProductAnalyticsTable({
+  title,
+  rows,
+  selectedKey,
+  onSelect,
+}: {
+  title: string;
+  rows: ProductAnalyticsBucket[];
+  selectedKey: string;
+  onSelect: (key: string) => void;
+}) {
+  const [sortKey, setSortKey] = useState<ProductAnalyticsSortKey>("total");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const visibleRows = useMemo(() => {
+    const value = (row: ProductAnalyticsBucket) => (
+      sortKey === "withoutDiscountPct" ? percent(row.withoutDiscount, row.total) : row[sortKey]
+    );
+    return [...rows].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      const result = typeof av === "string"
+        ? av.localeCompare(String(bv), "uk")
+        : Number(av) - Number(bv);
+      return sortDirection === "asc" ? result : -result;
+    }).slice(0, 50);
+  }, [rows, sortDirection, sortKey]);
+
+  const onSort = (key: ProductAnalyticsSortKey) => {
+    if (key === sortKey) {
+      setSortDirection((current) => current === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(key === "name" ? "asc" : "desc");
+  };
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="text-sm font-bold" style={{ color: "var(--text)" }}>{title}</div>
+        <div className="text-[10px]" style={{ color: "var(--text-dim)" }}>
+          Показано {fmtNum(visibleRows.length)} з {fmtNum(rows.length)}
+        </div>
+      </div>
+      <div className="overflow-auto" style={{ maxHeight: 560 }}>
+        <table className="w-full text-xs border-collapse">
+          <thead className="sticky top-0 z-10" style={{ color: "var(--text-dim)", background: "var(--bg-input)" }}>
+            <tr>
+              {PRODUCT_ANALYTICS_COLUMNS.map((column) => (
+                <th key={column.key} className={`${column.align === "left" ? "text-left" : "text-right"} px-3 py-2 whitespace-nowrap`}>
+                  <button
+                    type="button"
+                    onClick={() => onSort(column.key)}
+                    className="w-full border-0 bg-transparent cursor-pointer font-semibold"
+                    style={{ color: "inherit", textAlign: column.align }}
+                    title={`Сортувати: ${column.label}`}
+                  >
+                    {column.label} {sortKey === column.key ? (sortDirection === "asc" ? "▲" : "▼") : ""}
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((row) => (
+              <tr key={row.key} className="border-t"
+                style={{ borderColor: selectedKey === row.key ? "#118dff" : "var(--border)", background: selectedKey === row.key ? "#118dff12" : undefined }}>
+                <td className="px-3 py-2 font-semibold">
+                  <button type="button" onClick={() => onSelect(row.key)}
+                    className="border-0 bg-transparent cursor-pointer font-semibold text-left"
+                    style={{ color: selectedKey === row.key ? "#118dff" : "var(--text)" }}
+                    title={selectedKey === row.key ? `Скинути фільтр: ${row.name}` : `Фільтрувати за: ${row.name}`}>
+                    {selectedKey === row.key ? "✓ " : ""}{row.name}
+                  </button>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums" style={{ color: "#d13438" }}>{fmtNum(row.up)}</td>
+                <td className="px-3 py-2 text-right tabular-nums" style={{ color: "#107c10" }}>{fmtNum(row.down)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtNum(row.withoutDiscount)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtNum(row.withDiscount)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtNum(row.total)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{percent(row.withoutDiscount, row.total)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function ProductAnalyticsDashboard() {
+  const [from, setFrom] = useState(() => new Date().toLocaleDateString("sv-SE"));
+  const [to, setTo] = useState(() => new Date().toLocaleDateString("sv-SE"));
+  const [statusIds, setStatusIds] = useState<number[]>([5, 3]);
+  const [statuses, setStatuses] = useState<{ id: number; name: string }[]>([]);
+  const [categoryKey, setCategoryKey] = useState("");
+  const [brandKey, setBrandKey] = useState("");
+  const [data, setData] = useState<ProductAnalyticsResponse | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!from || !to) return;
+    setError("");
+    setData(null);
+    const statuses = statusIds.length ? statusIds.join(",") : "all";
+    const params = new URLSearchParams({ from, to, status_ids: statuses });
+    if (categoryKey) params.set("category_id", categoryKey);
+    if (brandKey) params.set("brand_id", brandKey);
+    fetch(`/api/products/analytics?${params.toString()}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((response: ProductAnalyticsResponse) => {
+        setStatuses(response.statuses);
+        setData(response);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Error"));
+  }, [brandKey, categoryKey, from, statusIds, to]);
+
+  const onFromChange = (value: string) => {
+    if (!value) return;
+    setFrom(value);
+    if (value > to) setTo(value);
+  };
+  const onToChange = (value: string) => {
+    if (!value) return;
+    setTo(value);
+    if (value < from) setFrom(value);
+  };
+  const shiftPeriod = (days: number) => {
+    const shift = (value: string) => {
+      const date = new Date(`${value}T12:00:00Z`);
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+    setFrom(shift(from));
+    setTo(shift(to));
+  };
+  const toggleStatus = (id: number) => {
+    setStatusIds((current) => current.includes(id)
+      ? current.filter((value) => value !== id)
+      : [...current, id]);
+  };
+  const selectedCategoryName = data?.categories.find((row) => row.key === categoryKey)?.name;
+  const selectedBrandName = data?.brands.find((row) => row.key === brandKey)?.name;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Аналітика карток товару</div>
+          <div className="text-[10px] mt-1" style={{ color: "var(--text-dim)" }}>Останній sync: {fmtDateTime(data?.syncedAt)}</div>
+        </div>
+        <div className="flex items-end gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => shiftPeriod(-1)}
+            className="rounded-lg w-8 h-8 text-base font-bold border cursor-pointer"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
+            title="Попередній день"
+            aria-label="Попередній день"
+          >
+            ←
+          </button>
+          <label className="grid gap-1 text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>
+            Дата від
+            <input
+              type="date"
+              value={from}
+              max={to}
+              onChange={(event) => onFromChange(event.target.value)}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold border outline-none"
+              style={{ background: "var(--bg-input)", color: "var(--text)", borderColor: "var(--border2)" }}
+            />
+          </label>
+          <label className="grid gap-1 text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>
+            Дата до
+            <input
+              type="date"
+              value={to}
+              min={from}
+              onChange={(event) => onToChange(event.target.value)}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold border outline-none"
+              style={{ background: "var(--bg-input)", color: "var(--text)", borderColor: "var(--border2)" }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => shiftPeriod(1)}
+            className="rounded-lg w-8 h-8 text-base font-bold border cursor-pointer"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
+            title="Наступний день"
+            aria-label="Наступний день"
+          >
+            →
+          </button>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setStatusIds([])}
+          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer"
+          style={{
+            background: statusIds.length === 0 ? "#118dff" : "var(--bg-input)",
+            color: statusIds.length === 0 ? "#fff" : "var(--text-mid)",
+            borderColor: statusIds.length === 0 ? "#118dff" : "var(--border2)",
+          }}
+        >
+          Усі статуси
+        </button>
+        {statuses.map((status) => {
+          const active = statusIds.includes(status.id);
+          const color = status.id === ARCHIVE_STATUS_ID ? "#a19f9d" : statusColor(status.id);
+          return (
+            <button
+              key={status.id}
+              type="button"
+              onClick={() => toggleStatus(status.id)}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer"
+              style={{
+                background: active ? `${color}20` : "var(--bg-input)",
+                color: active ? color : "var(--text-mid)",
+                borderColor: active ? color : "var(--border2)",
+              }}
+            >
+              ● {status.name}
+            </button>
+          );
+        })}
+      </div>
+      {(categoryKey || brandKey) && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span style={{ color: "var(--text-dim)" }}>Активні фільтри:</span>
+          {categoryKey && (
+            <button type="button" onClick={() => setCategoryKey("")}
+              className="px-2.5 py-1 rounded-lg font-semibold border cursor-pointer"
+              style={{ background: "#118dff12", color: "#118dff", borderColor: "#118dff" }}>
+              Категорія: {selectedCategoryName || `#${categoryKey}`} ×
+            </button>
+          )}
+          {brandKey && (
+            <button type="button" onClick={() => setBrandKey("")}
+              className="px-2.5 py-1 rounded-lg font-semibold border cursor-pointer"
+              style={{ background: "#8e44ad12", color: "#8e44ad", borderColor: "#8e44ad" }}>
+              Бренд: {selectedBrandName || (brandKey === "none" ? "Без бренду" : `#${brandKey}`)} ×
+            </button>
+          )}
+          <button type="button" onClick={() => { setCategoryKey(""); setBrandKey(""); }}
+            className="px-2.5 py-1 rounded-lg font-semibold border cursor-pointer"
+            style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}>
+            Скинути всі
+          </button>
+        </div>
+      )}
+      {error && <div className="text-xs" style={{ color: "#d13438" }}>{error}</div>}
+      {!data && !error && <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>Завантаження…</div>}
+      {data && (
+        <>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {[
+              ["Додано нових карток", data.newCount, "#107c10"],
+              ["Відключено карток", data.disabledCount, "#d13438"],
+              ["Переоцінено товарів", data.repricedCount, "#118dff"],
+              ["Переоцінка вгору", data.repricedUpCount, "#d13438"],
+              ["Переоцінка вниз", data.repricedDownCount, "#107c10"],
+              ["Без знижки", data.withoutDiscountCount, "#e66c37"],
+              ["Зі знижкою", data.withDiscountCount, "#8e44ad"],
+            ].map(([label, value, color]) => (
+              <Card key={String(label)}>
+                <div className="text-xs font-semibold" style={{ color: "var(--text-dim)" }}>{label}</div>
+                <div className="text-2xl font-black mt-1 tabular-nums" style={{ color: String(color) }}>{fmtNum(Number(value))}</div>
+              </Card>
+            ))}
+          </div>
+          <ProductAnalyticsTable
+            title="За категоріями"
+            rows={data.categories}
+            selectedKey={categoryKey}
+            onSelect={(key) => setCategoryKey((current) => current === key ? "" : key)}
+          />
+          <ProductAnalyticsTable
+            title="За брендами"
+            rows={data.brands}
+            selectedKey={brandKey}
+            onSelect={(key) => setBrandKey((current) => current === key ? "" : key)}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main section ────────────────────────────────────────────────────────────
 export function ProductsCatalog() {
   const [data, setData] = useState<ListResponse | null>(null);
@@ -3414,10 +3671,12 @@ export function ProductsCatalog() {
   const [openSettings, setOpenSettings] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [catalogStatsFrom, setCatalogStatsFrom] = useState("");
+  const [catalogStatsTo, setCatalogStatsTo] = useState("");
   // View mode — "catalog" (table of products) vs "timeline" (cross-product
   // change history grouped by Фото/Атрибути/Відгуки/Артикул/Ціни) vs
   // "prices" (Vencon/Теплорадість/Сантехшара side-by-side from parser DB).
-  const [mode, setMode] = useState<"catalog" | "timeline" | "prices">("catalog");
+  const [mode, setMode] = useState<"catalog" | "analytics" | "timeline" | "prices">("catalog");
 
   useEffect(() => {
     try {
@@ -3502,6 +3761,8 @@ export function ProductsCatalog() {
     else if (hasAttrs === "lt5") p.set("max_attributes", "5");
     if (hasReviews) p.set("has_reviews", hasReviews);
     if (hasSku) p.set("has_sku", hasSku);
+    if (catalogStatsFrom) p.set("stats_from", catalogStatsFrom);
+    if (catalogStatsTo) p.set("stats_to", catalogStatsTo);
     p.set("sort_by", sortBy);
     p.set("sort_dir", sortDir);
 
@@ -3512,7 +3773,7 @@ export function ProductsCatalog() {
     if (tab === "noAttr") p.set("has_attributes", "false");
     if (tab === "noRev") p.set("has_reviews", "false");
     return p.toString();
-  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, hasReviews, hasSku, sortBy, sortDir, tab, asOf]);
+  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, hasReviews, hasSku, catalogStatsFrom, catalogStatsTo, sortBy, sortDir, tab, asOf]);
 
   const loadList = useCallback(() => {
     setLoading(true); setError("");
@@ -3524,6 +3785,12 @@ export function ProductsCatalog() {
   }, [buildQuery]);
 
   useEffect(() => { loadList(); }, [loadList]);
+  useEffect(() => {
+    if (!data?.syncedAt || catalogStatsFrom || catalogStatsTo) return;
+    const lastSyncDay = kyivDateInput(data.syncedAt);
+    setCatalogStatsFrom(lastSyncDay);
+    setCatalogStatsTo(lastSyncDay);
+  }, [catalogStatsFrom, catalogStatsTo, data?.syncedAt]);
   useEffect(() => {
     fetch("/api/products/filters").then((r) => r.json()).then(setFilters).catch(() => {});
   }, []);
@@ -3552,6 +3819,21 @@ export function ProductsCatalog() {
 
   const toggleStatus = (id: number) => {
     setStatusIds((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  };
+  const changeCatalogStatsFrom = (value: string) => {
+    if (!value) return;
+    setCatalogStatsFrom(value);
+    if (!catalogStatsTo || value > catalogStatsTo) setCatalogStatsTo(value);
+  };
+  const changeCatalogStatsTo = (value: string) => {
+    if (!value) return;
+    setCatalogStatsTo(value);
+    if (!catalogStatsFrom || value < catalogStatsFrom) setCatalogStatsFrom(value);
+  };
+  const shiftCatalogStatsPeriod = (days: number) => {
+    if (!catalogStatsFrom || !catalogStatsTo) return;
+    setCatalogStatsFrom(shiftDateInput(catalogStatsFrom, days));
+    setCatalogStatsTo(shiftDateInput(catalogStatsTo, days));
   };
 
   // Pulls every product matching the current filters (single big page) for
@@ -3713,16 +3995,17 @@ export function ProductsCatalog() {
       <Card style={{ borderColor: "#118dff44" }} className="mb-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>
-            Картка товару. {mode === "catalog" ? "Каталог." : mode === "timeline" ? "Хронологія змін." : "Ціни конкурентів."}
+            Картка товару. {mode === "catalog" ? "Каталог." : mode === "analytics" ? "Аналітика." : mode === "timeline" ? "Хронологія змін." : "Ціни конкурентів."}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Mode toggle: Каталог / Хронологія змін / Ціни конкурентів */}
             <div className="flex gap-1 rounded-xl p-0.5" style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
               {([
                 ["catalog",  "Каталог"],
+                ["analytics", "Аналітика"],
                 ["timeline", "Хронологія змін"],
                 ["prices",   "Ціни конкурентів"],
-              ] as ["catalog" | "timeline" | "prices", string][]).map(([m, l]) => (
+              ] as ["catalog" | "analytics" | "timeline" | "prices", string][]).map(([m, l]) => (
                 <button key={m} onClick={() => setMode(m)}
                   className="px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer border-0"
                   style={mode === m ? { background: "#118dff", color: "#fff" } : { background: "transparent", color: "var(--text-dim)" }}
@@ -3766,10 +4049,58 @@ export function ProductsCatalog() {
           </div>
         )}
 
+        {mode === "catalog" && catalogStatsFrom && catalogStatsTo && (
+          <div className="flex items-end justify-end gap-2 mb-3 flex-wrap">
+            <button
+              type="button"
+              onClick={() => shiftCatalogStatsPeriod(-1)}
+              className="rounded-lg w-8 h-8 text-base font-bold border cursor-pointer"
+              style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
+              title="Попередній день"
+              aria-label="Попередній день"
+            >
+              ←
+            </button>
+            <label className="grid gap-1 text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>
+              Дата від
+              <input
+                type="date"
+                value={catalogStatsFrom}
+                max={catalogStatsTo}
+                onChange={(event) => changeCatalogStatsFrom(event.target.value)}
+                className="rounded-lg px-2.5 py-1.5 text-xs font-semibold border outline-none"
+                style={{ background: "var(--bg-input)", color: "var(--text)", borderColor: "var(--border2)" }}
+              />
+            </label>
+            <label className="grid gap-1 text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>
+              Дата до
+              <input
+                type="date"
+                value={catalogStatsTo}
+                min={catalogStatsFrom}
+                onChange={(event) => changeCatalogStatsTo(event.target.value)}
+                className="rounded-lg px-2.5 py-1.5 text-xs font-semibold border outline-none"
+                style={{ background: "var(--bg-input)", color: "var(--text)", borderColor: "var(--border2)" }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => shiftCatalogStatsPeriod(1)}
+              className="rounded-lg w-8 h-8 text-base font-bold border cursor-pointer"
+              style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
+              title="Наступний день"
+              aria-label="Наступний день"
+            >
+              →
+            </button>
+          </div>
+        )}
+
         {mode === "catalog" && data && <KpiRow stats={data.stats} total={data.total} />}
       </Card>
 
       {mode === "timeline" && <ChangesTimelineView />}
+      {mode === "analytics" && <ProductAnalyticsDashboard />}
       {mode === "prices" && (
         <CompetitorPricesView
           bulk={bulk}

@@ -402,6 +402,10 @@ function isShipped(row: SalesRow) {
   return Boolean(row.shippedDate) && row.state.toLocaleLowerCase("uk").includes("повністю відвантаж");
 }
 
+function getNetRevenue(row: SalesRow) {
+  return row.docsSum - row.returnSum;
+}
+
 function addBucket(map: Map<string, MutableBucket>, label: string, row: SalesRow, revenue: number, goods = 1) {
   const item = map.get(label) || {
     label,
@@ -491,7 +495,16 @@ function addMonth(map: Map<string, SalesMonthSummary>, month: string, row: Sales
   map.set(month, item);
 }
 
-function buildPlanSummary(months: SalesMonthSummary[], currentMonthSegments: SalesBucketSummary[], currentMonth: string): SalesPlanSummary {
+function addRevenue(map: Map<string, number>, month: string, revenue: number) {
+  map.set(month, (map.get(month) || 0) + revenue);
+}
+
+function buildPlanSummary(
+  months: SalesMonthSummary[],
+  returnedRevenueByMonth: Map<string, number>,
+  currentMonthSegments: SalesBucketSummary[],
+  currentMonth: string,
+): SalesPlanSummary {
   const monthlyPlan = getMonthlySalesPlan(currentMonth);
   const plan = monthlyPlan?.total ?? null;
   const current = months.find((month) => month.month === currentMonth);
@@ -501,8 +514,8 @@ function buildPlanSummary(months: SalesMonthSummary[], currentMonthSegments: Sal
     return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
   })();
   const previous = months.find((month) => month.month === previousMonth);
-  const revenue = current?.revenue || 0;
-  const previousRevenue = previous?.revenue || 0;
+  const revenue = Math.round(current?.revenue || 0) - Math.round(returnedRevenueByMonth.get(currentMonth) || 0);
+  const previousRevenue = Math.round(previous?.revenue || 0) - Math.round(returnedRevenueByMonth.get(previousMonth) || 0);
   const elapsedDays = elapsedDaysForMonth(currentMonth);
   const totalDays = daysInMonth(currentMonth);
   const forecastRevenue = revenue > 0 ? (revenue / elapsedDays) * totalDays : null;
@@ -639,6 +652,7 @@ function buildDataset(
   const byDate = new Map<string, SalesDateSummary>();
   const months = new Map<string, SalesMonthSummary>();
   const allMonths = new Map<string, SalesMonthSummary>();
+  const allReturnedRevenueByMonth = new Map<string, number>();
   const segments = new Map<string, MutableBucket>();
   const allSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
   const brands = new Map<string, MutableBucket>();
@@ -646,6 +660,7 @@ function buildDataset(
   const states = new Map<string, { state: string; docs: number; revenue: number }>();
   const availableStates = new Map<string, { state: string; docs: number; revenue: number }>();
   const planMonths = new Map<string, SalesMonthSummary>();
+  const planReturnedRevenueByMonth = new Map<string, number>();
   const planSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
 
   let shippedDocs = 0;
@@ -696,13 +711,15 @@ function buildDataset(
     if (!isShipped(row) || !row.shippedDate) continue;
 
     const shippedMonth = row.shippedDate.slice(0, 7);
+    const netRevenue = getNetRevenue(row);
     addMonth(allMonths, shippedMonth, row);
+    addRevenue(allReturnedRevenueByMonth, shippedMonth, row.returnSum);
     let allMonthSegments = allSegmentsByMonth.get(shippedMonth);
     if (!allMonthSegments) {
       allMonthSegments = new Map<string, MutableBucket>();
       allSegmentsByMonth.set(shippedMonth, allMonthSegments);
     }
-    addBucket(allMonthSegments, row.planGroup, row, row.docsSum, row.goodsCount);
+    addBucket(allMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
     for (const code of goodsCodes) {
@@ -711,12 +728,13 @@ function buildDataset(
     }
 
     addMonth(planMonths, shippedMonth, row);
+    addRevenue(planReturnedRevenueByMonth, shippedMonth, row.returnSum);
     let planMonthSegments = planSegmentsByMonth.get(shippedMonth);
     if (!planMonthSegments) {
       planMonthSegments = new Map<string, MutableBucket>();
       planSegmentsByMonth.set(shippedMonth, planMonthSegments);
     }
-    addBucket(planMonthSegments, row.planGroup, row, row.docsSum, row.goodsCount);
+    addBucket(planMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!isWithinFilter(row.shippedDate, filter)) continue;
     if (statusSet.size > 0 && !statusSet.has(row.state || "Без статусу")) continue;
@@ -741,6 +759,7 @@ function buildDataset(
   const planMonthList = hasProductFilter
     ? [...planMonths.values()].sort((a, b) => a.month.localeCompare(b.month))
     : allMonthList;
+  const planReturnedRevenue = hasProductFilter ? planReturnedRevenueByMonth : allReturnedRevenueByMonth;
   const planMonthSegments = finishBuckets((hasProductFilter ? planSegmentsByMonth : allSegmentsByMonth).get(planMonth) || new Map<string, MutableBucket>());
 
   return {
@@ -772,7 +791,7 @@ function buildDataset(
         canceledDocs: selectedCanceledDocs,
         canceledRevenue: selectedCanceledRevenue,
       },
-      plan: buildPlanSummary(planMonthList, planMonthSegments, planMonth),
+      plan: buildPlanSummary(planMonthList, planReturnedRevenue, planMonthSegments, planMonth),
       byDate: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
       months: monthList,
       segments: segmentList,

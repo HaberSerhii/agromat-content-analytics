@@ -67,6 +67,30 @@ function missingRequiredAttrs(
   return 0;
 }
 
+const KYIV_DATE_TIME = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Kyiv",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+  hourCycle: "h23",
+});
+
+function kyivOffsetAt(ms: number) {
+  const parts = Object.fromEntries(KYIV_DATE_TIME.formatToParts(new Date(ms)).map((part) => [part.type, part.value]));
+  return Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour), Number(parts.minute), Number(parts.second),
+  ) - Math.floor(ms / 1000) * 1000;
+}
+
+function parseKyivCalendarDate(value: string | null, endOfDay = false) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const nextDay = Date.UTC(year, month - 1, day + (endOfDay ? 1 : 0));
+  const firstPass = nextDay - kyivOffsetAt(nextDay);
+  const start = nextDay - kyivOffsetAt(firstPass);
+  return endOfDay ? start - 1 : start;
+}
+
 export async function GET(request: Request) {
   const { searchParams: q } = new URL(request.url);
 
@@ -99,6 +123,10 @@ export async function GET(request: Request) {
   const maxImages = q.get("max_images") ? parseInt(q.get("max_images")!, 10) : null;
   // Attribute-count threshold: keep only products with attributesCount < maxAttributes.
   const maxAttributes = q.get("max_attributes") ? parseInt(q.get("max_attributes")!, 10) : null;
+  const statsFrom = q.get("stats_from");
+  const statsTo = q.get("stats_to") || statsFrom;
+  const statsFromMs = parseKyivCalendarDate(statsFrom);
+  const statsToMs = parseKyivCalendarDate(statsTo, true);
 
   // Bulk-id filter: user pastes a list of identifiers (whitespace/comma separated)
   // → we filter to that exact set and report which inputs we couldn't find.
@@ -272,14 +300,16 @@ export async function GET(request: Request) {
   //    `totalAll` is the unfiltered catalog size — used as a constant reference.
   const total = filtered.length;
   const totalAll = all.length;
-  const cutoff1d = daysAgoIso(1);
-  const cutoff7d = daysAgoIso(7);
-  let newCount24h = 0, newCount7d = 0, statusChanged7d = 0;
+  const inStatsRange = (value: string | null | undefined) => {
+    if (!value || statsFromMs == null || statsToMs == null) return false;
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) && ms >= statsFromMs && ms <= statsToMs;
+  };
+  let newCountRange = 0, statusChangedRange = 0;
   let noImages = 0, noAttributes = 0, noReviews = 0, noSku = 0;
   for (const p of filtered) {
-    if (p.firstSeenAt >= cutoff1d) newCount24h++;
-    if (p.firstSeenAt >= cutoff7d) newCount7d++;
-    if (p.statusChangedAt && p.statusChangedAt >= cutoff7d) statusChanged7d++;
+    if (inStatsRange(p.firstSeenAt)) newCountRange++;
+    if (inStatsRange(p.statusChangedAt)) statusChangedRange++;
     if (p.imagesCount === 0) noImages++;
     if (p.attributesCount === 0) noAttributes++;
     if (p.reviewsCount === 0) noReviews++;
@@ -312,9 +342,8 @@ export async function GET(request: Request) {
     syncState,
     stats: {
       totalAll,
-      newCount24h,
-      newCount7d,
-      statusChanged7d,
+      newCountRange,
+      statusChangedRange,
       noImages,
       noAttributes,
       noReviews,

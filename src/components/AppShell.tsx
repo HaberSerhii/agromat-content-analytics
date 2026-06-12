@@ -35,6 +35,7 @@ const SalesDashboard = dynamic(
 // unless the parser URL is explicitly configured, so we show a small placeholder
 // instead of recursively iframing the dashboard.
 const PARCER_URL = process.env.NEXT_PUBLIC_PARCER_URL || "/parcer/";
+const LOCAL_PARCER_URL = "http://127.0.0.1:5001/";
 
 // Renders both tabs in a single persistent shell hosted by the root layout.
 // CSS visibility swaps based on pathname → iframe and catalog stay mounted
@@ -56,7 +57,7 @@ export function AppShell() {
     setMounted(true);
     setIsLocalHost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   }, []);
-  const parserUrl = process.env.NEXT_PUBLIC_PARCER_URL || (isLocalHost ? "" : PARCER_URL);
+  const parserUrl = process.env.NEXT_PUBLIC_PARCER_URL || (isLocalHost ? LOCAL_PARCER_URL : PARCER_URL);
 
   useEffect(() => {
     if (!isCompetitors || !parserUrl) {

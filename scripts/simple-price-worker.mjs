@@ -243,12 +243,44 @@ async function fetchTargets(db, competitorId) {
   return limit > 0 ? out.slice(0, limit) : out;
 }
 
+async function fetchLatestSuccessful(db, competitorId, beforeDate = null) {
+  const out = new Map();
+  let from = 0;
+  for (let i = 0; i < 100; i++) {
+    let query = db
+      .from("price_snapshots")
+      .select("product_id,price,status,found_url,confidence,found_brand,url_approved,snapshot_date")
+      .eq("competitor_id", competitorId)
+      .not("price", "is", null)
+      .order("snapshot_date", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (beforeDate) query = query.lt("snapshot_date", beforeDate);
+    const { data, error } = await query;
+    if (error) throw new Error(`latest price_snapshots: ${error.message}`);
+    const rows = data || [];
+    for (const row of rows) if (!out.has(row.product_id)) out.set(row.product_id, row);
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return out;
+}
+
 async function insertRows(db, rows) {
   if (rows.length === 0) return;
   for (let i = 0; i < rows.length; i += INSERT_SIZE) {
     const { error } = await db.from("price_snapshots").insert(rows.slice(i, i + INSERT_SIZE));
     if (error) throw new Error(`price_snapshots insert: ${error.message}`);
   }
+}
+
+async function replaceSnapshotRows(db, competitorId, rows) {
+  const { error: deleteError } = await db
+    .from("price_snapshots")
+    .delete()
+    .eq("competitor_id", competitorId)
+    .eq("snapshot_date", snapshotDate);
+  if (deleteError) throw new Error(`price_snapshots delete: ${deleteError.message}`);
+  await insertRows(db, rows);
 }
 
 class UnusedRealtimeTransport {}
@@ -269,7 +301,11 @@ async function main() {
   if (compErr || !competitor) throw new Error(`competitor not found: ${compErr?.message || adapter}`);
 
   await writeJob({ label: `${LABEL}: читаю URL-и з БД` });
-  const targets = await fetchTargets(db, competitor.id);
+  const [targets, latestSuccessful, previousSuccessful] = await Promise.all([
+    fetchTargets(db, competitor.id),
+    fetchLatestSuccessful(db, competitor.id),
+    fetchLatestSuccessful(db, competitor.id, snapshotDate),
+  ]);
   await writeJob({
     status: "running",
     total: targets.length,
@@ -280,6 +316,7 @@ async function main() {
 
   let found = 0;
   let errors = 0;
+  let priceChanges = 0;
   const rows = [];
 
   for (let i = 0; i < targets.length; i++) {
@@ -287,7 +324,7 @@ async function main() {
     await writeJob({
       current: i,
       label: `${LABEL}: ${i}/${targets.length} · товар ${target.product_id}`,
-      result: { total: targets.length, found, errors, blocked: 0 },
+      result: { total: targets.length, found, price_changes: priceChanges, errors, blocked: 0 },
     });
 
     try {
@@ -295,6 +332,8 @@ async function main() {
       const parsed = fetched.status >= 200 && fetched.status < 300 ? parseProduct(fetched.html) : null;
       if (parsed?.price) {
         found++;
+        const previousPrice = previousSuccessful.get(target.product_id)?.price;
+        if (previousPrice != null && Number(previousPrice) !== Number(parsed.price)) priceChanges++;
         rows.push({
           product_id: target.product_id,
           competitor_id: competitor.id,
@@ -308,7 +347,12 @@ async function main() {
         });
       } else {
         errors++;
-        rows.push({
+        const previous = latestSuccessful.get(target.product_id);
+        rows.push(previous ? {
+          ...previous,
+          competitor_id: competitor.id,
+          snapshot_date: snapshotDate,
+        } : {
           product_id: target.product_id,
           competitor_id: competitor.id,
           price: null,
@@ -321,13 +365,15 @@ async function main() {
         });
       }
 
-      if (rows.length >= INSERT_SIZE) {
-        await insertRows(db, rows.splice(0, rows.length));
-      }
       if (waitMs > 0) await sleep(waitMs);
     } catch (e) {
       errors++;
-      rows.push({
+      const previous = latestSuccessful.get(target.product_id);
+      rows.push(previous ? {
+        ...previous,
+        competitor_id: competitor.id,
+        snapshot_date: snapshotDate,
+      } : {
         product_id: target.product_id,
         competitor_id: competitor.id,
         price: null,
@@ -341,14 +387,15 @@ async function main() {
     }
   }
 
-  await insertRows(db, rows);
+  await writeJob({ label: `${LABEL}: зберігаю знімок ${snapshotDate}` });
+  await replaceSnapshotRows(db, competitor.id, rows);
   await writeJob({
     status: "done",
     current: targets.length,
     total: targets.length,
     label: `${LABEL}: готово · знайдено ${found}/${targets.length}`,
     finished_at: Math.floor(Date.now() / 1000),
-    result: { total: targets.length, found, new_finds: 0, price_changes: 0, errors, blocked: 0 },
+    result: { total: targets.length, found, new_finds: 0, price_changes: priceChanges, errors, blocked: 0 },
   });
 }
 
