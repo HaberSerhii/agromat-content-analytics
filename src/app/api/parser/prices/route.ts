@@ -89,25 +89,65 @@ function matchesParserSegment(category: string | null, segment: ParserSegment): 
 }
 
 async function fetchAllSnapshotsForDate(
-  db: SupabaseClient, snapshotDate: string,
+  db: SupabaseClient, snapshotDate: string, competitorIds: number[],
 ): Promise<SnapshotRow[]> {
-  const out: SnapshotRow[] = [];
+  const latestByProductCompetitor = new Map<string, SnapshotRow>();
   let from = 0;
-  // Bounded at 50 pages = 50k rows defensively in case of pathological data.
+  // Rows written today win. Within the day, the newest row for a product and
+  // competitor wins when a product was refreshed more than once.
   for (let i = 0; i < 50; i++) {
     const { data, error } = await db
       .from("price_snapshots")
       .select("product_id, competitor_id, price, status, found_url")
       .eq("snapshot_date", snapshotDate)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
     const rows = (data || []) as SnapshotRow[];
-    out.push(...rows);
+    for (const row of rows) {
+      const key = `${row.product_id}:${row.competitor_id}`;
+      if (!latestByProductCompetitor.has(key)) latestByProductCompetitor.set(key, row);
+    }
     if (rows.length < PAGE) break;
     from += PAGE;
   }
-  return out;
+
+  // Partial/test refreshes must not make every untouched competitor price
+  // disappear. Fill missing cells from each competitor's immediately previous
+  // snapshot date instead of scanning its entire history.
+  await Promise.all(competitorIds.map(async (competitorId) => {
+    const { data: dateRows, error: dateError } = await db
+      .from("price_snapshots")
+      .select("snapshot_date")
+      .eq("competitor_id", competitorId)
+      .lt("snapshot_date", snapshotDate)
+      .order("snapshot_date", { ascending: false })
+      .limit(1);
+    if (dateError) throw new Error(dateError.message);
+    const previousDate = dateRows?.[0]?.snapshot_date as string | undefined;
+    if (!previousDate) return;
+
+    let previousFrom = 0;
+    for (let i = 0; i < 50; i++) {
+      const { data, error } = await db
+        .from("price_snapshots")
+        .select("product_id, competitor_id, price, status, found_url")
+        .eq("competitor_id", competitorId)
+        .eq("snapshot_date", previousDate)
+        .not("price", "is", null)
+        .order("created_at", { ascending: false })
+        .range(previousFrom, previousFrom + PAGE - 1);
+      if (error) throw new Error(error.message);
+      const rows = (data || []) as SnapshotRow[];
+      for (const row of rows) {
+        const key = `${row.product_id}:${row.competitor_id}`;
+        if (!latestByProductCompetitor.has(key)) latestByProductCompetitor.set(key, row);
+      }
+      if (rows.length < PAGE) break;
+      previousFrom += PAGE;
+    }
+  }));
+  return [...latestByProductCompetitor.values()];
 }
 
 async function fetchProductsByIds(
@@ -267,7 +307,7 @@ export async function GET(request: Request) {
   let snapshots: SnapshotRow[] = [];
   if (effectiveDate) {
     try {
-      snapshots = await fetchAllSnapshotsForDate(db, effectiveDate);
+      snapshots = await fetchAllSnapshotsForDate(db, effectiveDate, competitors.map((competitor) => competitor.id));
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "snapshots_failed" }, { status: 500 });
     }
