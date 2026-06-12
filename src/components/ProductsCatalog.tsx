@@ -3643,8 +3643,8 @@ export function ProductsCatalog() {
   }, [search]);
   const [categoryId, setCategoryId] = useState<number | "">("");
   const [brandId, setBrandId] = useState<number | "">("");
-  // Default: only "В наявності" (statusId=5). User can clear or toggle others.
-  const [statusIds, setStatusIds] = useState<number[]>([5]);
+  // Default: "В наявності" + "Під замовлення".
+  const [statusIds, setStatusIds] = useState<number[]>([5, 3]);
   const [minPrice, setMinPrice] = useState<number | null>(null);
   const [maxPrice, setMaxPrice] = useState<number | null>(null);
   const [minStock, setMinStock] = useState<number | null>(null);
@@ -3805,8 +3805,7 @@ export function ProductsCatalog() {
   useEffect(() => { loadSnapshots(); }, [loadSnapshots]);
 
   const resetFilters = () => {
-    // Reset to defaults — status defaults to "В наявності" (matches initial mount)
-    setSearch(""); setCategoryId(""); setBrandId(""); setStatusIds([5]);
+    setSearch(""); setCategoryId(""); setBrandId(""); setStatusIds([5, 3]);
     setMinPrice(null); setMaxPrice(null);
     setMinStock(null); setMaxStock(null);
     setBulk(null);
@@ -3815,7 +3814,7 @@ export function ProductsCatalog() {
   };
 
   // True if filters differ from defaults — drives the "Скинути" button visibility
-  const isDefaultStatusFilter = statusIds.length === 1 && statusIds[0] === 5;
+  const isDefaultStatusFilter = statusIds.length === 2 && statusIds.includes(5) && statusIds.includes(3);
 
   const toggleStatus = (id: number) => {
     setStatusIds((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
@@ -4382,9 +4381,7 @@ export function ProductsCatalog() {
                 </thead>
                 <tbody>
                   {data.items.map((p) => {
-                    // "New" = appeared in the last sync (firstSeenAt timestamp
-                    // exactly matches the latest sync). Matches the "Нові товари" tab.
-                    const isNew = !!data.syncedAt && p.firstSeenAt === data.syncedAt;
+                    const isNew = !!data.syncedAt && kyivDateInput(p.firstSeenAt) === kyivDateInput(data.syncedAt);
                     // Soft green tint for the whole row when the product is new.
                     // Hover state is brighter; left border stripe makes it scannable.
                     const rowBg = isNew ? "rgba(16,124,16,0.06)" : "transparent";

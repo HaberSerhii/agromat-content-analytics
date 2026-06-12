@@ -91,6 +91,14 @@ function parseKyivCalendarDate(value: string | null, endOfDay = false) {
   return endOfDay ? start - 1 : start;
 }
 
+function kyivCalendarDate(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = Object.fromEntries(KYIV_DATE_TIME.formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 export async function GET(request: Request) {
   const { searchParams: q } = new URL(request.url);
 
@@ -161,10 +169,9 @@ export async function GET(request: Request) {
 
   const newCutoff = onlyNewDays > 0 ? daysAgoIso(onlyNewDays) : "";
   const stChCutoff = onlyStatusChangedDays > 0 ? daysAgoIso(onlyStatusChangedDays) : "";
-  // "New since last sync" → products whose firstSeenAt timestamp matches the
-  // timestamp of the most recent sync. These are products that didn't exist
-  // in our snapshot before this sync ran.
-  const newSinceSyncAt: string | null = onlyNewSinceSync ? syncedAt : null;
+  const newSinceSyncDay = onlyNewSinceSync ? kyivCalendarDate(syncedAt) : null;
+  const newSinceSyncFromMs = parseKyivCalendarDate(newSinceSyncDay);
+  const newSinceSyncToMs = parseKyivCalendarDate(newSinceSyncDay, true);
 
   // Predicate factory — `skip` lets us bypass a specific filter so each facet
   // dropdown can be populated with options that respect *other* active filters
@@ -192,7 +199,10 @@ export async function GET(request: Request) {
     if (deletedOnly === true && !p.deleted) return false;
     if (deletedOnly === false && p.deleted) return false;
     if (newCutoff && p.firstSeenAt < newCutoff) return false;
-    if (newSinceSyncAt && p.firstSeenAt !== newSinceSyncAt) return false;
+    if (newSinceSyncFromMs != null && newSinceSyncToMs != null) {
+      const firstSeenMs = Date.parse(p.firstSeenAt);
+      if (!Number.isFinite(firstSeenMs) || firstSeenMs < newSinceSyncFromMs || firstSeenMs > newSinceSyncToMs) return false;
+    }
     if (stChCutoff && (!p.statusChangedAt || p.statusChangedAt < stChCutoff)) return false;
     if (skip !== "price") {
       if (minPrice != null && (p.price ?? 0) < minPrice) return false;
