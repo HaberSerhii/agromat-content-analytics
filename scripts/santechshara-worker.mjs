@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
@@ -182,6 +183,46 @@ async function waitForManualChallenge(page, target, progress) {
   return null;
 }
 
+async function connectToRegularChrome() {
+  const chromeBin = process.platform === "darwin"
+    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    : process.platform === "win32"
+      ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+      : "google-chrome";
+  const port = 9222 + Math.floor(Math.random() * 700);
+  const chrome = spawn(chromeBin, [
+    `--user-data-dir=${profileDir}`,
+    `--remote-debugging-port=${port}`,
+    "--no-first-run",
+    "about:blank",
+  ], { stdio: "ignore" });
+
+  const endpoint = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 60; i++) {
+    if (chrome.exitCode != null) throw new Error(`regular Chrome exited with code ${chrome.exitCode}`);
+    try {
+      const response = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(1000) });
+      if (response.ok) {
+        const browser = await chromium.connectOverCDP(endpoint);
+        const context = browser.contexts()[0];
+        if (!context) throw new Error("regular Chrome context is unavailable");
+        return {
+          context,
+          close: async () => {
+            await browser.close().catch(() => {});
+            if (chrome.exitCode == null) chrome.kill("SIGTERM");
+          },
+        };
+      }
+    } catch {
+      // Chrome is still starting.
+    }
+    await sleep(250);
+  }
+  if (chrome.exitCode == null) chrome.kill("SIGTERM");
+  throw new Error("regular Chrome debugging endpoint did not start");
+}
+
 async function fetchTargets(db, competitorId) {
   if (singleProductId && singleUrl) {
     return [{ product_id: singleProductId, url: singleUrl }];
@@ -275,18 +316,24 @@ async function main() {
   }
 
   await fs.mkdir(profileDir, { recursive: true });
-  const context = await chromium.launchPersistentContext(profileDir, {
-    headless,
-    channel: "chrome",
-    viewport: { width: 1365, height: 900 },
-    locale: "uk-UA",
-    timezoneId: "Europe/Kyiv",
-    // Must match santechshara-login.mjs EXACTLY: no UA override (use the real
-    // Chromium UA) + hidden automation flags, otherwise Cloudflare won't honour
-    // the warmed cf_clearance cookie (it's bound to UA + browser fingerprint).
-    ignoreDefaultArgs: ["--enable-automation"],
-    args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-  });
+  let context;
+  let closeBrowser;
+  if (headless) {
+    context = await chromium.launchPersistentContext(profileDir, {
+      headless: true,
+      channel: "chrome",
+      viewport: { width: 1365, height: 900 },
+      locale: "uk-UA",
+      timezoneId: "Europe/Kyiv",
+      ignoreDefaultArgs: ["--enable-automation"],
+      args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+    });
+    closeBrowser = () => context.close();
+  } else {
+    const attached = await connectToRegularChrome();
+    context = attached.context;
+    closeBrowser = attached.close;
+  }
   const page = context.pages()[0] || await context.newPage();
   page.setDefaultTimeout(15000);
   page.setDefaultNavigationTimeout(navTimeoutMs);
@@ -396,7 +443,7 @@ async function main() {
       result: { total: targets.length, found, new_finds: 0, price_changes: 0, errors, blocked },
     });
   } finally {
-    await context.close().catch(() => {});
+    await closeBrowser().catch(() => {});
   }
 }
 
