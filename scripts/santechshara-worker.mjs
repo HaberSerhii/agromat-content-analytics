@@ -107,6 +107,23 @@ function isBlockedText(text) {
   return /just a moment|cloudflare|cf-chl|enable javascript and cookies|checking your browser|captcha|refresh (?:the )?page|оновіть сторінку|обновите страницу/i.test(text || "");
 }
 
+function isClosedBrowserError(error) {
+  return /target page, context or browser has been closed|browser has been closed|page has been closed/i.test(String(error?.message || error));
+}
+
+function normalizeSantechsharaUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.hostname === "santechshara.ua" || url.hostname === "www.santechshara.ua") {
+      url.hostname = "www.santechshara.ua";
+      url.pathname = url.pathname.replace(/^\/ua(?=\/|$)/, "") || "/";
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 async function extractProduct(page) {
   const text = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
   const html = await page.content().catch(() => "");
@@ -225,7 +242,7 @@ async function connectToRegularChrome() {
 
 async function fetchTargets(db, competitorId) {
   if (singleProductId && singleUrl) {
-    return [{ product_id: singleProductId, url: singleUrl }];
+    return [{ product_id: singleProductId, url: normalizeSantechsharaUrl(singleUrl) }];
   }
 
   const activeIds = new Set();
@@ -257,7 +274,7 @@ async function fetchTargets(db, competitorId) {
     if (error) throw new Error(`url_overrides: ${error.message}`);
     const rows = data || [];
     for (const r of rows) {
-      if (activeIds.has(r.product_id)) out.push({ product_id: r.product_id, url: r.url });
+      if (activeIds.has(r.product_id)) out.push({ product_id: r.product_id, url: normalizeSantechsharaUrl(r.url) });
     }
     if (rows.length < pageSize) break;
     from += pageSize;
@@ -418,6 +435,19 @@ async function main() {
           await insertRows(db, rows.splice(0, rows.length));
         }
       } catch (e) {
+        if (isClosedBrowserError(e)) {
+          await insertRows(db, rows);
+          await writeJob({
+            status: "error",
+            current: i,
+            total: targets.length,
+            label: "Сантехшара: Chrome закрито, обхід зупинено",
+            finished_at: Math.floor(Date.now() / 1000),
+            error: "santechshara_browser_closed",
+            result: { total: targets.length, found, errors, blocked },
+          });
+          return;
+        }
         errors++;
         rows.push({
           product_id: target.product_id,

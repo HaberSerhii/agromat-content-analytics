@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const profileDir = process.env.SANTECHSHARA_PROFILE_DIR
   || path.join(ROOT, "data", "browser-profiles", "santechshara");
-const url = process.argv[2] || "https://www.santechshara.ua/ua/";
+const url = process.argv[2] || "https://www.santechshara.ua/";
 const resetProfile = process.env.SANTECHSHARA_RESET_PROFILE === "true";
 
 if (resetProfile) {
