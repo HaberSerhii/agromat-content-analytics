@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "local-parser-runner": "node scripts/local-parser-runner.mjs",
     "santechshara:login": "node scripts/santechshara-login.mjs",
+    "santechshara:clean-login": "SANTECHSHARA_RESET_PROFILE=true node scripts/santechshara-login.mjs",
     "santechshara:worker": "node scripts/santechshara-worker.mjs"
   },
   "dependencies": {

@@ -9,7 +9,17 @@ const ROOT = path.resolve(__dirname, "..");
 const profileDir = process.env.SANTECHSHARA_PROFILE_DIR
   || path.join(ROOT, "data", "browser-profiles", "santechshara");
 const url = process.argv[2] || "https://www.santechshara.ua/ua/";
+const resetProfile = process.env.SANTECHSHARA_RESET_PROFILE === "true";
 
+if (resetProfile) {
+  const archivedProfile = `${profileDir}-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  try {
+    await fs.rename(profileDir, archivedProfile);
+    console.log(`Previous profile archived: ${archivedProfile}`);
+  } catch (e) {
+    if (e?.code !== "ENOENT") throw e;
+  }
+}
 await fs.mkdir(profileDir, { recursive: true });
 const context = await chromium.launchPersistentContext(profileDir, {
   headless: false,

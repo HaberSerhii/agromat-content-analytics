@@ -32,6 +32,7 @@ const firstWaitMs = Number(process.env.SANTECHSHARA_FIRST_WAIT_MS || "12000");
 const waitMinMs = Number(process.env.SANTECHSHARA_WAIT_MIN_MS || "4500");
 const waitMaxMs = Number(process.env.SANTECHSHARA_WAIT_MAX_MS || "12000");
 const navTimeoutMs = Number(process.env.SANTECHSHARA_NAV_TIMEOUT_MS || "45000");
+const manualChallengeWaitMs = Number(process.env.SANTECHSHARA_MANUAL_CHALLENGE_WAIT_MS || "600000");
 const today = new Date().toISOString().slice(0, 10);
 const snapshotDate = requestedSnapshotDate || today;
 
@@ -102,7 +103,7 @@ function normalizeStatus(text) {
 }
 
 function isBlockedText(text) {
-  return /just a moment|cloudflare|cf-chl|enable javascript and cookies|checking your browser|captcha/i.test(text || "");
+  return /just a moment|cloudflare|cf-chl|enable javascript and cookies|checking your browser|captcha|refresh (?:the )?page|оновіть сторінку|обновите страницу/i.test(text || "");
 }
 
 async function extractProduct(page) {
@@ -152,6 +153,33 @@ async function extractProduct(page) {
     status: normalizeStatus(combined),
     foundBrand: null,
   };
+}
+
+async function waitForManualChallenge(page, target, progress) {
+  const deadline = Date.now() + manualChallengeWaitMs;
+  console.log(`Cloudflare/CAPTCHA detected for product ${target.product_id}. Waiting up to ${Math.round(manualChallengeWaitMs / 60000)} minutes for manual completion...`);
+  await writeJob({
+    status: "blocked",
+    label: "Сантехшара: пройдіть Cloudflare/CAPTCHA у відкритому Chrome",
+    error: "santechshara_waiting_for_manual_challenge",
+    result: progress,
+  });
+
+  while (Date.now() < deadline) {
+    await sleep(3000);
+    const parsed = await extractProduct(page);
+    if (!parsed.blocked) {
+      console.log(`Cloudflare/CAPTCHA passed. Continuing with product ${target.product_id}.`);
+      await writeJob({
+        status: "running",
+        label: `Сантехшара: перевірку пройдено · товар ${target.product_id}`,
+        error: null,
+        result: progress,
+      });
+      return parsed;
+    }
+  }
+  return null;
 }
 
 async function fetchTargets(db, competitorId) {
@@ -281,18 +309,35 @@ async function main() {
         await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: navTimeoutMs });
         if (i === 0) await sleep(firstWaitMs);
         else await sleep(jitter());
-        const parsed = await extractProduct(page);
+        let parsed = await extractProduct(page);
         if (parsed.blocked) {
           blocked++;
-          await writeJob({
-            status: "blocked",
-            current: i,
-            total: targets.length,
-            label: "Сантехшара: Cloudflare/CAPTCHA, потрібна ручна сесія браузера",
-            error: "santechshara_blocked_by_cloudflare",
-            result: { total: targets.length, found, errors, blocked },
-          });
-          return;
+          if (!headless) {
+            const afterChallenge = await waitForManualChallenge(page, target, { total: targets.length, found, errors, blocked });
+            if (afterChallenge) {
+              parsed = afterChallenge;
+            } else {
+              await writeJob({
+                status: "blocked",
+                current: i,
+                total: targets.length,
+                label: "Сантехшара: час очікування Cloudflare/CAPTCHA вичерпано",
+                error: "santechshara_manual_challenge_timeout",
+                result: { total: targets.length, found, errors, blocked },
+              });
+              return;
+            }
+          } else {
+            await writeJob({
+              status: "blocked",
+              current: i,
+              total: targets.length,
+              label: "Сантехшара: Cloudflare/CAPTCHA, потрібна ручна сесія браузера",
+              error: "santechshara_blocked_by_cloudflare",
+              result: { total: targets.length, found, errors, blocked },
+            });
+            return;
+          }
         }
         if (parsed.price) {
           found++;
