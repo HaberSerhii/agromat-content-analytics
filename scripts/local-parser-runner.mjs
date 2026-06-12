@@ -64,15 +64,12 @@ function makeCommand(adapter, jobId) {
   }
 
   if (adapter === "vannaja") {
-    const repo = parserRepoPath();
-    const script = path.join(repo, "scraper", process.platform === "win32" ? "refresh_vannaja.bat" : "refresh_vannaja.sh");
-    const fallbackPy = path.join(repo, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-    const fallbackScript = path.join(repo, "scraper", "run_vannaja_scrape.py");
+    const envFile = path.join(ROOT, ".env");
     return {
-      cwd: repo,
+      cwd: ROOT,
       title: "Agromat Vannaja local parser",
-      command: `if [ -x ${shellQuote(script)} ]; then ${shellQuote(script)}; else VANNAJA_FIRST_WAIT_SECONDS=5 VANNAJA_WAIT_SECONDS=2 VANNAJA_MAX_PAGES=800 ${shellQuote(fallbackPy)} ${shellQuote(fallbackScript)}; fi`,
-      windowsCommand: `if exist ${winQuote(script)} (${winQuote(script)}) else (set VANNAJA_FIRST_WAIT_SECONDS=5 && set VANNAJA_WAIT_SECONDS=2 && set VANNAJA_MAX_PAGES=800 && ${winQuote(fallbackPy)} ${winQuote(fallbackScript)})`,
+      command: `${shellQuote(process.execPath)} --env-file=${shellQuote(envFile)} ${shellQuote(path.join(ROOT, "scripts", "vannaja-worker.mjs"))} --job-id ${shellQuote(jobId)}`,
+      windowsCommand: `${winQuote(process.execPath)} --env-file=${winQuote(envFile)} ${winQuote(path.join(ROOT, "scripts", "vannaja-worker.mjs"))} --job-id ${winQuote(jobId)}`,
     };
   }
 

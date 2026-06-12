@@ -12,7 +12,8 @@
     "local-parser-runner": "node scripts/local-parser-runner.mjs",
     "santechshara:login": "node scripts/santechshara-login.mjs",
     "santechshara:clean-login": "SANTECHSHARA_RESET_PROFILE=true node scripts/santechshara-login.mjs",
-    "santechshara:worker": "node scripts/santechshara-worker.mjs"
+    "santechshara:worker": "node scripts/santechshara-worker.mjs",
+    "vannaja:worker": "node scripts/vannaja-worker.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1064.0",
