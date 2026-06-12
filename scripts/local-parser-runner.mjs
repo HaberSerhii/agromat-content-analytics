@@ -52,13 +52,14 @@ function parserRepoPath() {
   return sibling;
 }
 
-function makeCommand(adapter) {
+function makeCommand(adapter, jobId) {
   if (adapter === "santechshara") {
+    const envFile = path.join(ROOT, ".env");
     return {
       cwd: ROOT,
       title: "Agromat Santechshara local parser",
-      command: `SANTECHSHARA_HEADLESS=false ${shellQuote(process.execPath)} ${shellQuote(path.join(ROOT, "scripts", "santechshara-worker.mjs"))}`,
-      windowsCommand: `set SANTECHSHARA_HEADLESS=false && ${winQuote(process.execPath)} ${winQuote(path.join(ROOT, "scripts", "santechshara-worker.mjs"))}`,
+      command: `SANTECHSHARA_HEADLESS=false ${shellQuote(process.execPath)} --env-file=${shellQuote(envFile)} ${shellQuote(path.join(ROOT, "scripts", "santechshara-worker.mjs"))} --job-id ${shellQuote(jobId)}`,
+      windowsCommand: `set SANTECHSHARA_HEADLESS=false && ${winQuote(process.execPath)} --env-file=${winQuote(envFile)} ${winQuote(path.join(ROOT, "scripts", "santechshara-worker.mjs"))} --job-id ${winQuote(jobId)}`,
     };
   }
 
@@ -111,10 +112,10 @@ function terminalCommand({ cwd, title, command, windowsCommand }) {
 }
 
 function start(adapter) {
-  const spec = makeCommand(adapter);
+  const jobId = `local-${adapter}-${Date.now().toString(36)}`;
+  const spec = makeCommand(adapter, jobId);
   if (!spec) return { ok: false, error: "action_not_allowed" };
 
-  const jobId = `local-${adapter}-${Date.now().toString(36)}`;
   console.log(`[${new Date().toISOString()}] Starting ${adapter} parser job ${jobId}`);
   const job = {
     ok: true,
