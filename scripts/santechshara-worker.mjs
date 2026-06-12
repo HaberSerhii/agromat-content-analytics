@@ -126,8 +126,8 @@ function normalizeSantechsharaUrl(value) {
 
 async function extractProduct(page) {
   const text = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-  const html = await page.content().catch(() => "");
-  if (isBlockedText(text) || isBlockedText(html)) {
+  const title = await page.title().catch(() => "");
+  if (isBlockedText(`${title}\n${text}`)) {
     return { blocked: true, price: null, status: "blocked", foundBrand: null };
   }
 
