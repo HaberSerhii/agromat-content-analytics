@@ -291,6 +291,31 @@ async function insertRows(db, rows) {
   }
 }
 
+async function fetchPreviousPrices(db, competitorId, productIds) {
+  const wanted = new Set(productIds);
+  const previous = new Map();
+  let from = 0;
+  const pageSize = 1000;
+  for (let i = 0; i < 100 && previous.size < wanted.size; i++) {
+    const { data, error } = await db
+      .from("price_snapshots")
+      .select("product_id, price")
+      .eq("competitor_id", competitorId)
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`price_snapshots history: ${error.message}`);
+    const rows = data || [];
+    for (const row of rows) {
+      if (wanted.has(row.product_id) && !previous.has(row.product_id) && Number.isFinite(row.price)) {
+        previous.set(row.product_id, row.price);
+      }
+    }
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return previous;
+}
+
 // This worker only does REST (.select()/.insert()) — it never opens a realtime
 // channel. But @supabase/supabase-js eagerly builds a RealtimeClient inside
 // createClient, and on Node < 22 (the VPS runs Node 20) that constructor calls
@@ -314,12 +339,13 @@ async function main() {
   if (compErr || !competitor) throw new Error(`competitor not found: ${compErr?.message || COMPETITOR_ADAPTER}`);
 
   const targets = await fetchTargets(db, competitor.id);
+  const previousPrices = await fetchPreviousPrices(db, competitor.id, targets.map((target) => target.product_id));
   await writeJob({
     status: "running",
     total: targets.length,
     current: 0,
     label: `Сантехшара: 0/${targets.length}`,
-    result: { total: targets.length, found: 0, errors: 0, blocked: 0 },
+    result: { total: targets.length, found: 0, new_finds: 0, price_changes: 0, errors: 0, blocked: 0 },
   });
 
   if (targets.length === 0) {
@@ -356,6 +382,8 @@ async function main() {
   page.setDefaultNavigationTimeout(navTimeoutMs);
 
   let found = 0;
+  let newFinds = 0;
+  let priceChanges = 0;
   let errors = 0;
   let blocked = 0;
   const rows = [];
@@ -366,7 +394,7 @@ async function main() {
       await writeJob({
         current: i,
         label: `Сантехшара: ${i}/${targets.length} · товар ${target.product_id}`,
-        result: { total: targets.length, found, errors, blocked },
+        result: { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked },
       });
 
       try {
@@ -377,7 +405,7 @@ async function main() {
         if (parsed.blocked) {
           blocked++;
           if (!headless) {
-            const afterChallenge = await waitForManualChallenge(page, target, { total: targets.length, found, errors, blocked });
+            const afterChallenge = await waitForManualChallenge(page, target, { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked });
             if (afterChallenge) {
               parsed = afterChallenge;
             } else {
@@ -387,7 +415,7 @@ async function main() {
                 total: targets.length,
                 label: "Сантехшара: час очікування Cloudflare/CAPTCHA вичерпано",
                 error: "santechshara_manual_challenge_timeout",
-                result: { total: targets.length, found, errors, blocked },
+                result: { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked },
               });
               return;
             }
@@ -398,13 +426,16 @@ async function main() {
               total: targets.length,
               label: "Сантехшара: Cloudflare/CAPTCHA, потрібна ручна сесія браузера",
               error: "santechshara_blocked_by_cloudflare",
-              result: { total: targets.length, found, errors, blocked },
+              result: { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked },
             });
             return;
           }
         }
         if (parsed.price) {
           found++;
+          const previousPrice = previousPrices.get(target.product_id);
+          if (previousPrice == null) newFinds++;
+          else if (previousPrice !== parsed.price) priceChanges++;
           rows.push({
             product_id: target.product_id,
             competitor_id: competitor.id,
@@ -444,7 +475,7 @@ async function main() {
             label: "Сантехшара: Chrome закрито, обхід зупинено",
             finished_at: Math.floor(Date.now() / 1000),
             error: "santechshara_browser_closed",
-            result: { total: targets.length, found, errors, blocked },
+            result: { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked },
           });
           return;
         }
@@ -470,7 +501,7 @@ async function main() {
       total: targets.length,
       label: `Сантехшара: готово · знайдено ${found}/${targets.length}`,
       finished_at: Math.floor(Date.now() / 1000),
-      result: { total: targets.length, found, new_finds: 0, price_changes: 0, errors, blocked },
+      result: { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked },
     });
   } finally {
     await closeBrowser().catch(() => {});
