@@ -13,6 +13,7 @@
     "santechshara:login": "node scripts/santechshara-login.mjs",
     "santechshara:clean-login": "SANTECHSHARA_RESET_PROFILE=true node scripts/santechshara-login.mjs",
     "santechshara:worker": "node scripts/santechshara-worker.mjs",
+    "santechshara:categories": "node scripts/santechshara-category-worker.mjs",
     "vannaja:worker": "node scripts/vannaja-worker.mjs"
   },
   "dependencies": {

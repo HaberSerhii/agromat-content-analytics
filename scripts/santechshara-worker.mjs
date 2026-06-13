@@ -34,6 +34,12 @@ const waitMinMs = Number(process.env.SANTECHSHARA_WAIT_MIN_MS || "4500");
 const waitMaxMs = Number(process.env.SANTECHSHARA_WAIT_MAX_MS || "12000");
 const navTimeoutMs = Number(process.env.SANTECHSHARA_NAV_TIMEOUT_MS || "45000");
 const manualChallengeWaitMs = Number(process.env.SANTECHSHARA_MANUAL_CHALLENGE_WAIT_MS || "600000");
+const blockedRetryWaitMs = Number(process.env.SANTECHSHARA_BLOCKED_RETRY_WAIT_MS || "15000");
+const blockedRetryMaxWaitMs = Number(process.env.SANTECHSHARA_BLOCKED_RETRY_MAX_WAIT_MS || "60000");
+const blockedRetryTimeoutMs = Number(process.env.SANTECHSHARA_BLOCKED_RETRY_TIMEOUT_MS || "600000");
+const cooldownEvery = Number(process.env.SANTECHSHARA_COOLDOWN_EVERY || "4");
+const cooldownMinMs = Number(process.env.SANTECHSHARA_COOLDOWN_MIN_MS || "30000");
+const cooldownMaxMs = Number(process.env.SANTECHSHARA_COOLDOWN_MAX_MS || "60000");
 const today = new Date().toISOString().slice(0, 10);
 const snapshotDate = requestedSnapshotDate || today;
 
@@ -76,8 +82,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function settleWithin(promise, ms, fallback) {
+  return Promise.race([
+    promise.catch(() => fallback),
+    sleep(ms).then(() => fallback),
+  ]);
+}
+
 function jitter() {
   return waitMinMs + Math.floor(Math.random() * Math.max(1, waitMaxMs - waitMinMs));
+}
+
+function randomBetween(min, max) {
+  return min + Math.floor(Math.random() * Math.max(1, max - min));
 }
 
 function normalizePrice(text) {
@@ -104,11 +121,19 @@ function normalizeStatus(text) {
 }
 
 function isBlockedText(text) {
-  return /just a moment|cloudflare|cf-chl|enable javascript and cookies|checking your browser|captcha|refresh (?:the )?page|оновіть сторінку|обновите страницу/i.test(text || "");
+  return /just a moment|cloudflare|cf-chl|enable javascript and cookies|checking your browser|captcha|access denied|too many requests|temporarily blocked|refresh (?:the )?page|оновіть сторінку|обновите страницу|доступ (?:заблоковано|обмежено)|доступ (?:заблокирован|ограничен)|слишком много запросов/i.test(text || "");
+}
+
+function isBlockedStatus(response) {
+  return response ? [403, 429, 503].includes(response.status()) : false;
 }
 
 function isClosedBrowserError(error) {
   return /target page, context or browser has been closed|browser has been closed|page has been closed/i.test(String(error?.message || error));
+}
+
+function isNavigationTimeoutError(error) {
+  return /page\.(?:goto|reload): Timeout \d+ms exceeded/i.test(String(error?.message || error));
 }
 
 function normalizeSantechsharaUrl(value) {
@@ -126,14 +151,18 @@ function normalizeSantechsharaUrl(value) {
 
 async function extractProduct(page) {
   const text = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-  const title = await page.title().catch(() => "");
+  const title = await settleWithin(page.title(), 5000, "");
   if (isBlockedText(`${title}\n${text}`)) {
     return { blocked: true, price: null, status: "blocked", foundBrand: null };
   }
 
-  const jsonLd = await page.locator('script[type="application/ld+json"]').evaluateAll((nodes) =>
-    nodes.map((n) => n.textContent || ""),
-  ).catch(() => []);
+  const jsonLd = await settleWithin(
+    page.locator('script[type="application/ld+json"]').evaluateAll((nodes) =>
+      nodes.map((n) => n.textContent || ""),
+    ),
+    10000,
+    [],
+  );
   for (const raw of jsonLd) {
     try {
       const parsed = JSON.parse(raw);
@@ -152,17 +181,21 @@ async function extractProduct(page) {
     }
   }
 
-  const selectorTexts = await page.locator([
-    "[class*=price]",
-    "[id*=price]",
-    "[data-price]",
-    ".product-price",
-    ".price",
-    ".prices",
-    ".availability",
-    ".stock",
-    "button",
-  ].join(",")).evaluateAll((nodes) => nodes.slice(0, 80).map((n) => n.textContent || "")).catch(() => []);
+  const selectorTexts = await settleWithin(
+    page.locator([
+      "[class*=price]",
+      "[id*=price]",
+      "[data-price]",
+      ".product-price",
+      ".price",
+      ".prices",
+      ".availability",
+      ".stock",
+      "button",
+    ].join(",")).evaluateAll((nodes) => nodes.slice(0, 80).map((n) => n.textContent || "")),
+    10000,
+    [],
+  );
 
   const combined = `${selectorTexts.join("\n")}\n${text}`;
   return {
@@ -191,6 +224,50 @@ async function waitForManualChallenge(page, target, progress) {
       await writeJob({
         status: "running",
         label: `Сантехшара: перевірку пройдено · товар ${target.product_id}`,
+        error: null,
+        result: progress,
+      });
+      return parsed;
+    }
+  }
+  return null;
+}
+
+async function recoverBlockedPage(page, target, progress) {
+  const deadline = Date.now() + blockedRetryTimeoutMs;
+  let attempt = 0;
+
+  console.log(`Block detected for product ${target.product_id}. Reloading until the page recovers (up to ${Math.round(blockedRetryTimeoutMs / 60000)} minutes)...`);
+  while (Date.now() < deadline) {
+    const backoffMax = Math.min(
+      blockedRetryMaxWaitMs,
+      blockedRetryWaitMs * Math.max(1, 2 ** Math.min(attempt, 3)),
+    );
+    const waitMs = randomBetween(blockedRetryWaitMs, backoffMax);
+    attempt++;
+    await writeJob({
+      status: "blocked",
+      label: `Сантехшара: блокування · спроба ${attempt}, пауза ${Math.ceil(waitMs / 1000)} с`,
+      error: "santechshara_auto_recovering_from_block",
+      result: progress,
+    });
+    await sleep(waitMs);
+
+    try {
+      const response = await page.reload({ waitUntil: "domcontentloaded", timeout: navTimeoutMs });
+      if (isBlockedStatus(response)) continue;
+    } catch (error) {
+      if (isClosedBrowserError(error)) throw error;
+      console.log(`Reload attempt ${attempt} failed: ${String(error?.message || error)}`);
+      if (!isNavigationTimeoutError(error)) continue;
+    }
+
+    const parsed = await extractProduct(page);
+    if (!parsed.blocked) {
+      console.log(`Block cleared after ${attempt} reload attempt(s). Continuing with product ${target.product_id}.`);
+      await writeJob({
+        status: "running",
+        label: `Сантехшара: блокування знято · товар ${target.product_id}`,
         error: null,
         result: progress,
       });
@@ -398,13 +475,34 @@ async function main() {
       });
 
       try {
-        await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: navTimeoutMs });
+        if (cooldownEvery > 0 && i > 0 && i % cooldownEvery === 0) {
+          const cooldownMs = randomBetween(cooldownMinMs, cooldownMaxMs);
+          await writeJob({
+            current: i,
+            label: `Сантехшара: профілактична пауза ${Math.ceil(cooldownMs / 1000)} с`,
+            result: { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked },
+          });
+          await sleep(cooldownMs);
+        }
+
+        let response = null;
+        try {
+          response = await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: navTimeoutMs });
+        } catch (error) {
+          if (isClosedBrowserError(error) || !isNavigationTimeoutError(error)) throw error;
+          console.log(`Navigation timed out for product ${target.product_id}; inspecting the partially loaded page.`);
+        }
         if (i === 0) await sleep(firstWaitMs);
         else await sleep(jitter());
         let parsed = await extractProduct(page);
+        if (isBlockedStatus(response)) parsed = { ...parsed, blocked: true, status: "blocked" };
         if (parsed.blocked) {
           blocked++;
-          if (!headless) {
+          const progress = { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked };
+          const afterAutoRecovery = await recoverBlockedPage(page, target, progress);
+          if (afterAutoRecovery) {
+            parsed = afterAutoRecovery;
+          } else if (!headless) {
             const afterChallenge = await waitForManualChallenge(page, target, { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked });
             if (afterChallenge) {
               parsed = afterChallenge;
