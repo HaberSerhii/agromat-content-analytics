@@ -329,7 +329,11 @@ Snapshot-и створюються щодня автоматично після 
 APP_DIR=/path/to/Agromat-Analytics ./scripts/setup-vps-storage.sh
 ```
 
-`setup-vps-storage.sh` встановлює Redis server, закриває його на `127.0.0.1`, вмикає AOF persistence, створює `PRODUCT_SNAPSHOTS_DIR`, прописує `REDIS_URL` / `PRODUCT_SNAPSHOTS_DIR` у `.env` і додає hourly cron на `scripts/run-products-sync.sh`.
+`setup-vps-storage.sh` встановлює Redis server, закриває його на `127.0.0.1`, вмикає AOF persistence, створює `PRODUCT_SNAPSHOTS_DIR`, прописує `REDIS_URL` / `PRODUCT_SNAPSHOTS_DIR` у `.env` і додає cron-и:
+
+- щогодини `scripts/run-products-sync.sh` для каталогу карток;
+- щогодини на 10-й хвилині `scripts/run-agromat-price-sync.sh` для цін Агромата в аналізі конкурентів (`products.actual_price` у Supabase);
+- щодня `scripts/run-simple-price-auto.sh` для простих price-парсерів.
 
 Перевірка після налаштування:
 
@@ -337,6 +341,7 @@ APP_DIR=/path/to/Agromat-Analytics ./scripts/setup-vps-storage.sh
 redis-cli -h 127.0.0.1 ping
 crontab -l | grep run-products-sync
 tail -f /var/log/agromat-products-sync.log
+tail -f /var/log/agromat-price-sync.log
 curl -s http://127.0.0.1:3000/api/products/snapshots
 ```
 
