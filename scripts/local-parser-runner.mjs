@@ -2,6 +2,7 @@
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -52,9 +53,15 @@ function parserRepoPath() {
   return sibling;
 }
 
+function envFilePath() {
+  const env = path.join(ROOT, ".env");
+  if (existsSync(env)) return env;
+  return path.join(ROOT, ".env.local");
+}
+
 function makeCommand(adapter, jobId) {
   if (adapter === "santechshara") {
-    const envFile = path.join(ROOT, ".env");
+    const envFile = envFilePath();
     return {
       cwd: ROOT,
       title: "Agromat Santechshara local parser",
@@ -64,7 +71,7 @@ function makeCommand(adapter, jobId) {
   }
 
   if (adapter === "vannaja") {
-    const envFile = path.join(ROOT, ".env");
+    const envFile = envFilePath();
     return {
       cwd: ROOT,
       title: "Agromat Vannaja local parser",
