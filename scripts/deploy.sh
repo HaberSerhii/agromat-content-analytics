@@ -104,6 +104,22 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     [ -f .env ] && cp .env .next/standalone/
   fi
 
+  CURRENT_STEP="install Agromat price sync cron"
+  echo "▸ $CURRENT_STEP"
+  AGROMAT_PRICE_SYNC_LOG="${AGROMAT_PRICE_SYNC_LOG:-/var/log/agromat-price-sync.log}"
+  touch "$AGROMAT_PRICE_SYNC_LOG" 2>/dev/null || true
+  chmod +x "$APP_DIR/scripts/run-agromat-price-sync.sh"
+  AGROMAT_PRICE_CRON_LINE="10 * * * * APP_DIR=$APP_DIR AGROMAT_PRICE_SYNC_LOG=$AGROMAT_PRICE_SYNC_LOG $APP_DIR/scripts/run-agromat-price-sync.sh"
+  TMP_CRON="$(mktemp)"
+  crontab -l 2>/dev/null | grep -v "run-agromat-price-sync.sh" > "$TMP_CRON" || true
+  if ! grep -q "^CRON_TZ=Europe/Kyiv$" "$TMP_CRON"; then
+    echo "CRON_TZ=Europe/Kyiv" >> "$TMP_CRON"
+  fi
+  echo "$AGROMAT_PRICE_CRON_LINE" >> "$TMP_CRON"
+  crontab "$TMP_CRON"
+  rm -f "$TMP_CRON"
+  echo "  cron: $AGROMAT_PRICE_CRON_LINE"
+
   CURRENT_STEP="pm2 restart"
   echo "▸ $CURRENT_STEP"
   if [ -z "$PM2_NAME" ]; then
