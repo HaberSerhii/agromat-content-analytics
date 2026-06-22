@@ -99,9 +99,7 @@ function kyivCalendarDate(value: string | null) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-export async function GET(request: Request) {
-  const { searchParams: q } = new URL(request.url);
-
+async function productsResponse(q: URLSearchParams) {
   const page = Math.max(1, parseInt(q.get("page") || "1", 10));
   // Cap at 50_000 — covers the whole catalog (~31K) in one shot for exports
   // while still bounding response size for malicious requests.
@@ -364,4 +362,15 @@ export async function GET(request: Request) {
     // browser cache. Backend data only changes on sync, so 10s is conservative.
     headers: { "Cache-Control": "private, max-age=10, stale-while-revalidate=60" },
   });
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  return productsResponse(searchParams);
+}
+
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => ({}));
+  const queryString = typeof body?.queryString === "string" ? body.queryString : "";
+  return productsResponse(new URLSearchParams(queryString));
 }

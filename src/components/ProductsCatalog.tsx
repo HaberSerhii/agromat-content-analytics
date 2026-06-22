@@ -81,6 +81,23 @@ type SavedBulkSet = BulkFilter & { id: string; name: string; createdAt: number; 
 // constant in /api/products/route.ts.
 const ARCHIVE_STATUS_ID = -1;
 const BULK_SETS_STORAGE_KEY = "agromat.analytics.bulkSets.v1";
+const MAX_GET_QUERY_LENGTH = 1800;
+
+function fetchProductsQuery(query: string, init?: RequestInit) {
+  if (query.length <= MAX_GET_QUERY_LENGTH) {
+    return fetch(`/api/products?${query}`, init);
+  }
+  const rest = { ...(init || {}) };
+  delete rest.cache;
+  const headers = new Headers(rest.headers);
+  headers.set("Content-Type", "application/json");
+  return fetch("/api/products", {
+    ...rest,
+    method: "POST",
+    headers,
+    body: JSON.stringify({ queryString: query }),
+  });
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function fmtNum(n: number | null | undefined): string {
@@ -3716,7 +3733,7 @@ export function ProductsCatalog() {
     // code OR goods_ref) so the saved-set list can show "N товарів" like the
     // parser. Best-effort — the set is already saved; we just enrich it.
     try {
-      const r = await fetch(`/api/products?ids_in=${ids.join(",")}&limit=1`, { cache: "no-store" });
+      const r = await fetchProductsQuery(`ids_in=${ids.join(",")}&limit=1`, { cache: "no-store" });
       if (r.ok) {
         const d = (await r.json()) as ListResponse;
         setSavedBulkSets((cur) => {
@@ -3777,7 +3794,7 @@ export function ProductsCatalog() {
 
   const loadList = useCallback(() => {
     setLoading(true); setError("");
-    fetch(`/api/products?${buildQuery()}`)
+    fetchProductsQuery(buildQuery())
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: ListResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
@@ -3845,7 +3862,7 @@ export function ProductsCatalog() {
       p.set("page", "1");
       // 50K covers the whole catalog (~31K) so exports never get truncated
       p.set("limit", "50000");
-      const r = await fetch(`/api/products?${p.toString()}`);
+      const r = await fetchProductsQuery(p.toString());
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = (await r.json()) as ListResponse;
       return d.items;

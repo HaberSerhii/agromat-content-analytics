@@ -358,12 +358,27 @@ export function SalesDashboard() {
     } else {
       setLoading(true);
     }
-    const params = new URLSearchParams();
-    if (dateFrom) params.set("from", dateFrom);
-    if (dateTo) params.set("to", dateTo);
-    if (productSet?.ids.length) params.set("product_codes", productSet.ids.join(","));
-    selectedStatuses.forEach((status) => params.append("status", status));
-    fetch(`/api/sales?${params.toString()}`, { cache: "no-store", signal: controller.signal })
+    const request = productSet?.ids.length
+      ? fetch("/api/sales", {
+          method: "POST",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: dateFrom || undefined,
+            to: dateTo || undefined,
+            productCodes: productSet.ids,
+            statuses: selectedStatuses,
+          }),
+        })
+      : (() => {
+          const params = new URLSearchParams();
+          if (dateFrom) params.set("from", dateFrom);
+          if (dateTo) params.set("to", dateTo);
+          selectedStatuses.forEach((status) => params.append("status", status));
+          return fetch(`/api/sales?${params.toString()}`, { cache: "no-store", signal: controller.signal });
+        })();
+    request
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Не вдалося завантажити аналіз продаж");
