@@ -147,7 +147,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
         | xargs -r -n1 basename \
         | sort -u || true)
       for PARCER_SERVICE in $PARCER_SERVICES; do
-        if systemctl restart "$PARCER_SERVICE"; then
+        if timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
           echo "  parser restarted via systemd unit match: $PARCER_SERVICE"
           PARCER_RESTARTED=1
           break
@@ -162,7 +162,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
         cwd=$(readlink "$proc/cwd" 2>/dev/null || true)
         if [[ "$cmdline $cwd" == *"$PARCER_DIR"* ]]; then
           PARCER_SERVICE=$(sed -n 's#.*system.slice/\([^/]*\.service\).*#\1#p' "$proc/cgroup" 2>/dev/null | head -1 || true)
-          if [ -n "$PARCER_SERVICE" ] && systemctl restart "$PARCER_SERVICE"; then
+          if [ -n "$PARCER_SERVICE" ] && timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
             echo "  parser restarted via process match: $PARCER_SERVICE (pid $pid)"
             PARCER_RESTARTED=1
             break
@@ -184,7 +184,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
         fi
         PARCER_SERVICE=$(sed -n 's#.*system.slice/\([^/]*\.service\).*#\1#p' "/proc/$pid/cgroup" 2>/dev/null | head -1 || true)
         if [ -n "$PARCER_SERVICE" ]; then
-          if systemctl restart "$PARCER_SERVICE"; then
+          if timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
             echo "  parser restarted via systemd: $PARCER_SERVICE (pid $pid, port $PARCER_PORT)"
             PARCER_RESTARTED=1
             break
@@ -196,7 +196,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     if [ "$PARCER_RESTARTED" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
       for PARCER_SERVICE in agromat-parcer.service agromat-parser.service agromat_parcer.service parcer.service parser.service; do
         if systemctl list-unit-files "$PARCER_SERVICE" >/dev/null 2>&1; then
-          if systemctl restart "$PARCER_SERVICE"; then
+          if timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
             echo "  parser restarted via systemd: $PARCER_SERVICE"
             PARCER_RESTARTED=1
             break
