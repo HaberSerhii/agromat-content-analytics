@@ -115,6 +115,22 @@ function fetchParserPricesQuery(query: string, init?: RequestInit) {
   });
 }
 
+function fetchProductAnalyticsQuery(query: string, init?: RequestInit) {
+  if (query.length <= MAX_GET_QUERY_LENGTH) {
+    return fetch(`/api/products/analytics?${query}`, init);
+  }
+  const rest = { ...(init || {}) };
+  delete rest.cache;
+  const headers = new Headers(rest.headers);
+  headers.set("Content-Type", "application/json");
+  return fetch("/api/products/analytics", {
+    ...rest,
+    method: "POST",
+    headers,
+    body: JSON.stringify({ queryString: query }),
+  });
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function fmtNum(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -3349,6 +3365,7 @@ interface ProductAnalyticsResponse {
   withDiscountCount: number;
   categories: ProductAnalyticsBucket[];
   brands: ProductAnalyticsBucket[];
+  notFoundIds: number[];
 }
 
 type ProductAnalyticsSortKey = keyof ProductAnalyticsBucket | "withoutDiscountPct";
@@ -3457,7 +3474,17 @@ function ProductAnalyticsTable({
   );
 }
 
-function ProductAnalyticsDashboard() {
+function ProductAnalyticsDashboard({
+  bulk,
+  onOpenBulk,
+  onClearBulk,
+  onToast,
+}: {
+  bulk: BulkFilter | null;
+  onOpenBulk: () => void;
+  onClearBulk: () => void;
+  onToast: (message: string) => void;
+}) {
   const [from, setFrom] = useState(() => new Date().toLocaleDateString("sv-SE"));
   const [to, setTo] = useState(() => new Date().toLocaleDateString("sv-SE"));
   const [statusIds, setStatusIds] = useState<number[]>([5, 3]);
@@ -3475,7 +3502,8 @@ function ProductAnalyticsDashboard() {
     const params = new URLSearchParams({ from, to, status_ids: statuses });
     if (categoryKey) params.set("category_id", categoryKey);
     if (brandKey) params.set("brand_id", brandKey);
-    fetch(`/api/products/analytics?${params.toString()}`)
+    if (bulk?.ids.length) params.set("ids_in", bulk.ids.join(","));
+    fetchProductAnalyticsQuery(params.toString())
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
@@ -3485,7 +3513,7 @@ function ProductAnalyticsDashboard() {
         setData(response);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Error"));
-  }, [brandKey, categoryKey, from, statusIds, to]);
+  }, [brandKey, bulk, categoryKey, from, statusIds, to]);
 
   const onFromChange = (value: string) => {
     if (!value) return;
@@ -3569,6 +3597,28 @@ function ProductAnalyticsDashboard() {
       <div className="flex items-center gap-1.5 flex-wrap">
         <button
           type="button"
+          onClick={onOpenBulk}
+          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer"
+          style={{
+            background: bulk ? "#118dff" : "var(--bg-input)",
+            color: bulk ? "#fff" : "var(--text-mid)",
+            borderColor: bulk ? "#118dff" : "var(--border2)",
+          }}
+          title="Завантажити список code / goods_ref для фільтрації аналітики"
+        >
+          📋 Набір товарів{bulk ? ` (${bulk.ids.length})` : ""}
+        </button>
+        {bulk && (
+          <button
+            type="button"
+            onClick={onClearBulk}
+            title="Скинути набір"
+            className="text-xs px-2 py-1 rounded-lg cursor-pointer border-0"
+            style={{ background: "#d1343811", color: "#d13438" }}
+          >✕</button>
+        )}
+        <button
+          type="button"
           onClick={() => setStatusIds([])}
           className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer"
           style={{
@@ -3622,6 +3672,52 @@ function ProductAnalyticsDashboard() {
             Скинути всі
           </button>
         </div>
+      )}
+      {bulk && data && (
+        (() => {
+          const notFound = data.notFoundIds || [];
+          const requested = bulk.ids.length;
+          const found = requested - notFound.length;
+          const copyMissing = async () => {
+            if (!notFound.length) return;
+            const sep = bulk.rawText.includes(",") ? ", " : "\n";
+            try {
+              await _copyText(notFound.join(sep));
+              onToast(`Скопійовано ${notFound.length} не знайдених ID`);
+            } catch (e) {
+              onToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
+            }
+          };
+          return (
+            <div className="px-3 py-2 rounded-lg flex items-center justify-between gap-2 flex-wrap"
+              style={{ background: "#118dff11", border: "1px solid #118dff44", color: "#118dff" }}>
+              <span className="text-xs font-semibold tabular-nums">
+                📋 Набір товарів в аналітиці:
+                <span className="ml-1.5" style={{ color: "var(--text)" }}>
+                  {found.toLocaleString("uk-UA")} / {requested.toLocaleString("uk-UA")}
+                </span>
+                <span className="ml-1" style={{ color: "var(--text-dim)", fontWeight: 400 }}>знайдено</span>
+                {notFound.length > 0 && (
+                  <span className="ml-2" style={{ color: "#d13438" }}>
+                    · {notFound.length.toLocaleString("uk-UA")} не знайдено
+                  </span>
+                )}
+              </span>
+              <div className="flex items-center gap-2">
+                {notFound.length > 0 && (
+                  <button onClick={copyMissing}
+                    className="text-xs font-semibold px-2 py-1 rounded cursor-pointer border-0"
+                    style={{ background: "#d1343811", color: "#d13438" }}
+                  >📋 Скопіювати не знайдені</button>
+                )}
+                <button onClick={onOpenBulk}
+                  className="text-xs px-2 py-1 rounded cursor-pointer border-0"
+                  style={{ background: "transparent", color: "#118dff", textDecoration: "underline" }}
+                >Редагувати</button>
+              </div>
+            </div>
+          );
+        })()
       )}
       {error && <div className="text-xs" style={{ color: "#d13438" }}>{error}</div>}
       {!data && !error && <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>Завантаження…</div>}
@@ -4132,7 +4228,14 @@ export function ProductsCatalog() {
       </Card>
 
       {mode === "timeline" && <ChangesTimelineView />}
-      {mode === "analytics" && <ProductAnalyticsDashboard />}
+      {mode === "analytics" && (
+        <ProductAnalyticsDashboard
+          bulk={bulk}
+          onOpenBulk={() => setOpenBulk(true)}
+          onClearBulk={() => setBulk(null)}
+          onToast={setToast}
+        />
+      )}
       {mode === "prices" && (
         <CompetitorPricesView
           bulk={bulk}

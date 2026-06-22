@@ -41,6 +41,20 @@ function parseTimeline(raws: string[]): TimelineEvent[] {
   return out;
 }
 
+function parseIntList(value: string | null): number[] {
+  if (!value) return [];
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const part of value.split(",")) {
+    const n = parseInt(part.trim(), 10);
+    if (Number.isFinite(n) && !seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
 const KYIV_DATE_TIME = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Europe/Kyiv",
   year: "numeric",
@@ -75,8 +89,7 @@ function parseDate(value: string | null, endOfDay = false) {
   return endOfDay ? start - 1 : start;
 }
 
-export async function GET(request: Request) {
-  const q = new URL(request.url).searchParams;
+async function analyticsResponse(q: URLSearchParams) {
   const today = kyivDate();
   const from = q.get("from") || today;
   const to = q.get("to") || from;
@@ -107,6 +120,8 @@ export async function GET(request: Request) {
   if (brandIdRaw != null && brandId !== null && !Number.isFinite(brandId)) {
     return NextResponse.json({ error: "invalid_brand_id" }, { status: 400 });
   }
+  const idsIn = parseIntList(q.get("ids_in"));
+  const idsInSet = new Set(idsIn);
 
   const [allProducts, syncedAt, priceRaws, filtersCache] = await Promise.all([
     readAllLite(),
@@ -123,7 +138,19 @@ export async function GET(request: Request) {
   const products = statusFilteredProducts.filter((product) => (
     (categoryId == null || product.categoryId === categoryId)
     && (brandId === undefined || product.brandId === brandId)
+    && (!idsInSet.size || idsInSet.has(product.id) || idsInSet.has(product.code) || idsInSet.has(product.goodsRef))
   ));
+
+  let notFoundIds: number[] = [];
+  if (idsInSet.size) {
+    const present = new Set<number>();
+    for (const product of products) {
+      if (idsInSet.has(product.id)) present.add(product.id);
+      if (idsInSet.has(product.code)) present.add(product.code);
+      if (idsInSet.has(product.goodsRef)) present.add(product.goodsRef);
+    }
+    notFoundIds = idsIn.filter((id) => !present.has(id));
+  }
 
   const byId = new Map(products.map((p) => [p.id, p]));
   const categories = new Map<string, Bucket>();
@@ -170,6 +197,7 @@ export async function GET(request: Request) {
     statusIds: Array.from(statusIds),
     categoryId,
     brandId: brandId === undefined ? undefined : brandId,
+    notFoundIds,
     statuses,
     syncedAt,
     newCount: products.filter((p) => inRange(p.firstSeenAt, since, until)).length,
@@ -184,4 +212,14 @@ export async function GET(request: Request) {
   }, {
     headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=600" },
   });
+}
+
+export async function GET(request: Request) {
+  return analyticsResponse(new URL(request.url).searchParams);
+}
+
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => ({}));
+  const queryString = typeof body?.queryString === "string" ? body.queryString : "";
+  return analyticsResponse(new URLSearchParams(queryString));
 }
