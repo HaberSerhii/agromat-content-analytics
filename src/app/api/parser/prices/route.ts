@@ -13,6 +13,7 @@ const PAGE = 1000;
 // product-id list can blow past the nginx URL-length limit. Split into
 // modest chunks — for a few thousand products this is 4–7 round trips.
 const ID_CHUNK = 500;
+const IDENTIFIER_CHUNK = 250;
 
 interface Competitor {
   id: number;
@@ -88,6 +89,21 @@ function matchesParserSegment(category: string | null, segment: ParserSegment): 
   return /сантех|ванн|умив|раков|зміш|смес|душ|унітаз|унитаз|інсталяц|инсталляц/.test(s);
 }
 
+function matchesProductSearch(p: ProductRow, search: string): boolean {
+  if (!search) return true;
+  return (
+    p.name.toLowerCase().includes(search) ||
+    String(p.id).includes(search) ||
+    String(p.code ?? "").includes(search) ||
+    String(p.goods_ref ?? "").includes(search) ||
+    (p.sku ?? "").toLowerCase().includes(search)
+  );
+}
+
+function filterProductRows(products: ProductRow[], search: string, segment: ParserSegment): ProductRow[] {
+  return products.filter((p) => matchesProductSearch(p, search) && matchesParserSegment(p.category, segment));
+}
+
 async function fetchAllSnapshotsForDate(
   db: SupabaseClient, snapshotDate: string, competitorIds: number[],
 ): Promise<SnapshotRow[]> {
@@ -151,13 +167,13 @@ async function fetchAllSnapshotsForDate(
 }
 
 async function fetchProductsByIds(
-  db: SupabaseClient, ids: number[], search: string, idsInSet: Set<number>, segment: ParserSegment,
+  db: SupabaseClient, ids: number[], search: string, segment: ParserSegment,
 ): Promise<ProductRow[]> {
   if (ids.length === 0) return [];
   const out: ProductRow[] = [];
   for (let i = 0; i < ids.length; i += ID_CHUNK) {
     const chunk = ids.slice(i, i + ID_CHUNK);
-    let q = db
+    const q = db
       .from("products")
       .select("id, code, goods_ref, sku, name, brand, category, actual_price, url, agromat_status")
       .eq("is_active", true)
@@ -165,24 +181,37 @@ async function fetchProductsByIds(
       // A single chunk can never overflow because chunk ≤ 500 ≤ PAGE; but
       // set range explicitly to be safe under future schema changes.
       .range(0, PAGE - 1);
-    if (search) {
-      const like = `%${search}%`;
-      q = q.or(`name.ilike.${like},sku.ilike.${like}`);
-    }
     const { data, error } = await q;
     if (error) throw new Error(error.message);
-    const rows = (data || []) as ProductRow[];
-    if (idsInSet.size) {
-      out.push(...rows.filter((p) =>
-        idsInSet.has(p.id) ||
-        (p.code != null && idsInSet.has(p.code)) ||
-        (p.goods_ref != null && idsInSet.has(p.goods_ref)),
-      ).filter((p) => matchesParserSegment(p.category, segment)));
-    } else {
-      out.push(...rows.filter((p) => matchesParserSegment(p.category, segment)));
-    }
+    out.push(...filterProductRows((data || []) as ProductRow[], search, segment));
   }
   return out;
+}
+
+async function fetchProductsByIdentifiers(
+  db: SupabaseClient, ids: number[], search: string, segment: ParserSegment,
+): Promise<ProductRow[]> {
+  if (ids.length === 0) return [];
+  const byId = new Map<number, ProductRow>();
+  const fields = ["id", "code", "goods_ref"] as const;
+
+  for (let i = 0; i < ids.length; i += IDENTIFIER_CHUNK) {
+    const chunk = ids.slice(i, i + IDENTIFIER_CHUNK);
+    await Promise.all(fields.map(async (field) => {
+      const { data, error } = await db
+        .from("products")
+        .select("id, code, goods_ref, sku, name, brand, category, actual_price, url, agromat_status")
+        .eq("is_active", true)
+        .in(field, chunk)
+        .range(0, PAGE - 1);
+      if (error) throw new Error(error.message);
+      for (const product of filterProductRows((data || []) as ProductRow[], search, segment)) {
+        byId.set(product.id, product);
+      }
+    }));
+  }
+
+  return [...byId.values()];
 }
 
 // Latest price per product for one competitor on one snapshot_date. A day can
@@ -244,8 +273,7 @@ async function countPriceChanges(
   return changed;
 }
 
-export async function GET(request: Request) {
-  const q = new URL(request.url).searchParams;
+async function pricesResponse(q: URLSearchParams) {
   const search = (q.get("search") || "").trim().toLowerCase();
   const page = Math.max(parseIntOr(q.get("page"), 1), 1);
   const limit = Math.min(Math.max(parseIntOr(q.get("limit"), 50), 1), 200);
@@ -313,10 +341,13 @@ export async function GET(request: Request) {
     }
   }
 
-  // 4) Restrict to products that have at least one competitor snapshot — keeps
-  //    the table dense and the page count meaningful.
+  // 4) Default view is restricted to products with at least one competitor
+  //    snapshot. With a pasted set, resolve products directly from Agromat
+  //    identifiers first; snapshots only fill competitor cells. Otherwise a
+  //    895-item set collapses to only the few products already present in the
+  //    parser snapshot.
   const productIdList = [...new Set(snapshots.map((s) => s.product_id))];
-  if (productIdList.length === 0) {
+  if (!idsInSet.size && productIdList.length === 0) {
     return NextResponse.json({
       snapshotDate: effectiveDate,
       competitors,
@@ -332,7 +363,9 @@ export async function GET(request: Request) {
 
   let products: ProductRow[];
   try {
-    products = await fetchProductsByIds(db, productIdList, search, idsInSet, segment);
+    products = idsInSet.size
+      ? await fetchProductsByIdentifiers(db, idsIn, search, segment)
+      : await fetchProductsByIds(db, productIdList, search, segment);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
   }
@@ -400,4 +433,14 @@ export async function GET(request: Request) {
     limit,
     notFoundIds,
   });
+}
+
+export async function GET(request: Request) {
+  return pricesResponse(new URL(request.url).searchParams);
+}
+
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => ({}));
+  const queryString = typeof body?.queryString === "string" ? body.queryString : "";
+  return pricesResponse(new URLSearchParams(queryString));
 }

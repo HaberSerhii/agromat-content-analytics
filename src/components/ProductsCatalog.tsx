@@ -99,6 +99,22 @@ function fetchProductsQuery(query: string, init?: RequestInit) {
   });
 }
 
+function fetchParserPricesQuery(query: string, init?: RequestInit) {
+  if (query.length <= MAX_GET_QUERY_LENGTH) {
+    return fetch(`/api/parser/prices?${query}`, init);
+  }
+  const rest = { ...(init || {}) };
+  delete rest.cache;
+  const headers = new Headers(rest.headers);
+  headers.set("Content-Type", "application/json");
+  return fetch("/api/parser/prices", {
+    ...rest,
+    method: "POST",
+    headers,
+    body: JSON.stringify({ queryString: query }),
+  });
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function fmtNum(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -2688,7 +2704,7 @@ function CompetitorPricesView({
     if (bulk && bulk.ids.length > 0) p.set("ids_in", bulk.ids.join(","));
     if (segment !== "all") p.set("segment", segment);
     setLoading(true); setError("");
-    fetch(`/api/parser/prices?${p.toString()}`)
+    fetchParserPricesQuery(p.toString())
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: PricesResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
