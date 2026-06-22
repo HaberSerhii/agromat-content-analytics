@@ -123,6 +123,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   CURRENT_STEP="deploy companion Agromat_Parcer"
   echo "▸ $CURRENT_STEP"
   PARCER_DIR="${PARCER_DIR:-/opt/agromat-parcer}"
+  PARCER_PORT="${PARCER_PORT:-8080}"
   if [ -d "$PARCER_DIR/.git" ]; then
     (
       cd "$PARCER_DIR"
@@ -131,14 +132,53 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
       echo "  parser HEAD: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
       rm -rf /dev/shm/parcer-view-cache 2>/dev/null || true
     )
+    PARCER_RESTARTED=0
     PARCER_PM2_NAME=$(pm2 jlist 2>/dev/null \
       | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const a=JSON.parse(d||'[]');const m=a.find(p=>p.pm2_env&&p.pm2_env.pm_cwd&&p.pm2_env.pm_cwd.startsWith('$PARCER_DIR'));if(m)console.log(m.name)}catch(e){}})" \
       2>/dev/null || true)
     if [ -n "$PARCER_PM2_NAME" ]; then
       pm2 restart "$PARCER_PM2_NAME" --update-env
       echo "  parser restarted: $PARCER_PM2_NAME"
+      PARCER_RESTARTED=1
+    fi
+
+    if [ "$PARCER_RESTARTED" -eq 0 ] && command -v ss >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+      PARCER_PIDS=$(ss -ltnp 2>/dev/null \
+        | awk -v port=":${PARCER_PORT}" '$4 ~ port "$" {print}' \
+        | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
+        | sort -u || true)
+      for pid in $PARCER_PIDS; do
+        PARCER_SERVICE=$(sed -n 's#.*system.slice/\([^/]*\.service\).*#\1#p' "/proc/$pid/cgroup" 2>/dev/null | head -1 || true)
+        if [ -n "$PARCER_SERVICE" ]; then
+          if systemctl restart "$PARCER_SERVICE"; then
+            echo "  parser restarted via systemd: $PARCER_SERVICE (pid $pid, port $PARCER_PORT)"
+            PARCER_RESTARTED=1
+            break
+          fi
+        fi
+      done
+    fi
+
+    if [ "$PARCER_RESTARTED" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+      for PARCER_SERVICE in agromat-parcer.service agromat-parser.service agromat_parcer.service parcer.service parser.service; do
+        if systemctl list-unit-files "$PARCER_SERVICE" >/dev/null 2>&1; then
+          if systemctl restart "$PARCER_SERVICE"; then
+            echo "  parser restarted via systemd: $PARCER_SERVICE"
+            PARCER_RESTARTED=1
+            break
+          fi
+        fi
+      done
+    fi
+
+    if [ "$PARCER_RESTARTED" -eq 0 ]; then
+      if [ -n "${PARCER_PIDS:-}" ]; then
+        echo "  ⚠️ parser code updated, but restart target not found (port $PARCER_PORT pids: $PARCER_PIDS)"
+      else
+        echo "  ⚠️ parser code updated, but restart target not found"
+      fi
     else
-      echo "  ⚠️ parser PM2 process for $PARCER_DIR not found — skipped restart"
+      rm -rf /dev/shm/parcer-view-cache 2>/dev/null || true
     fi
   else
     echo "  parser dir not found: $PARCER_DIR — skipped"
