@@ -191,13 +191,12 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
       done
     fi
 
-    if [ "$PARCER_RESTARTED" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1; then
       for PARCER_SERVICE in agromat-parcer.service agromat-parser.service agromat_parcer.service parcer.service parser.service; do
         if systemctl list-unit-files "$PARCER_SERVICE" >/dev/null 2>&1; then
           if timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
             echo "  parser restarted via systemd: $PARCER_SERVICE"
             PARCER_RESTARTED=1
-            break
           fi
         fi
       done
