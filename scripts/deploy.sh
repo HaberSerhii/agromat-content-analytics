@@ -142,12 +142,46 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
       PARCER_RESTARTED=1
     fi
 
+    if [ "$PARCER_RESTARTED" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+      PARCER_SERVICES=$(grep -Rsl -- "$PARCER_DIR" /etc/systemd/system /lib/systemd/system 2>/dev/null \
+        | xargs -r -n1 basename \
+        | sort -u || true)
+      for PARCER_SERVICE in $PARCER_SERVICES; do
+        if systemctl restart "$PARCER_SERVICE"; then
+          echo "  parser restarted via systemd unit match: $PARCER_SERVICE"
+          PARCER_RESTARTED=1
+          break
+        fi
+      done
+    fi
+
+    if [ "$PARCER_RESTARTED" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+      for proc in /proc/[0-9]*; do
+        pid="${proc##*/}"
+        cmdline=$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)
+        cwd=$(readlink "$proc/cwd" 2>/dev/null || true)
+        if [[ "$cmdline $cwd" == *"$PARCER_DIR"* ]]; then
+          PARCER_SERVICE=$(sed -n 's#.*system.slice/\([^/]*\.service\).*#\1#p' "$proc/cgroup" 2>/dev/null | head -1 || true)
+          if [ -n "$PARCER_SERVICE" ] && systemctl restart "$PARCER_SERVICE"; then
+            echo "  parser restarted via process match: $PARCER_SERVICE (pid $pid)"
+            PARCER_RESTARTED=1
+            break
+          fi
+        fi
+      done
+    fi
+
     if [ "$PARCER_RESTARTED" -eq 0 ] && command -v ss >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
       PARCER_PIDS=$(ss -ltnp 2>/dev/null \
         | awk -v port=":${PARCER_PORT}" '$4 ~ port "$" {print}' \
         | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
         | sort -u || true)
       for pid in $PARCER_PIDS; do
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+        if [[ "$exe $cmdline" == *nginx* ]]; then
+          continue
+        fi
         PARCER_SERVICE=$(sed -n 's#.*system.slice/\([^/]*\.service\).*#\1#p' "/proc/$pid/cgroup" 2>/dev/null | head -1 || true)
         if [ -n "$PARCER_SERVICE" ]; then
           if systemctl restart "$PARCER_SERVICE"; then
