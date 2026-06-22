@@ -120,6 +120,30 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   rm -f "$TMP_CRON"
   echo "  cron: $AGROMAT_PRICE_CRON_LINE"
 
+  CURRENT_STEP="deploy companion Agromat_Parcer"
+  echo "▸ $CURRENT_STEP"
+  PARCER_DIR="${PARCER_DIR:-/opt/agromat-parcer}"
+  if [ -d "$PARCER_DIR/.git" ]; then
+    (
+      cd "$PARCER_DIR"
+      git fetch --quiet origin main
+      git reset --hard origin/main
+      echo "  parser HEAD: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
+      rm -rf /dev/shm/parcer-view-cache 2>/dev/null || true
+    )
+    PARCER_PM2_NAME=$(pm2 jlist 2>/dev/null \
+      | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const a=JSON.parse(d||'[]');const m=a.find(p=>p.pm2_env&&p.pm2_env.pm_cwd&&p.pm2_env.pm_cwd.startsWith('$PARCER_DIR'));if(m)console.log(m.name)}catch(e){}})" \
+      2>/dev/null || true)
+    if [ -n "$PARCER_PM2_NAME" ]; then
+      pm2 restart "$PARCER_PM2_NAME" --update-env
+      echo "  parser restarted: $PARCER_PM2_NAME"
+    else
+      echo "  ⚠️ parser PM2 process for $PARCER_DIR not found — skipped restart"
+    fi
+  else
+    echo "  parser dir not found: $PARCER_DIR — skipped"
+  fi
+
   CURRENT_STEP="pm2 restart"
   echo "▸ $CURRENT_STEP"
   if [ -z "$PM2_NAME" ]; then
