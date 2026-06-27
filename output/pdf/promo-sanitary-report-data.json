@@ -1,0 +1,792 @@
+{
+  "meta": {
+    "promoName": "Сантехніка",
+    "startDate": "2026-06-15",
+    "reportDate": "2026-06-25",
+    "plan": 5500000,
+    "sourceGeneratedAt": "2026-06-26T13:32:46.113Z",
+    "requestedCodes": 285,
+    "foundProducts": 285,
+    "foundInSales": 192,
+    "notFoundCodes": [],
+    "language": "uk",
+    "notes": [
+      "Блок продажів бере ті самі значення з /api/sales, що й дашборд продажів.",
+      "Топ товарів порахований по товарних рядках у S3, бо суму документа не можна коректно розподілити між товарами без rows_sums.",
+      "Колонка про референс потребує правила класифікації фото: у поточних даних є лише main/sort/url."
+    ]
+  },
+  "sales": {
+    "yesterdayRevenue": 91694.17,
+    "yesterdayDocs": 9,
+    "yesterdayGoods": 14,
+    "yesterdayShippedRevenue": 19641.670000000002,
+    "yesterdayShippedDocs": 2,
+    "sinceCreatedRevenue": 360603.83999999997,
+    "sinceCreatedDocs": 39,
+    "sinceGoods": 57,
+    "sinceShippedRevenue": 175785.04,
+    "sinceShippedDocs": 19,
+    "sinceShippedGoods": 29,
+    "returnedRevenue": 26637.68,
+    "canceledDocs": 12,
+    "canceledRevenue": 105620.67,
+    "plan": 5500000,
+    "planRevenue": 321796,
+    "completionPct": 5.850836363636364,
+    "sanitaryPlan": {
+      "segment": "Сантехніка",
+      "plan": 3300000,
+      "revenue": 321796.0699999999,
+      "goods": 66,
+      "docs": 43,
+      "completionPct": 9.751396060606057
+    },
+    "byDate": [
+      {
+        "date": "2026-06-15",
+        "docs": 2,
+        "goods": 2,
+        "revenue": 4420
+      },
+      {
+        "date": "2026-06-16",
+        "docs": 4,
+        "goods": 7,
+        "revenue": 54056.329999999994
+      },
+      {
+        "date": "2026-06-17",
+        "docs": 2,
+        "goods": 2,
+        "revenue": 18311.010000000002
+      },
+      {
+        "date": "2026-06-18",
+        "docs": 2,
+        "goods": 4,
+        "revenue": 39291.54
+      },
+      {
+        "date": "2026-06-19",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 3475
+      },
+      {
+        "date": "2026-06-20",
+        "docs": 1,
+        "goods": 4,
+        "revenue": 15132.54
+      },
+      {
+        "date": "2026-06-22",
+        "docs": 5,
+        "goods": 7,
+        "revenue": 21456.95
+      },
+      {
+        "date": "2026-06-25",
+        "docs": 2,
+        "goods": 2,
+        "revenue": 19641.670000000002
+      }
+    ],
+    "categories": [
+      {
+        "label": "Унітаз",
+        "docs": 5,
+        "goods": 5,
+        "revenue": 51924.19,
+        "avgMargin": 7.52
+      },
+      {
+        "label": "Раковина",
+        "docs": 10,
+        "goods": 10,
+        "revenue": 49937.36,
+        "avgMargin": 13.675999999999998
+      },
+      {
+        "label": "Інсталяції для унітазів",
+        "docs": 3,
+        "goods": 3,
+        "revenue": 40248,
+        "avgMargin": 18.38
+      },
+      {
+        "label": "Ванна звичайна",
+        "docs": 4,
+        "goods": 4,
+        "revenue": 39130.740000000005,
+        "avgMargin": 0
+      },
+      {
+        "label": "Душова система",
+        "docs": 2,
+        "goods": 2,
+        "revenue": 36849,
+        "avgMargin": 0
+      },
+      {
+        "label": "Компакт",
+        "docs": 9,
+        "goods": 9,
+        "revenue": 33854.54,
+        "avgMargin": 4.444
+      },
+      {
+        "label": "Змішувач для раковини",
+        "docs": 3,
+        "goods": 3,
+        "revenue": 22090.5,
+        "avgMargin": 0
+      },
+      {
+        "label": "Тумба з раковиною",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 16170,
+        "avgMargin": 35.6
+      },
+      {
+        "label": "Гігієничний душ",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 14836.01,
+        "avgMargin": 44.21
+      },
+      {
+        "label": "Душовий канал",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 12100,
+        "avgMargin": 0
+      },
+      {
+        "label": "Комплект інсталяції для унітазів",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 9800,
+        "avgMargin": 0
+      },
+      {
+        "label": "Комплект змішувачів",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 8919,
+        "avgMargin": 0
+      },
+      {
+        "label": "Сифон для раковини",
+        "docs": 4,
+        "goods": 4,
+        "revenue": 7494.96,
+        "avgMargin": 20.950000000000003
+      },
+      {
+        "label": "Клавіша",
+        "docs": 2,
+        "goods": 2,
+        "revenue": 6536.53,
+        "avgMargin": 15.15
+      },
+      {
+        "label": "Біде",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 2202.06,
+        "avgMargin": 32.13
+      },
+      {
+        "label": "Сифон для ванни",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 2178.54,
+        "avgMargin": 0
+      },
+      {
+        "label": "Клей стандартний",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 1932.91,
+        "avgMargin": 0
+      },
+      {
+        "label": "Інсталяції інше",
+        "docs": 2,
+        "goods": 2,
+        "revenue": 1890,
+        "avgMargin": 0
+      },
+      {
+        "label": "Грунтовки, пластифікатори",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 1230,
+        "avgMargin": 0
+      },
+      {
+        "label": "Послуги доставки",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 810,
+        "avgMargin": 0
+      },
+      {
+        "label": "Сифон інше",
+        "docs": 1,
+        "goods": 1,
+        "revenue": 389.5,
+        "avgMargin": 0
+      },
+      {
+        "label": "Бачок для прихованого монтажу",
+        "docs": 2,
+        "goods": 2,
+        "revenue": 80,
+        "avgMargin": -8868.5
+      }
+    ],
+    "states": [
+      {
+        "state": "Повністю відвантажений",
+        "docs": 19,
+        "revenue": 175785.04
+      },
+      {
+        "state": "Скасована",
+        "docs": 12,
+        "revenue": 105620.67
+      },
+      {
+        "state": "Без статусу",
+        "docs": 5,
+        "revenue": 57326.5
+      },
+      {
+        "state": "відвантаження дозволено",
+        "docs": 3,
+        "revenue": 21871.63
+      }
+    ],
+    "matchedProductCodes": [
+      8633,
+      8637,
+      8638,
+      8639,
+      8640,
+      8644,
+      8656,
+      21718,
+      21846,
+      28400,
+      91245,
+      97842,
+      157555,
+      157601,
+      161218,
+      168204,
+      168288,
+      188391,
+      188393,
+      188396,
+      188402,
+      188414,
+      198567,
+      204437,
+      207449,
+      207451,
+      207743,
+      219493,
+      222393,
+      226182,
+      227912,
+      235497,
+      235501,
+      235502,
+      235854,
+      235856,
+      249058,
+      260302,
+      277988,
+      278102,
+      278104,
+      290096,
+      300809,
+      302690,
+      302699,
+      303200,
+      311651,
+      320694,
+      321532,
+      324539,
+      326468,
+      351504,
+      353725,
+      389231,
+      393336,
+      401216,
+      417834,
+      419583,
+      422526,
+      422531,
+      422535,
+      426580,
+      429733,
+      430276,
+      430421,
+      430517,
+      431968,
+      437504,
+      439532,
+      439533,
+      447006,
+      447393,
+      448024,
+      450411,
+      459776,
+      461304,
+      465005,
+      465398,
+      473850,
+      475580,
+      480967,
+      486304,
+      486548,
+      486968,
+      487135,
+      487518,
+      487520,
+      487526,
+      487528,
+      487612,
+      487652,
+      487668,
+      487670,
+      487673,
+      488024,
+      491495,
+      491497,
+      491500,
+      491502,
+      491503,
+      491504,
+      491505,
+      491506,
+      491508,
+      491509,
+      491512,
+      494848,
+      504168,
+      505780,
+      506490,
+      517872,
+      525239,
+      527551,
+      527556,
+      527565,
+      527572,
+      527574,
+      527578,
+      527590,
+      528535,
+      529291,
+      531492,
+      531536,
+      531538,
+      531828,
+      532607,
+      532621,
+      532624,
+      532625,
+      532628,
+      533008,
+      533166,
+      535594,
+      535599,
+      538885,
+      538887,
+      539081,
+      539102,
+      540755,
+      543751,
+      544723,
+      544736,
+      547771,
+      551598,
+      551607,
+      552014,
+      552016,
+      552437,
+      552640,
+      552951,
+      553090,
+      553573,
+      559421,
+      559519,
+      559853,
+      561181,
+      561879,
+      562667,
+      562686,
+      563710,
+      563721,
+      565798,
+      567412,
+      569056,
+      569780,
+      575120,
+      575537,
+      582499,
+      582611,
+      582685,
+      584018,
+      584027,
+      584146,
+      584782,
+      585015,
+      585053,
+      585054,
+      585267,
+      585867,
+      586541,
+      588147,
+      589271,
+      589587,
+      589597,
+      589654,
+      590603,
+      590604,
+      590607,
+      590891,
+      590896,
+      591495,
+      593593
+    ],
+    "topProducts": [
+      {
+        "code": 589271,
+        "name": "458.126.00.2 Duofix Комплект (3в1) інсталяції д/унітазу",
+        "revenue": 32718,
+        "qty": 2
+      },
+      {
+        "code": 539102,
+        "name": "502.939.00.1 Modo Комплект підвісного унітазу, закруглена форма, без обідка, прих.кріплення, з кришкою Duroplast, SoftClose, Quickfix, колір білий глянець",
+        "revenue": 29036.99,
+        "qty": 2
+      },
+      {
+        "code": 222393,
+        "name": "L79201000 FREJA Унітаз-компакт косий вип., з поліпроп сидінням та арм. на 3/6 л, н/п",
+        "revenue": 24324.989999999998,
+        "qty": 7
+      },
+      {
+        "code": 450411,
+        "name": "KITLIG015CR  LIGHT Комплект душової системи, хром",
+        "revenue": 18900,
+        "qty": 1
+      },
+      {
+        "code": 585267,
+        "name": "Умивальник меблевий COMO 60 з отвором для змішувача (картон)",
+        "revenue": 16525.02,
+        "qty": 1
+      },
+      {
+        "code": 473850,
+        "name": "7570 Вінтаж (аліканте) Тумба підвісна з раковиною-80 Frame",
+        "revenue": 16170,
+        "qty": 1
+      },
+      {
+        "code": 447393,
+        "name": "ZDUP110ST TWEET ROUND MIX Tondo Набір гігієнічного душу, Steel looking",
+        "revenue": 14836.01,
+        "qty": 1
+      },
+      {
+        "code": 461110,
+        "name": "LIG006ST70 LIGHT Змішувач раковини, вилив 175 мм, сталь",
+        "revenue": 12740,
+        "qty": 1
+      },
+      {
+        "code": 235502,
+        "name": "S301-098 SICILIA NEW Ванна асиметрична 170х100 правостороння",
+        "revenue": 12674.98,
+        "qty": 1
+      },
+      {
+        "code": 486304,
+        "name": "500.683.00.2 Smyle Square Комплект підвісного унітазу воронкоподібний, закрита форма, Rimfree, з сидінням із кришкою, що накриває сидіння: Білий",
+        "revenue": 11407.2,
+        "qty": 1
+      }
+    ]
+  },
+  "content": {
+    "total": 285,
+    "inStock": 237,
+    "others": 48,
+    "lowPhotos": 0,
+    "lowAttrs": 7,
+    "noReviews": 173,
+    "statuses": [
+      {
+        "status": "В наявності",
+        "count": 237
+      },
+      {
+        "status": "Немає в наявності",
+        "count": 37
+      },
+      {
+        "status": "Очікується поставка",
+        "count": 11
+      }
+    ],
+    "categories": [
+      {
+        "category": "Раковини",
+        "total": 65,
+        "inStock": 54,
+        "others": 11,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 57,
+        "refAfterBase": null
+      },
+      {
+        "category": "Унітази",
+        "total": 39,
+        "inStock": 37,
+        "others": 2,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 8,
+        "refAfterBase": null
+      },
+      {
+        "category": "Клавіші змиву",
+        "total": 20,
+        "inStock": 15,
+        "others": 5,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 13,
+        "refAfterBase": null
+      },
+      {
+        "category": "Комплектуючі та аксесуари для змішувачів",
+        "total": 19,
+        "inStock": 18,
+        "others": 1,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 19,
+        "refAfterBase": null
+      },
+      {
+        "category": "Змішувачі",
+        "total": 18,
+        "inStock": 11,
+        "others": 7,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 15,
+        "refAfterBase": null
+      },
+      {
+        "category": "Сифони",
+        "total": 16,
+        "inStock": 12,
+        "others": 4,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 6,
+        "refAfterBase": null
+      },
+      {
+        "category": "Ванни",
+        "total": 11,
+        "inStock": 8,
+        "others": 3,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 0,
+        "refAfterBase": null
+      },
+      {
+        "category": "Гігієнічний душ",
+        "total": 9,
+        "inStock": 9,
+        "others": 0,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 5,
+        "refAfterBase": null
+      },
+      {
+        "category": "Душові канали і трапи",
+        "total": 8,
+        "inStock": 6,
+        "others": 2,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 5,
+        "refAfterBase": null
+      },
+      {
+        "category": "Душові системи та панелі",
+        "total": 8,
+        "inStock": 4,
+        "others": 4,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 8,
+        "refAfterBase": null
+      },
+      {
+        "category": "Інсталяції",
+        "total": 8,
+        "inStock": 8,
+        "others": 0,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 1,
+        "refAfterBase": null
+      },
+      {
+        "category": "Тумби для ванної кімнати",
+        "total": 7,
+        "inStock": 5,
+        "others": 2,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 3,
+        "refAfterBase": null
+      },
+      {
+        "category": "Решітки для душових трапів і каналів",
+        "total": 5,
+        "inStock": 4,
+        "others": 1,
+        "lowPhotos": 0,
+        "lowAttrs": 0,
+        "noReviews": 4,
+        "refAfterBase": null
+      },
+      {
+        "category": "Комплектуючі для інсталяцій",
+        "total": 5,
+        "inStock": 5,
+        "others": 0,
+        "lowPhotos": 0,
+        "lowAttrs": 5,
+        "noReviews": 3,
+        "refAfterBase": null
+      }
+    ]
+  },
+  "agromatPrices": {
+    "repricedCount": 25,
+    "repricedUpCount": 25,
+    "repricedDownCount": 25,
+    "unchangedCount": 260
+  },
+  "competitors": [
+    {
+      "name": "Vencon",
+      "adapter": "vencon",
+      "targetCount": 53,
+      "parsedCount": 46,
+      "violations": 6,
+      "noViolations": 40,
+      "ourCheaper": 38,
+      "avgOurCheaperPct": 9.531113540095683,
+      "latestDate": "2026-06-26",
+      "previousDate": "2026-06-25",
+      "priceChanges": {
+        "changed": 2,
+        "up": 0,
+        "down": 2,
+        "same": 43
+      }
+    },
+    {
+      "name": "Теплорадість",
+      "adapter": "teploradost",
+      "targetCount": 68,
+      "parsedCount": 58,
+      "violations": 4,
+      "noViolations": 54,
+      "ourCheaper": 48,
+      "avgOurCheaperPct": 5.145863691284942,
+      "latestDate": "2026-06-26",
+      "previousDate": "2026-06-25",
+      "priceChanges": {
+        "changed": 5,
+        "up": 2,
+        "down": 3,
+        "same": 51
+      }
+    },
+    {
+      "name": "Drop",
+      "adapter": "drop",
+      "targetCount": 139,
+      "parsedCount": 127,
+      "violations": 53,
+      "noViolations": 74,
+      "ourCheaper": 63,
+      "avgOurCheaperPct": 3.7681116417481455,
+      "latestDate": "2026-06-26",
+      "previousDate": "2026-06-25",
+      "priceChanges": {
+        "changed": 14,
+        "up": 6,
+        "down": 8,
+        "same": 108
+      }
+    },
+    {
+      "name": "Depoint",
+      "adapter": "depoint",
+      "targetCount": 89,
+      "parsedCount": 78,
+      "violations": 6,
+      "noViolations": 72,
+      "ourCheaper": 10,
+      "avgOurCheaperPct": 6.102912698205037,
+      "latestDate": "2026-06-26",
+      "previousDate": "2026-06-25",
+      "priceChanges": {
+        "changed": 0,
+        "up": 0,
+        "down": 0,
+        "same": 75
+      }
+    },
+    {
+      "name": "Vannaja",
+      "adapter": "vannaja",
+      "targetCount": 208,
+      "parsedCount": 179,
+      "violations": 142,
+      "noViolations": 37,
+      "ourCheaper": 8,
+      "avgOurCheaperPct": 9.193755405399566,
+      "latestDate": "2026-06-26",
+      "previousDate": "2026-06-22",
+      "priceChanges": {
+        "changed": 23,
+        "up": 0,
+        "down": 23,
+        "same": 153
+      }
+    }
+  ]
+}
