@@ -56,17 +56,6 @@ function matchSearch(p: ProductLite, q: string): boolean {
   );
 }
 
-// Per-product: how many required attributes (for its category) are missing?
-function missingRequiredAttrs(
-  _p: ProductLite,
-  _required: Record<string, number[]>,
-): number {
-  // ProductLite doesn't carry attribute IDs (kept in ProductFull). For lite-table
-  // filtering we use attributesCount as a coarse signal; precise per-attr check
-  // happens in the drill-down modal using ProductFull.
-  return 0;
-}
-
 const KYIV_DATE_TIME = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Europe/Kyiv",
   year: "numeric", month: "2-digit", day: "2-digit",
@@ -324,8 +313,6 @@ async function productsResponse(q: URLSearchParams) {
     if (!p.sku || !p.sku.trim()) noSku++;
   }
 
-  // Avoid unused-var warning — kept for future precise-required-attr filter
-  void missingRequiredAttrs;
   void required;
 
   // ── Pagination ─────────────────────────────────────────────────────────────

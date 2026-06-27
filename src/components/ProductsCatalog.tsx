@@ -198,7 +198,8 @@ async function _copyText(text: string): Promise<void> {
     let ok = false;
     try { ok = document.execCommand("copy"); } catch { /* fallthrough */ }
     document.body.removeChild(ta);
-    ok ? resolve() : reject(new Error("execCommand copy failed"));
+    if (ok) resolve();
+    else reject(new Error("execCommand copy failed"));
   });
 }
 
@@ -1052,7 +1053,7 @@ function SettingsModal({
             <div className="p-4 space-y-4 overflow-y-auto">
               {/* Sync */}
               <Section title="Синхронізація з API">
-                <SyncButton syncState={syncState} syncedAt={syncedAt} onSynced={onSynced} />
+                <SyncButton syncState={syncState} onSynced={onSynced} />
               </Section>
 
               {/* Snapshots */}
@@ -1156,12 +1157,10 @@ function SyncReportModal({ state, onClose }: { state: SyncState; onClose: () => 
 }
 
 // ── Sync button + sync status pill ──────────────────────────────────────────
-function SyncButton({ syncState, syncedAt, onSynced }: {
+function SyncButton({ syncState, onSynced }: {
   syncState: SyncState;
-  syncedAt: string | null;
   onSynced: () => void;
 }) {
-  const [showReport, setShowReport] = useState(false);
   const [live, setLive] = useState<SyncState | null>(null);
   const [err, setErr] = useState("");
 
@@ -1567,6 +1566,7 @@ function ProductModal({ id, seed, onClose }: {
                   <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 gap-2">
                     {[...data.images].sort((a, b) => a.sort - b.sort).map((img, i) => (
                       <a key={i} href={img.url} target="_blank" rel="noopener noreferrer" className="block rounded-lg overflow-hidden border" style={{ borderColor: img.main ? "#107c10" : "var(--border)" }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- product URLs are already CDN-hosted and may be outside Next image domains */}
                         <img src={img.url} alt={`photo ${i + 1}`} className="w-full h-24 object-cover" loading="lazy" />
                       </a>
                     ))}
@@ -1891,6 +1891,7 @@ function HistoryEventRow({ event, currency }: { event: ChangeEvent; currency: st
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-1">
                 {event.addedUrls.map((u, i) => (
                   <a key={i} href={u} target="_blank" rel="noopener noreferrer" className="block rounded overflow-hidden border" style={{ borderColor: "#107c10aa" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element -- change history uses raw image URLs from stored catalog events */}
                     <img src={u} alt="" className="w-full h-16 object-cover" loading="lazy" />
                   </a>
                 ))}
@@ -1903,6 +1904,7 @@ function HistoryEventRow({ event, currency }: { event: ChangeEvent; currency: st
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-1">
                 {event.removedUrls.map((u, i) => (
                   <a key={i} href={u} target="_blank" rel="noopener noreferrer" className="block rounded overflow-hidden border opacity-60" style={{ borderColor: "#d13438aa" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element -- change history uses raw image URLs from stored catalog events */}
                     <img src={u} alt="" className="w-full h-16 object-cover" loading="lazy" />
                   </a>
                 ))}
@@ -3160,7 +3162,10 @@ export function ParserPricesDashboard() {
         setSavedBulkSets(
           parsed
             .filter((s) => s && typeof s.id === "string" && typeof s.name === "string" && Array.isArray(s.ids))
-            .map(({ type: _drop, ...s }) => s as SavedBulkSet),
+            .map((s) => {
+              const { id, name, ids, rawText, createdAt, matchedCount } = s as SavedBulkSet & { type?: unknown };
+              return { id, name, ids, rawText, createdAt, matchedCount };
+            }),
         );
       }
     } catch {}
@@ -3818,7 +3823,10 @@ export function ProductsCatalog() {
         setSavedBulkSets(
           parsed
             .filter((s) => s && typeof s.id === "string" && typeof s.name === "string" && Array.isArray(s.ids))
-            .map(({ type: _drop, ...s }) => s as SavedBulkSet),
+            .map((s) => {
+              const { id, name, ids, rawText, createdAt, matchedCount } = s as SavedBulkSet & { type?: unknown };
+              return { id, name, ids, rawText, createdAt, matchedCount };
+            }),
         );
       }
     } catch {}

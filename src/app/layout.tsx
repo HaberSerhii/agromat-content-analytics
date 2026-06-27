@@ -22,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="min-h-screen px-4 py-4">
           <header className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element -- external SVG logo is tiny and should load directly from the source */}
             <img
               src="https://www.agromat.ua/img/components/logo.svg"
               alt="Agromat"

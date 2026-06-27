@@ -14,6 +14,21 @@ const PAGE = 1000;
 // modest chunks — for a few thousand products this is 4–7 round trips.
 const ID_CHUNK = 500;
 const IDENTIFIER_CHUNK = 250;
+const CACHE_TZ = "Europe/Kyiv";
+const CACHE_MAX_ENTRIES = 200;
+
+type CacheableBody = Record<string, unknown>;
+
+interface CacheEntry {
+  body: CacheableBody;
+  expiresAt: number;
+  storedAt: number;
+}
+
+declare global {
+  var _parserPricesCache: Map<string, CacheEntry> | undefined;
+  var _parserPricesInflight: Map<string, Promise<NextResponse>> | undefined;
+}
 
 interface Competitor {
   id: number;
@@ -61,6 +76,87 @@ interface PricesRow {
 }
 
 type ParserSegment = "all" | "sanitary" | "tile";
+
+function parserPricesCache(): Map<string, CacheEntry> {
+  if (!global._parserPricesCache) global._parserPricesCache = new Map();
+  return global._parserPricesCache;
+}
+
+function parserPricesInflight(): Map<string, Promise<NextResponse>> {
+  if (!global._parserPricesInflight) global._parserPricesInflight = new Map();
+  return global._parserPricesInflight;
+}
+
+function timeZoneOffsetMs(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const byType = new Map(parts.map((part) => [part.type, part.value]));
+  const asUtc = Date.UTC(
+    Number(byType.get("year")),
+    Number(byType.get("month")) - 1,
+    Number(byType.get("day")),
+    Number(byType.get("hour")),
+    Number(byType.get("minute")),
+    Number(byType.get("second")),
+  );
+  return asUtc - date.getTime();
+}
+
+function nextKyivMidnightMs(now = new Date()): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: CACHE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const byType = new Map(parts.map((part) => [part.type, part.value]));
+  const localMidnightAsUtc = Date.UTC(
+    Number(byType.get("year")),
+    Number(byType.get("month")) - 1,
+    Number(byType.get("day")) + 1,
+    0,
+    0,
+    0,
+  );
+  return localMidnightAsUtc - timeZoneOffsetMs(new Date(localMidnightAsUtc), CACHE_TZ);
+}
+
+function canonicalQueryKey(q: URLSearchParams): string {
+  const pairs = [...q.entries()].sort(([ak, av], [bk, bv]) => {
+    const keyCmp = ak.localeCompare(bk);
+    return keyCmp || av.localeCompare(bv);
+  });
+  return new URLSearchParams(pairs).toString();
+}
+
+function cacheHeaders(entry: CacheEntry, status: "HIT" | "MISS"): HeadersInit {
+  const ttl = Math.max(0, Math.floor((entry.expiresAt - Date.now()) / 1000));
+  return {
+    "Cache-Control": `private, max-age=${ttl}`,
+    "x-cache": status,
+    "x-cache-expires-at": new Date(entry.expiresAt).toISOString(),
+    "x-cache-stored-at": new Date(entry.storedAt).toISOString(),
+  };
+}
+
+function pruneCache(cache: Map<string, CacheEntry>, now = Date.now()) {
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
+}
 
 function parseIntOr(v: string | null, fallback: number): number {
   if (!v) return fallback;
@@ -435,12 +531,50 @@ async function pricesResponse(q: URLSearchParams) {
   });
 }
 
+async function cachedPricesResponse(q: URLSearchParams) {
+  const now = Date.now();
+  const key = canonicalQueryKey(q);
+  const cache = parserPricesCache();
+  pruneCache(cache, now);
+
+  const cached = cache.get(key);
+  if (cached && cached.expiresAt > now) {
+    cache.delete(key);
+    cache.set(key, cached);
+    return NextResponse.json(cached.body, { headers: cacheHeaders(cached, "HIT") });
+  }
+
+  const inflight = parserPricesInflight();
+  const pending = inflight.get(key);
+  if (pending) return pending;
+
+  const work = (async () => {
+    const response = await pricesResponse(q);
+    if (response.status !== 200) return response;
+
+    const body = await response.clone().json() as CacheableBody;
+    const entry: CacheEntry = {
+      body,
+      expiresAt: nextKyivMidnightMs(),
+      storedAt: Date.now(),
+    };
+    cache.set(key, entry);
+    pruneCache(cache);
+    return NextResponse.json(body, { headers: cacheHeaders(entry, "MISS") });
+  })().finally(() => {
+    inflight.delete(key);
+  });
+
+  inflight.set(key, work);
+  return work;
+}
+
 export async function GET(request: Request) {
-  return pricesResponse(new URL(request.url).searchParams);
+  return cachedPricesResponse(new URL(request.url).searchParams);
 }
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const queryString = typeof body?.queryString === "string" ? body.queryString : "";
-  return pricesResponse(new URLSearchParams(queryString));
+  return cachedPricesResponse(new URLSearchParams(queryString));
 }
