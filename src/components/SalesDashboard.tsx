@@ -35,6 +35,7 @@ type CategoryProductSummary = {
   url: string;
   brand: string;
   category: string;
+  orders: number;
   qty: number;
   revenue: number;
 };
@@ -229,7 +230,8 @@ function CategoryRankingList({
                         <th className="text-left px-2 py-2 min-w-[100px]">URL</th>
                         <th className="text-left px-2 py-2 min-w-[120px]">Бренд</th>
                         <th className="text-right px-2 py-2 min-w-[110px]">Сума</th>
-                        <th className="text-right px-2 py-2 min-w-[70px]">К-сть</th>
+                        <th className="text-right px-2 py-2 min-w-[110px]">К-ть замовлень</th>
+                        <th className="text-right px-2 py-2 min-w-[90px]">К-ть товарів</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -249,12 +251,13 @@ function CategoryRankingList({
                           </td>
                           <td className="px-2 py-2" style={{ color: "var(--text-dim)" }}>{product.brand}</td>
                           <td className="px-2 py-2 text-right tabular-nums font-bold" style={{ color: "var(--text)" }}>{fmtMoney(product.revenue)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(product.orders)}</td>
                           <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(product.qty)}</td>
                         </tr>
                       ))}
                       {!products.length && (
                         <tr>
-                          <td className="px-2 py-5 text-center" colSpan={6} style={{ color: "var(--text-dim)" }}>Немає товарів у цій категорії під обрані фільтри</td>
+                          <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "var(--text-dim)" }}>Немає товарів у цій категорії під обрані фільтри</td>
                         </tr>
                       )}
                     </tbody>
@@ -285,10 +288,11 @@ function DocumentStatusOverview({
       <div className="text-sm font-bold mb-3" style={{ color: "var(--text)" }}>Статуси документів</div>
       <div className="overflow-x-auto">
         <div className="min-w-[680px]">
-          <div className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_minmax(0,1.3fr)_72px_108px] gap-2 text-[11px] font-bold" style={{ color: "var(--text-dim)" }}>
+          <div className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_108px_20px_minmax(0,1.3fr)_72px_108px] gap-x-2 text-[11px] font-bold" style={{ color: "var(--text-dim)" }}>
             <span>Статус заказу</span>
             <span className="text-right">К-сть</span>
             <span className="text-right">Сума</span>
+            <span />
             <span>Причина скасування</span>
             <span className="text-right">К-сть</span>
             <span className="text-right">Сума</span>
@@ -298,10 +302,11 @@ function DocumentStatusOverview({
               const state = states[index];
               const reason = cancelReasons[index];
               return (
-                <div key={index} className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_minmax(0,1.3fr)_72px_108px] gap-2 text-xs">
-                  <span className="font-semibold truncate" style={{ color: "var(--text)" }} title={state?.state}>{state?.state || "—"}</span>
-                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{state ? fmtNum(state.docs) : "—"}</span>
-                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{state ? fmtMoney(state.revenue) : "—"}</span>
+                <div key={index} className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_20px_minmax(0,1.3fr)_72px_108px] gap-x-2 text-xs">
+                  <span className="font-semibold truncate" style={{ color: "var(--text)" }} title={state?.state}>{state?.state || ""}</span>
+                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{state ? fmtNum(state.docs) : ""}</span>
+                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{state ? fmtMoney(state.revenue) : ""}</span>
+                  <span />
                   <span className="font-semibold truncate" style={{ color: "var(--text)" }} title={reason?.reason}>{reason?.reason || "—"}</span>
                   <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{reason ? fmtNum(reason.docs) : "—"}</span>
                   <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{reason ? fmtMoney(reason.revenue) : "—"}</span>

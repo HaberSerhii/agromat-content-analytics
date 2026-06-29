@@ -35,6 +35,7 @@ export type SalesProductSummary = {
   url: string;
   brand: string;
   category: string;
+  orders: number;
   qty: number;
   revenue: number;
 };
@@ -142,6 +143,10 @@ type ParsedSalesItem = {
 type ParsedSalesRow = SalesRow & {
   items: ParsedSalesItem[];
   cancelReason: string;
+};
+
+type MutableSalesProductSummary = SalesProductSummary & {
+  orderRefs: Set<string>;
 };
 
 type CacheEntry = {
@@ -517,13 +522,14 @@ function addCancelReason(map: Map<string, { reason: string; docs: number; revenu
 }
 
 function addCategoryProduct(
-  map: Map<string, Map<string, SalesProductSummary>>,
+  map: Map<string, Map<string, MutableSalesProductSummary>>,
   item: ParsedSalesItem,
+  row: SalesRow,
   fallbackRevenue: number,
 ) {
   let products = map.get(item.category);
   if (!products) {
-    products = new Map<string, SalesProductSummary>();
+    products = new Map<string, MutableSalesProductSummary>();
     map.set(item.category, products);
   }
   const key = item.code || `${item.name}:${item.brand}`;
@@ -533,9 +539,13 @@ function addCategoryProduct(
     url: item.url,
     brand: item.brand || "Без бренда",
     category: item.category,
+    orders: 0,
     qty: 0,
     revenue: 0,
+    orderRefs: new Set<string>(),
   };
+  current.orderRefs.add(row.docsRef || row.number || `${item.code}:${current.orderRefs.size}`);
+  current.orders = current.orderRefs.size;
   current.qty += item.qty || 1;
   current.revenue += item.revenue || fallbackRevenue;
   products.set(key, current);
@@ -739,7 +749,7 @@ function buildDataset(
   const allSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
   const brands = new Map<string, MutableBucket>();
   const categories = new Map<string, MutableBucket>();
-  const categoryProducts = new Map<string, Map<string, SalesProductSummary>>();
+  const categoryProducts = new Map<string, Map<string, MutableSalesProductSummary>>();
   const states = new Map<string, { state: string; docs: number; revenue: number }>();
   const availableStates = new Map<string, { state: string; docs: number; revenue: number }>();
   const cancelReasons = new Map<string, { reason: string; docs: number; revenue: number }>();
@@ -790,7 +800,7 @@ function buildDataset(
       for (const item of row.items) {
         addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount);
         addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount);
-        addCategoryProduct(categoryProducts, item, row.docsSum / row.goodsCount);
+        addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
       }
     }
 
@@ -844,8 +854,19 @@ function buildDataset(
   const categoryList = topBuckets(categories, 25);
   const categoryProductList = Object.fromEntries(
     categoryList.map((category) => {
-      const products = categoryProducts.get(category.label) || new Map<string, SalesProductSummary>();
-      return [category.label, [...products.values()].sort((a, b) => b.revenue - a.revenue)];
+      const products = categoryProducts.get(category.label) || new Map<string, MutableSalesProductSummary>();
+      return [category.label, [...products.values()]
+        .map((product) => ({
+          code: product.code,
+          name: product.name,
+          url: product.url,
+          brand: product.brand,
+          category: product.category,
+          orders: product.orders,
+          qty: product.qty,
+          revenue: product.revenue,
+        }))
+        .sort((a, b) => b.revenue - a.revenue)];
     }),
   );
   const planMonth = getPlanMonthForFilter(filter);
