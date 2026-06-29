@@ -29,6 +29,16 @@ export type SalesBucketSummary = {
   avgMargin: number | null;
 };
 
+export type SalesProductSummary = {
+  code: string;
+  name: string;
+  url: string;
+  brand: string;
+  category: string;
+  qty: number;
+  revenue: number;
+};
+
 export type SalesDateSummary = {
   date: string;
   docs: number;
@@ -107,8 +117,10 @@ export type SalesDataset = {
     segments: SalesBucketSummary[];
     brands: SalesBucketSummary[];
     categories: SalesBucketSummary[];
+    categoryProducts: Record<string, SalesProductSummary[]>;
     states: Array<{ state: string; docs: number; revenue: number }>;
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
+    cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
   };
 };
 
@@ -118,13 +130,18 @@ type MutableBucket = SalesBucketSummary & {
 };
 
 type ParsedSalesItem = {
+  code: string;
+  name: string;
+  url: string;
   brand: string;
   category: string;
+  qty: number;
   revenue: number;
 };
 
 type ParsedSalesRow = SalesRow & {
   items: ParsedSalesItem[];
+  cancelReason: string;
 };
 
 type CacheEntry = {
@@ -135,7 +152,7 @@ type CacheEntry = {
 };
 
 let cached: CacheEntry | null = null;
-let categoryByCodeCache: Map<string, string> | null = null;
+let productMetaByCodeCache: Map<string, { name: string; brand: string; category: string; url: string }> | null = null;
 let groupNameByIdCache: Map<string, string> | null = null;
 
 export type SalesDateFilter = {
@@ -288,6 +305,10 @@ function splitList(value: string | undefined): string[] {
 function formatCategoryFallback(value: string | undefined) {
   if (!value) return "Без категорії";
   return /^\d+$/.test(value) ? `Категорія #${value}` : value;
+}
+
+function getProductSearchUrl(code: string | undefined) {
+  return code ? `https://www.agromat.ua/search/?q=${encodeURIComponent(code)}` : "";
 }
 
 function cleanSegment(value: string) {
@@ -487,6 +508,39 @@ function addState(map: Map<string, { state: string; docs: number; revenue: numbe
   map.set(label, item);
 }
 
+function addCancelReason(map: Map<string, { reason: string; docs: number; revenue: number }>, reason: string, revenue: number) {
+  const label = reason || "Без причини";
+  const item = map.get(label) || { reason: label, docs: 0, revenue: 0 };
+  item.docs += 1;
+  item.revenue += revenue;
+  map.set(label, item);
+}
+
+function addCategoryProduct(
+  map: Map<string, Map<string, SalesProductSummary>>,
+  item: ParsedSalesItem,
+  fallbackRevenue: number,
+) {
+  let products = map.get(item.category);
+  if (!products) {
+    products = new Map<string, SalesProductSummary>();
+    map.set(item.category, products);
+  }
+  const key = item.code || `${item.name}:${item.brand}`;
+  const current = products.get(key) || {
+    code: item.code,
+    name: item.name || "Без назви",
+    url: item.url,
+    brand: item.brand || "Без бренда",
+    category: item.category,
+    qty: 0,
+    revenue: 0,
+  };
+  current.qty += item.qty || 1;
+  current.revenue += item.revenue || fallbackRevenue;
+  products.set(key, current);
+}
+
 function addMonth(map: Map<string, SalesMonthSummary>, month: string, row: SalesRow) {
   const item = map.get(month) || { month, docs: 0, goods: 0, revenue: 0 };
   item.docs += 1;
@@ -548,15 +602,20 @@ function buildPlanSummary(
   };
 }
 
-async function getCategoryByCode() {
-  if (categoryByCodeCache) return categoryByCodeCache;
+async function getProductMetaByCode() {
+  if (productMetaByCodeCache) return productMetaByCodeCache;
   try {
     const products = await readAllLite();
-    categoryByCodeCache = new Map(products.map((product) => [String(product.code), product.categoryName || product.categoryPath || String(product.categoryId)]));
+    productMetaByCodeCache = new Map(products.map((product) => [String(product.code), {
+      name: product.name,
+      brand: product.brand || "Без бренда",
+      category: product.categoryName || product.categoryPath || String(product.categoryId),
+      url: product.url,
+    }]));
   } catch {
-    categoryByCodeCache = new Map();
+    productMetaByCodeCache = new Map();
   }
-  return categoryByCodeCache;
+  return productMetaByCodeCache;
 }
 
 async function getGroupNameById() {
@@ -583,8 +642,8 @@ async function getGroupNameById() {
 
 function parseSalesRows(
   csvText: string,
-  categoryByCode: Map<string, string>,
   groupNameById: Map<string, string>,
+  productMetaByCode: Map<string, { name: string; brand: string; category: string; url: string }>,
 ): ParsedSalesRow[] {
   const lines = csvText.replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
   const headers = parseCsvLine(lines[0] || "");
@@ -600,11 +659,29 @@ function parseSalesRows(
     const categoriesList = splitList(get(values, "groups_refs"));
     const goodsNamesList = splitList(get(values, "goods_names"));
     const rowSums = splitList(get(values, "rows_sums")).map(parseNumber);
-    const goodsCount = Math.max(goodsCodes.length, brandsList.length, categoriesList.length, rowSums.length, 1);
+    const rowQty = (
+      splitList(get(values, "rows_qty")).length ? splitList(get(values, "rows_qty")) :
+      splitList(get(values, "rows_count")).length ? splitList(get(values, "rows_count")) :
+      splitList(get(values, "rows_counts")).length ? splitList(get(values, "rows_counts")) :
+      splitList(get(values, "goods_qty")).length ? splitList(get(values, "goods_qty")) :
+      splitList(get(values, "goods_count"))
+    ).map(parseNumber);
+    const goodsCount = Math.max(goodsCodes.length, brandsList.length, categoriesList.length, rowSums.length, rowQty.length, 1);
     const state = get(values, "state");
     const categoryNames = Array.from({ length: goodsCount }, (_, i) => (
-      groupNameById.get(categoriesList[i]) || categoryByCode.get(goodsCodes[i]) || formatCategoryFallback(categoriesList[i])
+      groupNameById.get(categoriesList[i]) || productMetaByCode.get(goodsCodes[i])?.category || formatCategoryFallback(categoriesList[i])
     ));
+    const cancelReason = (
+      get(values, "cancel_reason") ||
+      get(values, "cancelation_reason") ||
+      get(values, "cancellation_reason") ||
+      get(values, "closed_reason") ||
+      get(values, "close_reason") ||
+      get(values, "closure_reason") ||
+      get(values, "reason") ||
+      get(values, "reason_closed") ||
+      get(values, "state_reason")
+    ).trim();
     const row: ParsedSalesRow = {
       docsRef: get(values, "docs_ref"),
       number: get(values, "number"),
@@ -627,10 +704,15 @@ function parseSalesRows(
         goodsNamesList,
       ),
       items: Array.from({ length: goodsCount }, (_, i) => ({
-        brand: brandsList[i] || "Без бренда",
+        code: goodsCodes[i] || "",
+        name: goodsNamesList[i] || productMetaByCode.get(goodsCodes[i])?.name || "Без назви",
+        url: productMetaByCode.get(goodsCodes[i])?.url || getProductSearchUrl(goodsCodes[i]),
+        brand: brandsList[i] || productMetaByCode.get(goodsCodes[i])?.brand || "Без бренда",
         category: categoryNames[i],
+        qty: rowQty[i] || 1,
         revenue: rowSums[i] || 0,
       })),
+      cancelReason,
     };
 
     rows.push(row);
@@ -657,8 +739,10 @@ function buildDataset(
   const allSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
   const brands = new Map<string, MutableBucket>();
   const categories = new Map<string, MutableBucket>();
+  const categoryProducts = new Map<string, Map<string, SalesProductSummary>>();
   const states = new Map<string, { state: string; docs: number; revenue: number }>();
   const availableStates = new Map<string, { state: string; docs: number; revenue: number }>();
+  const cancelReasons = new Map<string, { reason: string; docs: number; revenue: number }>();
   const planMonths = new Map<string, SalesMonthSummary>();
   const planReturnedRevenueByMonth = new Map<string, number>();
   const planSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
@@ -699,12 +783,14 @@ function buildDataset(
       if (isCanceled(row.state)) {
         selectedCanceledDocs += 1;
         selectedCanceledRevenue += row.docsSum;
+        addCancelReason(cancelReasons, row.cancelReason, row.docsSum);
       }
 
       addBucket(segments, row.planGroup, row, row.docsSum, row.goodsCount);
       for (const item of row.items) {
         addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount);
         addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount);
+        addCategoryProduct(categoryProducts, item, row.docsSum / row.goodsCount);
       }
     }
 
@@ -754,6 +840,14 @@ function buildDataset(
   const monthList = [...months.values()].sort((a, b) => a.month.localeCompare(b.month));
   const allMonthList = [...allMonths.values()].sort((a, b) => a.month.localeCompare(b.month));
   const segmentList = finishSegmentBuckets(segments);
+  const brandList = topBuckets(brands, 25);
+  const categoryList = topBuckets(categories, 25);
+  const categoryProductList = Object.fromEntries(
+    categoryList.map((category) => {
+      const products = categoryProducts.get(category.label) || new Map<string, SalesProductSummary>();
+      return [category.label, [...products.values()].sort((a, b) => b.revenue - a.revenue)];
+    }),
+  );
   const planMonth = getPlanMonthForFilter(filter);
   const hasProductFilter = productCodeSet.size > 0;
   const planMonthList = hasProductFilter
@@ -795,10 +889,12 @@ function buildDataset(
       byDate: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
       months: monthList,
       segments: segmentList,
-      brands: topBuckets(brands, 25),
-      categories: topBuckets(categories, 25),
+      brands: brandList,
+      categories: categoryList,
+      categoryProducts: categoryProductList,
       states: [...states.values()].sort((a, b) => b.docs - a.docs),
       availableStates: [...availableStates.values()].sort((a, b) => b.docs - a.docs),
+      cancelReasons: [...cancelReasons.values()].sort((a, b) => b.docs - a.docs),
     },
   };
 }
@@ -808,7 +904,7 @@ export async function readSalesDataset(filter?: SalesDateFilter): Promise<SalesD
   const client = getS3Client();
   const head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
   const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-plan-v2`;
-  const [categoryByCode, groupNameById] = await Promise.all([getCategoryByCode(), getGroupNameById()]);
+  const [groupNameById, productMetaByCode] = await Promise.all([getGroupNameById(), getProductMetaByCode()]);
 
   if (cached && cached.signature === signature && Date.now() < cached.expiresAt) {
     return buildDataset(cached.rows, cached.source, filter);
@@ -825,7 +921,7 @@ export async function readSalesDataset(filter?: SalesDateFilter): Promise<SalesD
     refreshPolicy: "Дані перечитуються з S3 після 06:00 за Києвом або коли зміниться файл",
     nextRefreshAt: nextRefresh.toISOString(),
   };
-  const rows = parseSalesRows(csvText, categoryByCode, groupNameById);
+  const rows = parseSalesRows(csvText, groupNameById, productMetaByCode);
   cached = { signature, rows, source, expiresAt: nextRefresh.getTime() };
   return buildDataset(rows, source, filter);
 }

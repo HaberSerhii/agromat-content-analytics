@@ -29,6 +29,16 @@ type BucketSummary = {
   avgMargin: number | null;
 };
 
+type CategoryProductSummary = {
+  code: string;
+  name: string;
+  url: string;
+  brand: string;
+  category: string;
+  qty: number;
+  revenue: number;
+};
+
 type SalesDataset = {
   source: {
     bucket: string;
@@ -91,8 +101,10 @@ type SalesDataset = {
     segments: BucketSummary[];
     brands: BucketSummary[];
     categories: BucketSummary[];
+    categoryProducts: Record<string, CategoryProductSummary[]>;
     states: Array<{ state: string; docs: number; revenue: number }>;
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
+    cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
   };
 };
 
@@ -164,6 +176,143 @@ function RankingList({ title, items, maxRevenue, color }: { title: string; items
             </div>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function CategoryRankingList({
+  items,
+  productsByCategory,
+  maxRevenue,
+  expandedCategory,
+  onToggleCategory,
+}: {
+  items: BucketSummary[];
+  productsByCategory: Record<string, CategoryProductSummary[]>;
+  maxRevenue: number;
+  expandedCategory: string | null;
+  onToggleCategory: (category: string) => void;
+}) {
+  return (
+    <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+      <div className="text-sm font-bold mb-3" style={{ color: "var(--text)" }}>Категорії</div>
+      <div className="space-y-2">
+        {items.slice(0, 10).map((item) => {
+          const expanded = expandedCategory === item.label;
+          const products = productsByCategory[item.label] || [];
+          return (
+            <div key={item.label} className="border-t first:border-t-0 pt-2 first:pt-0" style={{ borderColor: "var(--border)" }}>
+              <div className="grid gap-2 md:grid-cols-[minmax(120px,190px)_1fr_150px] md:items-center">
+                <button
+                  type="button"
+                  onClick={() => onToggleCategory(item.label)}
+                  className="text-left text-xs font-semibold truncate border-0 bg-transparent p-0"
+                  style={{ color: "var(--text)" }}
+                  title={item.label}
+                >
+                  <span className="inline-block w-4" aria-hidden="true">{expanded ? "−" : "+"}</span>
+                  {item.label}
+                </button>
+                <ProgressBar value={(item.revenue / maxRevenue) * 100} color="#f59e0b" />
+                <div className="text-xs md:text-right" style={{ color: "var(--text-dim)" }}>
+                  {fmtMoney(item.revenue)} · {fmtNum(item.goods)} шт
+                </div>
+              </div>
+              {expanded && (
+                <div className="mt-3 overflow-x-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
+                  <table className="w-full text-[11px] border-collapse">
+                    <thead style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>
+                      <tr>
+                        <th className="text-left px-2 py-2 w-8">#</th>
+                        <th className="text-left px-2 py-2 min-w-[220px]">Товар</th>
+                        <th className="text-left px-2 py-2 min-w-[100px]">URL</th>
+                        <th className="text-left px-2 py-2 min-w-[120px]">Бренд</th>
+                        <th className="text-right px-2 py-2 min-w-[110px]">Сума</th>
+                        <th className="text-right px-2 py-2 min-w-[70px]">К-сть</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {products.map((product, index) => (
+                        <tr key={`${product.code}-${product.name}-${index}`} className="border-t" style={{ borderColor: "var(--border)" }}>
+                          <td className="px-2 py-2 tabular-nums" style={{ color: "var(--text-dim)" }}>{index + 1}</td>
+                          <td className="px-2 py-2 font-semibold" style={{ color: "var(--text)" }}>
+                            <div className="max-w-[340px] truncate" title={product.name}>{product.name}</div>
+                            {product.code && <div className="text-[10px] tabular-nums" style={{ color: "var(--text-dim)" }}>IDD {product.code}</div>}
+                          </td>
+                          <td className="px-2 py-2">
+                            {product.url ? (
+                              <a href={product.url} target="_blank" rel="noreferrer" className="font-semibold" style={{ color: "#118dff" }}>Відкрити</a>
+                            ) : (
+                              <span style={{ color: "var(--text-dim)" }}>—</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-2" style={{ color: "var(--text-dim)" }}>{product.brand}</td>
+                          <td className="px-2 py-2 text-right tabular-nums font-bold" style={{ color: "var(--text)" }}>{fmtMoney(product.revenue)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(product.qty)}</td>
+                        </tr>
+                      ))}
+                      {!products.length && (
+                        <tr>
+                          <td className="px-2 py-5 text-center" colSpan={6} style={{ color: "var(--text-dim)" }}>Немає товарів у цій категорії під обрані фільтри</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!items.length && (
+          <div className="text-xs" style={{ color: "var(--text-dim)" }}>Немає категорій під обрані фільтри</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DocumentStatusOverview({
+  states,
+  cancelReasons,
+}: {
+  states: SalesDataset["summary"]["states"];
+  cancelReasons: SalesDataset["summary"]["cancelReasons"];
+}) {
+  const maxRows = Math.max(states.length, cancelReasons.length);
+  return (
+    <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+      <div className="text-sm font-bold mb-3" style={{ color: "var(--text)" }}>Статуси документів</div>
+      <div className="overflow-x-auto">
+        <div className="min-w-[680px]">
+          <div className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_minmax(0,1.3fr)_72px_108px] gap-2 text-[11px] font-bold" style={{ color: "var(--text-dim)" }}>
+            <span>Статус заказу</span>
+            <span className="text-right">К-сть</span>
+            <span className="text-right">Сума</span>
+            <span>Причина скасування</span>
+            <span className="text-right">К-сть</span>
+            <span className="text-right">Сума</span>
+          </div>
+          <div className="mt-2 space-y-2">
+            {Array.from({ length: maxRows }).map((_, index) => {
+              const state = states[index];
+              const reason = cancelReasons[index];
+              return (
+                <div key={index} className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_minmax(0,1.3fr)_72px_108px] gap-2 text-xs">
+                  <span className="font-semibold truncate" style={{ color: "var(--text)" }} title={state?.state}>{state?.state || "—"}</span>
+                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{state ? fmtNum(state.docs) : "—"}</span>
+                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{state ? fmtMoney(state.revenue) : "—"}</span>
+                  <span className="font-semibold truncate" style={{ color: "var(--text)" }} title={reason?.reason}>{reason?.reason || "—"}</span>
+                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{reason ? fmtNum(reason.docs) : "—"}</span>
+                  <span className="tabular-nums text-right" style={{ color: "var(--text-dim)" }}>{reason ? fmtMoney(reason.revenue) : "—"}</span>
+                </div>
+              );
+            })}
+            {!maxRows && (
+              <div className="text-xs" style={{ color: "var(--text-dim)" }}>Немає статусів під обрані фільтри</div>
+            )}
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -336,6 +485,7 @@ export function SalesDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const hasLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -414,6 +564,13 @@ export function SalesDashboard() {
     () => Math.max(1, ...(data?.summary.categories || []).map((item) => item.revenue)),
     [data],
   );
+
+  useEffect(() => {
+    if (!data || !expandedCategory) return;
+    if (!data.summary.categories.some((item) => item.label === expandedCategory)) {
+      setExpandedCategory(null);
+    }
+  }, [data, expandedCategory]);
 
   if (loading) {
     return (
@@ -656,23 +813,18 @@ export function SalesDashboard() {
 
       <RankingList title="Бренди" items={data.summary.brands} maxRevenue={maxBrandRevenue} color="#22c55e" />
 
-      <section className="grid gap-4 xl:grid-cols-[1.25fr_.75fr]">
-        <RankingList title="Категорії" items={data.summary.categories} maxRevenue={maxCategoryRevenue} color="#f59e0b" />
-        <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-          <div className="text-sm font-bold mb-3" style={{ color: "var(--text)" }}>Статуси документів</div>
-          <div className="space-y-2">
-            {data.summary.states.map((state) => (
-              <div key={state.state} className="grid grid-cols-3 gap-3 text-xs">
-                <span className="font-semibold" style={{ color: "var(--text)" }}>{state.state}</span>
-                <span className="tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(state.docs)}</span>
-                <span className="tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtMoney(state.revenue)}</span>
-              </div>
-            ))}
-            {!data.summary.states.length && (
-              <div className="text-xs" style={{ color: "var(--text-dim)" }}>Немає статусів під обрані фільтри</div>
-            )}
-          </div>
-        </section>
+      <section className="grid gap-4 xl:grid-cols-2">
+        <CategoryRankingList
+          items={data.summary.categories}
+          productsByCategory={data.summary.categoryProducts || {}}
+          maxRevenue={maxCategoryRevenue}
+          expandedCategory={expandedCategory}
+          onToggleCategory={(category) => setExpandedCategory((current) => (current === category ? null : category))}
+        />
+        <DocumentStatusOverview
+          states={data.summary.states}
+          cancelReasons={data.summary.cancelReasons || []}
+        />
       </section>
 
       {showProductSetModal && (
