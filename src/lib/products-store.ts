@@ -471,6 +471,7 @@ const LITE_CACHE_FAST_TTL_MS = 30_000;        // skip Redis entirely
 const LITE_CACHE_PROBE_TTL_MS = 60 * 60_000;  // 1h — beyond this, force reload
 declare global {
   var _productsLiteCache: { ts: number; key: string; data: ProductLite[] } | undefined;
+  var _productsAttrIndexCache: { ts: number; key: string; data: Map<number, { id: number; name: string }[]> } | undefined;
 }
 
 // ── Lite shards I/O ─────────────────────────────────────────────────────────
@@ -575,6 +576,38 @@ export async function writeAllLite(products: ProductLite[], syncedAt: string): P
 export async function readLiteSyncedAt(): Promise<string | null> {
   const redis = getRedis();
   return (await redis.get(K.liteSyncAt)) as string | null;
+}
+
+// Compact full-derived index for mandatory-attribute checks in the product list.
+// The lite snapshot only stores attributesCount, so missing required attributes
+// need this productId → present attribute ids map.
+export async function readProductAttributeIndex(): Promise<Map<number, { id: number; name: string }[]>> {
+  const redis = getRedis();
+  const syncedAt = ((await redis.get(K.liteSyncAt)) as string | null) ?? "";
+  const key = syncedAt;
+  const cache = global._productsAttrIndexCache;
+  const now = Date.now();
+  if (cache && cache.key === key && now - cache.ts < LITE_CACHE_PROBE_TTL_MS) {
+    cache.ts = now;
+    return cache.data;
+  }
+
+  const pipe = redis.pipeline();
+  for (let i = 0; i < FULL_SHARD_COUNT; i++) pipe.get(K.fullShard(i));
+  const raws = (await pipe.exec()) as (string | null)[];
+
+  const out = new Map<number, { id: number; name: string }[]>();
+  for (const raw of raws) {
+    if (!raw) continue;
+    try {
+      const shard = JSON.parse(raw) as ProductFull[];
+      for (const p of shard) {
+        out.set(p.id, (p.attributes || []).map((a) => ({ id: a.id, name: a.name })));
+      }
+    } catch { /* skip corrupted shard */ }
+  }
+  global._productsAttrIndexCache = { ts: now, key, data: out };
+  return out;
 }
 
 // ── Full record (for drill-down) ────────────────────────────────────────────

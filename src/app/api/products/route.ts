@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import {
   readAllLite,
+  readProductAttributeIndex,
   readDailySnapshot,
   readLiteSyncedAt,
+  readCategoryAttrsAggregate,
+  backfillCategoryAttrsAggregate,
+  writeCategoryAttrsAggregate,
   readRequiredAttrs,
   readSyncState,
   type ProductLite,
@@ -25,7 +29,14 @@ type SortKey =
   | "stockQty"
   | "imagesCount"
   | "reviewsCount"
-  | "attributesCount";
+  | "attributesCount"
+  | "missingRequiredAttrsCount";
+
+type ProductListItem = ProductLite & {
+  missingRequiredAttrIds: number[];
+  missingRequiredAttrNames: string[];
+  missingRequiredAttrsCount: number;
+};
 
 function parseIntList(s: string | null): number[] {
   if (!s) return [];
@@ -103,6 +114,8 @@ async function productsResponse(q: URLSearchParams) {
   const statusIds = new Set(statusIdsRaw.filter((id) => id !== ARCHIVE_STATUS_ID));
   const hasImages = parseBool(q.get("has_images"));
   const hasAttributes = parseBool(q.get("has_attributes"));
+  const missingRequiredAttrs = parseBool(q.get("missing_required_attrs"));
+  const missingRequiredAttrIds = new Set(parseIntList(q.get("missing_required_attr_ids")));
   const hasReviews = parseBool(q.get("has_reviews"));
   const hasSku = parseBool(q.get("has_sku"));
   const deletedOnly = parseBool(q.get("deleted"));
@@ -116,7 +129,7 @@ async function productsResponse(q: URLSearchParams) {
   // Photo-count threshold: keep only products with imagesCount < maxImages.
   // Lets the catalog flag "products needing more photos" (e.g. < 2).
   const maxImages = q.get("max_images") ? parseInt(q.get("max_images")!, 10) : null;
-  // Attribute-count threshold: keep only products with attributesCount < maxAttributes.
+  // Legacy attribute-count threshold: kept for old bookmarked URLs.
   const maxAttributes = q.get("max_attributes") ? parseInt(q.get("max_attributes")!, 10) : null;
   const statsFrom = q.get("stats_from");
   const statsTo = q.get("stats_to") || statsFrom;
@@ -143,16 +156,52 @@ async function productsResponse(q: URLSearchParams) {
   const asOf = q.get("as_of");
   const asOfValid = asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf);
 
-  const [liveAll, liveSyncedAt, syncState, required, snap] = await Promise.all([
+  const [liveAll, liveSyncedAt, syncState, required, attrIndex, snap] = await Promise.all([
     asOfValid ? Promise.resolve([] as ProductLite[]) : readAllLite(),
     readLiteSyncedAt(),
     readSyncState(),
     readRequiredAttrs(),
+    readProductAttributeIndex(),
     asOfValid ? readDailySnapshot(asOf!) : Promise.resolve(null),
   ]);
 
   const all: ProductLite[] = asOfValid ? (snap?.products ?? []) : liveAll;
   const syncedAt = asOfValid ? (snap?.syncedAt ?? null) : liveSyncedAt;
+
+  let agg = await readCategoryAttrsAggregate();
+  if (!agg) {
+    const built = await backfillCategoryAttrsAggregate();
+    if (built) {
+      agg = built;
+      try { await writeCategoryAttrsAggregate(built); } catch { /* best-effort cache */ }
+    }
+  }
+  const attrNameByCategory = new Map<number, Map<number, string>>();
+  for (const cat of agg?.categories ?? []) {
+    const names = new Map<number, string>();
+    for (const a of cat.attributes) names.set(a.id, a.name);
+    attrNameByCategory.set(cat.id, names);
+  }
+
+  const withRequiredMeta = (p: ProductLite): ProductListItem => {
+    const requiredIds = required[String(p.categoryId)] ?? [];
+    if (requiredIds.length === 0) {
+      return { ...p, missingRequiredAttrIds: [], missingRequiredAttrNames: [], missingRequiredAttrsCount: 0 };
+    }
+    const presentAttrs = attrIndex.get(p.id) ?? [];
+    const present = new Set(presentAttrs.map((a) => a.id));
+    const presentNames = new Map(presentAttrs.map((a) => [a.id, a.name]));
+    const categoryNames = attrNameByCategory.get(p.categoryId);
+    const missingIds = requiredIds.filter((id) => !present.has(id));
+    const missingNames = missingIds.map((id) => categoryNames?.get(id) ?? presentNames.get(id) ?? `#${id}`);
+    return {
+      ...p,
+      missingRequiredAttrIds: missingIds,
+      missingRequiredAttrNames: missingNames,
+      missingRequiredAttrsCount: missingIds.length,
+    };
+  };
+  const allItems = all.map(withRequiredMeta);
 
   const newCutoff = onlyNewDays > 0 ? daysAgoIso(onlyNewDays) : "";
   const stChCutoff = onlyStatusChangedDays > 0 ? daysAgoIso(onlyStatusChangedDays) : "";
@@ -164,7 +213,7 @@ async function productsResponse(q: URLSearchParams) {
   // dropdown can be populated with options that respect *other* active filters
   // (the classic "self-exclude" facet pattern).
   type Skip = "category" | "brand" | "price" | "stock" | null;
-  const predicate = (skip: Skip) => (p: ProductLite): boolean => {
+  const predicate = (skip: Skip) => (p: ProductListItem): boolean => {
     if (search && !matchSearch(p, search)) return false;
     if (skip !== "category" && categoryIds.size && !categoryIds.has(p.categoryId)) return false;
     if (skip !== "brand" && brandIds.size && (p.brandId == null || !brandIds.has(p.brandId))) return false;
@@ -179,6 +228,9 @@ async function productsResponse(q: URLSearchParams) {
     if (hasAttributes === true && p.attributesCount === 0) return false;
     if (hasAttributes === false && p.attributesCount > 0) return false;
     if (maxAttributes != null && p.attributesCount >= maxAttributes) return false;
+    if (missingRequiredAttrs === true && p.missingRequiredAttrsCount === 0) return false;
+    if (missingRequiredAttrs === false && p.missingRequiredAttrsCount > 0) return false;
+    if (missingRequiredAttrIds.size && !p.missingRequiredAttrIds.some((id) => missingRequiredAttrIds.has(id))) return false;
     if (hasReviews === true && p.reviewsCount === 0) return false;
     if (hasReviews === false && p.reviewsCount > 0) return false;
     if (hasSku === true && (!p.sku || !p.sku.trim())) return false;
@@ -205,13 +257,13 @@ async function productsResponse(q: URLSearchParams) {
     return true;
   };
 
-  const filtered = all.filter(predicate(null));
+  const filtered = allItems.filter(predicate(null));
 
   // ── Facets: category + brand options derived from the filtered set.
   //    Each facet ignores its own filter — so picking a category still leaves
   //    every category visible in the dropdown (counts shift instead).
   const catCounts = new Map<number, { name: string; count: number }>();
-  for (const p of all) {
+  for (const p of allItems) {
     if (!predicate("category")(p)) continue;
     if (!p.categoryId) continue;
     const e = catCounts.get(p.categoryId) ?? { name: p.categoryName, count: 0 };
@@ -223,7 +275,7 @@ async function productsResponse(q: URLSearchParams) {
     .sort((a, b) => a.name.localeCompare(b.name, "uk"));
 
   const brandCounts = new Map<number, { name: string; count: number }>();
-  for (const p of all) {
+  for (const p of allItems) {
     if (!predicate("brand")(p)) continue;
     if (p.brandId == null) continue;
     const e = brandCounts.get(p.brandId) ?? { name: p.brand, count: 0 };
@@ -237,13 +289,13 @@ async function productsResponse(q: URLSearchParams) {
   // Price bounds: max across the *price-unfiltered* set (so the slider's range
   // doesn't collapse when the user narrows it). Min is just 0.
   let priceMax = 0;
-  for (const p of all) {
+  for (const p of allItems) {
     if (!predicate("price")(p)) continue;
     if ((p.price ?? 0) > priceMax) priceMax = p.price ?? 0;
   }
   // Stock bounds — same self-exclude pattern as price.
   let stockMax = 0;
-  for (const p of all) {
+  for (const p of allItems) {
     if (!predicate("stock")(p)) continue;
     if ((p.stockQty ?? 0) > stockMax) stockMax = p.stockQty ?? 0;
   }
@@ -256,7 +308,7 @@ async function productsResponse(q: URLSearchParams) {
   if (idsInSet.size) {
     // An input is "found" if it matches a product's code OR its goods_ref.
     const present = new Set<number>();
-    for (const p of all) {
+    for (const p of allItems) {
       if (idsInSet.has(p.code)) present.add(p.code);
       if (idsInSet.has(p.goodsRef)) present.add(p.goodsRef);
     }
@@ -264,12 +316,12 @@ async function productsResponse(q: URLSearchParams) {
   }
   if (codesInSet.size) {
     const presentCodes = new Set<number>();
-    for (const p of all) if (codesInSet.has(p.code)) presentCodes.add(p.code);
+    for (const p of allItems) if (codesInSet.has(p.code)) presentCodes.add(p.code);
     notFoundCodes = codesIn.filter((c) => !presentCodes.has(c));
   }
   if (refsInSet.size) {
     const presentRefs = new Set<number>();
-    for (const p of all) if (refsInSet.has(p.goodsRef)) presentRefs.add(p.goodsRef);
+    for (const p of allItems) if (refsInSet.has(p.goodsRef)) presentRefs.add(p.goodsRef);
     notFoundRefs = refsIn.filter((r) => !presentRefs.has(r));
   }
 
@@ -287,6 +339,7 @@ async function productsResponse(q: URLSearchParams) {
       case "imagesCount":      av = a.imagesCount; bv = b.imagesCount; break;
       case "reviewsCount":     av = a.reviewsCount; bv = b.reviewsCount; break;
       case "attributesCount":  av = a.attributesCount; bv = b.attributesCount; break;
+      case "missingRequiredAttrsCount": av = a.missingRequiredAttrsCount; bv = b.missingRequiredAttrsCount; break;
     }
     if (av < bv) return -1 * sortDir;
     if (av > bv) return 1 * sortDir;
@@ -304,16 +357,24 @@ async function productsResponse(q: URLSearchParams) {
   };
   let newCountRange = 0, statusChangedRange = 0;
   let noImages = 0, noAttributes = 0, noReviews = 0, noSku = 0;
+  const missingRequiredAttrCounts = new Map<number, { name: string; count: number }>();
   for (const p of filtered) {
     if (inStatsRange(p.firstSeenAt)) newCountRange++;
     if (inStatsRange(p.statusChangedAt)) statusChangedRange++;
     if (p.imagesCount === 0) noImages++;
-    if (p.attributesCount === 0) noAttributes++;
+    if (p.missingRequiredAttrsCount > 0) noAttributes++;
     if (p.reviewsCount === 0) noReviews++;
     if (!p.sku || !p.sku.trim()) noSku++;
+    for (let i = 0; i < p.missingRequiredAttrIds.length; i++) {
+      const id = p.missingRequiredAttrIds[i];
+      const e = missingRequiredAttrCounts.get(id) ?? { name: p.missingRequiredAttrNames[i] ?? `#${id}`, count: 0 };
+      e.count++;
+      missingRequiredAttrCounts.set(id, e);
+    }
   }
-
-  void required;
+  const availableMissingRequiredAttrs = [...missingRequiredAttrCounts.entries()]
+    .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "uk"));
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const offset = (page - 1) * limit;
@@ -327,6 +388,7 @@ async function productsResponse(q: URLSearchParams) {
     totalPages: Math.max(1, Math.ceil(total / limit)),
     availableCategories,
     availableBrands,
+    availableMissingRequiredAttrs,
     priceMax,
     stockMax,
     notFoundIds,

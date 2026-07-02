@@ -17,8 +17,13 @@ import type {
 // ── Local types ──────────────────────────────────────────────────────────────
 interface FacetOption { id: number; name: string; count: number }
 interface SnapshotInfo { date: string; syncedAt: string | null }
+type ProductListItem = ProductLite & {
+  missingRequiredAttrIds?: number[];
+  missingRequiredAttrNames?: string[];
+  missingRequiredAttrsCount?: number;
+};
 interface ListResponse {
-  items: ProductLite[];
+  items: ProductListItem[];
   page: number;
   limit: number;
   total: number;
@@ -27,6 +32,7 @@ interface ListResponse {
   syncState: SyncState;
   availableCategories: FacetOption[];
   availableBrands: FacetOption[];
+  availableMissingRequiredAttrs: FacetOption[];
   priceMax: number;
   stockMax: number;
   notFoundIds: number[];
@@ -233,7 +239,7 @@ async function downloadIdsXlsx(ids: (string | number)[], filename: string, colum
 }
 
 // Full-catalog Excel export — every visible column from the table
-async function downloadProductsXlsx(items: ProductLite[], filename: string) {
+async function downloadProductsXlsx(items: ProductListItem[], filename: string) {
   const XLSX = await import("xlsx");
   const rows = items.map((p) => ({
     "Код товара": p.code,
@@ -252,7 +258,9 @@ async function downloadProductsXlsx(items: ProductLite[], filename: string) {
     "Архів": p.deleted ? "так" : "ні",
     "Кіл-ть фото": p.imagesCount,
     "Кіл-ть відгуків": p.reviewsCount,
-    "Кіл-ть атрибутів": p.attributesCount,
+    "Незаповнені обов'язкові атрибути": p.missingRequiredAttrsCount ?? 0,
+    "Назви незаповнених обов'язкових атрибутів": (p.missingRequiredAttrNames ?? []).join(", "),
+    "Кіл-ть атрибутів у картці": p.attributesCount,
     "Сер. рейтинг": p.ratingAvg ?? "",
     "URL": p.url,
     "Створено в API": p.createdAt,
@@ -1302,7 +1310,7 @@ function KpiRow({ stats, total }: { stats: ListResponse["stats"]; total: number 
     { label: "Нові картки", value: fmtNum(stats.newCountRange), color: "#107c10" },
     { label: "Змінили статус", value: fmtNum(stats.statusChangedRange), color: "#118dff" },
     { label: "Без фото", value: fmtNum(stats.noImages), color: "#e66c37" },
-    { label: "Без атрибутів", value: fmtNum(stats.noAttributes), color: "#e66c37" },
+    { label: "Незаповнені обов'язк. атрибути", value: fmtNum(stats.noAttributes), color: "#e66c37" },
     { label: "Без відгуків", value: fmtNum(stats.noReviews), color: "#a19f9d" },
     { label: "Без артикулу", value: fmtNum(stats.noSku), color: "#e66c37" },
   ];
@@ -1424,7 +1432,7 @@ function CategorySummaryPanel({ onFilter }: {
                         </Drill>
                       </td>
                       <td style={{ padding: 0 }}>
-                        <Drill onClick={() => onFilter(r.categoryId, "noAttrs")} color={attrColor} title={`Показати товари без атрибутів в категорії "${r.categoryName}"`}>
+                        <Drill onClick={() => onFilter(r.categoryId, "noAttrs")} color={attrColor} title={`Показати товари з незаповненими обов'язковими атрибутами в категорії "${r.categoryName}"`}>
                           {attrPct}%
                         </Drill>
                       </td>
@@ -2019,6 +2027,20 @@ function RequiredAttrsModal({ categories, onClose }: {
     setExportSel(next);
   };
 
+  const applyAutoRequired90 = () => {
+    if (!agg) return;
+    const next: Record<string, number[]> = {};
+    for (const cat of agg) {
+      if (excluded.has(cat.id) || cat.productCount <= 0) continue;
+      const ids = cat.attributes
+        .filter((a) => (a.filledCount / cat.productCount) >= 0.9)
+        .map((a) => a.id);
+      if (ids.length > 0) next[String(cat.id)] = ids;
+    }
+    setConfig(next);
+    setErr(`Автоматично вибрано атрибути 90%+ у ${Object.keys(next).length} категоріях. Натисніть "Зберегти", щоб застосувати.`);
+  };
+
   const exportXlsx = async () => {
     setExporting(true); setErr("");
     try {
@@ -2116,6 +2138,17 @@ function RequiredAttrsModal({ categories, onClose }: {
                 >
                   {showExcluded ? `← Назад (приховано: ${excluded.size})` : `Приховані (${excluded.size})`}
                 </button>
+                {!showExcluded && (
+                  <button
+                    onClick={applyAutoRequired90}
+                    disabled={loading || !agg}
+                    className="text-[10px] px-2 py-0.5 rounded cursor-pointer border-0 disabled:opacity-50"
+                    style={{ background: "#107c1018", color: "#107c10" }}
+                    title="Автоматично вибрати атрибути, заповнені у 90%+ товарів категорії"
+                  >
+                    Авто 90%+
+                  </button>
+                )}
               </div>
             </div>
             <input
@@ -3793,7 +3826,8 @@ export function ProductsCatalog() {
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
   // "" all · "true" з фото · "false" без фото · "lt2|lt3|lt5" — менше N фото
   const [hasImages, setHasImages] = useState<"" | "true" | "false" | "lt2" | "lt3" | "lt5">("");
-  const [hasAttrs, setHasAttrs] = useState<"" | "true" | "false" | "lt2" | "lt3" | "lt5">("");
+  const [hasAttrs, setHasAttrs] = useState<"" | "missing">("");
+  const [missingAttrIds, setMissingAttrIds] = useState<number[]>([]);
   const [hasReviews, setHasReviews] = useState<"" | "true" | "false">("");
   const [hasSku, setHasSku] = useState<"" | "true" | "false">("");
   const [sortBy, setSortBy] = useState("firstSeenAt");
@@ -3801,6 +3835,7 @@ export function ProductsCatalog() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
   const [openItem, setOpenItem] = useState<ProductLite | null>(null);
+  const [missingAttrsPopup, setMissingAttrsPopup] = useState<{ productName: string; names: string[] } | null>(null);
   const [openReq, setOpenReq] = useState(false);
   const [openSettings, setOpenSettings] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -3870,7 +3905,7 @@ export function ProductsCatalog() {
   }, [persistBulkSets, savedBulkSets]);
 
   // Reset to page 1 when any filter changes
-  useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
+  useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
 
   const buildQuery = useCallback((): string => {
     const p = new URLSearchParams();
@@ -3892,10 +3927,11 @@ export function ProductsCatalog() {
     else if (hasImages === "lt2") p.set("max_images", "2");
     else if (hasImages === "lt3") p.set("max_images", "3");
     else if (hasImages === "lt5") p.set("max_images", "5");
-    if (hasAttrs === "true" || hasAttrs === "false") p.set("has_attributes", hasAttrs);
-    else if (hasAttrs === "lt2") p.set("max_attributes", "2");
-    else if (hasAttrs === "lt3") p.set("max_attributes", "3");
-    else if (hasAttrs === "lt5") p.set("max_attributes", "5");
+    if (hasAttrs === "missing") p.set("missing_required_attrs", "true");
+    if (missingAttrIds.length) {
+      p.set("missing_required_attrs", "true");
+      p.set("missing_required_attr_ids", missingAttrIds.join(","));
+    }
     if (hasReviews) p.set("has_reviews", hasReviews);
     if (hasSku) p.set("has_sku", hasSku);
     if (catalogStatsFrom) p.set("stats_from", catalogStatsFrom);
@@ -3907,10 +3943,10 @@ export function ProductsCatalog() {
     if (tab === "new7") p.set("only_new_since_sync", "true");
     if (tab === "changed7") p.set("only_status_changed_days", "7");
     if (tab === "noImg") p.set("has_images", "false");
-    if (tab === "noAttr") p.set("has_attributes", "false");
+    if (tab === "noAttr") p.set("missing_required_attrs", "true");
     if (tab === "noRev") p.set("has_reviews", "false");
     return p.toString();
-  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, hasReviews, hasSku, catalogStatsFrom, catalogStatsTo, sortBy, sortDir, tab, asOf]);
+  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, catalogStatsFrom, catalogStatsTo, sortBy, sortDir, tab, asOf]);
 
   const loadList = useCallback(() => {
     setLoading(true); setError("");
@@ -3946,7 +3982,7 @@ export function ProductsCatalog() {
     setMinPrice(null); setMaxPrice(null);
     setMinStock(null); setMaxStock(null);
     setBulk(null);
-    setHasImages(""); setHasAttrs(""); setHasReviews(""); setHasSku("");
+    setHasImages(""); setHasAttrs(""); setMissingAttrIds([]); setHasReviews(""); setHasSku("");
     setSortBy("firstSeenAt"); setSortDir("desc"); setTab("all");
   };
 
@@ -4088,7 +4124,7 @@ export function ProductsCatalog() {
     setTab("all");
     switch (preset) {
       case "noImages":    setHasImages("false"); break;
-      case "noAttrs":     setHasAttrs("false"); break;
+      case "noAttrs":     setHasAttrs("missing"); break;
       case "noReviews":   setHasReviews("false"); break;
       case "noSku":       setHasSku("false"); break;
       case "inStock":     setStatusIds([5]); break;
@@ -4109,6 +4145,20 @@ export function ProductsCatalog() {
   const categoryOptions = data?.availableCategories ?? [];
   const brandOptions = data?.availableBrands
     ?? (filters?.brands || []).map((b) => ({ id: b.id, name: b.name, count: 0 }));
+  const missingAttrOptions = data?.availableMissingRequiredAttrs ?? [];
+  const selectedMissingAttrOptions = missingAttrIds
+    .map((id) => missingAttrOptions.find((a) => a.id === id) ?? { id, name: `#${id}`, count: 0 })
+    .filter(Boolean);
+
+  const addMissingAttrFilter = (idRaw: string) => {
+    const id = Number(idRaw);
+    if (!Number.isFinite(id)) return;
+    setHasAttrs("missing");
+    setMissingAttrIds((cur) => cur.includes(id) || cur.length >= 10 ? cur : [...cur, id]);
+  };
+  const removeMissingAttrFilter = (id: number) => {
+    setMissingAttrIds((cur) => cur.filter((x) => x !== id));
+  };
 
   // Status-id → human name (used by the "Зміна" column in changed7 tab)
   const statusName = useCallback((id: number) => {
@@ -4266,7 +4316,7 @@ export function ProductsCatalog() {
               ["new7",     "Нові товари"],
               ["changed7", "Зміна статусу товара"],
               ["noImg",    "Без фото"],
-              ["noAttr",   "Без атрибутів"],
+              ["noAttr",   "Незаповнені обов'язкові атрибути"],
               ["noRev",    "Без відгуків"],
             ] as [PresetTab, string][]).map(([t, l]) => (
               <button key={t} onClick={() => setTab(t)}
@@ -4409,14 +4459,47 @@ export function ProductsCatalog() {
             <option value="lt5">Менше 5</option>
             <option value="true">Тільки з фото</option>
           </select>
-          <select value={hasAttrs} onChange={(e) => setHasAttrs(e.target.value as typeof hasAttrs)} style={selStyle}>
+          <select
+            value={hasAttrs}
+            onChange={(e) => {
+              const value = e.target.value as typeof hasAttrs;
+              setHasAttrs(value);
+              if (value === "") setMissingAttrIds([]);
+            }}
+            style={selStyle}
+          >
             <option value="">Атриб.: всі</option>
-            <option value="false">Без атриб. (0)</option>
-            <option value="lt2">Менше 2</option>
-            <option value="lt3">Менше 3</option>
-            <option value="lt5">Менше 5</option>
-            <option value="true">З атриб.</option>
+            <option value="missing">Незаповнені обов&apos;язкові</option>
           </select>
+          <select
+            value=""
+            onChange={(e) => addMissingAttrFilter(e.target.value)}
+            disabled={missingAttrOptions.length === 0 || missingAttrIds.length >= 10}
+            style={{ ...selStyle, maxWidth: 260, opacity: missingAttrOptions.length === 0 || missingAttrIds.length >= 10 ? 0.55 : 1 }}
+            title="Можна вибрати до 10 незаповнених обов'язкових атрибутів"
+          >
+            <option value="">Атрибут: всі</option>
+            {missingAttrOptions
+              .filter((a) => !missingAttrIds.includes(a.id))
+              .map((a) => (
+                <option key={a.id} value={a.id}>{a.name} ({a.count})</option>
+              ))}
+          </select>
+          {selectedMissingAttrOptions.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {selectedMissingAttrOptions.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => removeMissingAttrFilter(a.id)}
+                  className="text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0"
+                  style={{ background: "#d1343811", color: "#d13438" }}
+                  title="Прибрати атрибут з фільтра"
+                >
+                  {a.name} ✕
+                </button>
+              ))}
+            </div>
+          )}
           <select value={hasReviews} onChange={(e) => setHasReviews(e.target.value as typeof hasReviews)} style={selStyle}>
             <option value="">Відгуки: всі</option>
             <option value="true">З відгук.</option>
@@ -4427,7 +4510,7 @@ export function ProductsCatalog() {
             <option value="true">З артикулом</option>
             <option value="false">Без артикулу</option>
           </select>
-          {(search || categoryId !== "" || brandId !== "" || !isDefaultStatusFilter || minPrice != null || maxPrice != null || minStock != null || maxStock != null || hasImages || hasAttrs || hasReviews || hasSku || tab !== "all") && (
+          {(search || categoryId !== "" || brandId !== "" || !isDefaultStatusFilter || minPrice != null || maxPrice != null || minStock != null || maxStock != null || hasImages || hasAttrs || missingAttrIds.length > 0 || hasReviews || hasSku || tab !== "all") && (
             <button onClick={resetFilters} className="text-xs px-2 py-1 rounded-lg cursor-pointer border-0"
               style={{ background: "#d1343811", color: "#d13438" }}>✕ Скинути</button>
           )}
@@ -4498,7 +4581,7 @@ export function ProductsCatalog() {
                       ...(tab === "changed7" ? [["Було → стало", null]] as [string, string | null][] : []),
                       ["Фото", "imagesCount"],
                       ["Відгук.", "reviewsCount"],
-                      ["Атриб.", "attributesCount"],
+                      ["Атриб.", "missingRequiredAttrsCount"],
                       // In the "Зміна статусу" preset the "first seen" column is
                       // replaced with the date of the *previous* status change —
                       // so you can see the chain of transitions, not when we
@@ -4632,7 +4715,21 @@ export function ProductsCatalog() {
                         )}
                         <td className="px-2 py-1.5 text-center font-semibold" style={{ color: p.imagesCount === 0 ? "#d13438" : p.imagesCount >= 3 ? "#107c10" : "#e66c37" }}>{p.imagesCount}</td>
                         <td className="px-2 py-1.5 text-center font-semibold" style={{ color: p.reviewsCount === 0 ? "var(--text-dim)" : "#107c10" }}>{p.reviewsCount}</td>
-                        <td className="px-2 py-1.5 text-center font-semibold" style={{ color: p.attributesCount === 0 ? "#d13438" : p.attributesCount >= 5 ? "#107c10" : "#e66c37" }}>{p.attributesCount}</td>
+                        <td className="px-2 py-1.5 text-center font-semibold">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const names = p.missingRequiredAttrNames ?? [];
+                              if (names.length > 0) setMissingAttrsPopup({ productName: p.name, names });
+                            }}
+                            disabled={(p.missingRequiredAttrsCount ?? 0) === 0}
+                            className="cursor-pointer disabled:cursor-default border-0 bg-transparent text-xs font-semibold tabular-nums"
+                            style={{ color: (p.missingRequiredAttrsCount ?? 0) === 0 ? "#107c10" : "#d13438" }}
+                            title={(p.missingRequiredAttrsCount ?? 0) === 0 ? "Усі обов'язкові атрибути заповнені" : "Показати незаповнені обов'язкові атрибути"}
+                          >
+                            {p.missingRequiredAttrsCount ?? 0}
+                          </button>
+                        </td>
                         {tab === "changed7" ? (() => {
                           // Previous-change date: take statusHistory[1] if available, else firstSeenAt.
                           // statusHistory is ordered newest-first, so [0] is the latest change (== statusChangedAt)
@@ -4735,6 +4832,31 @@ export function ProductsCatalog() {
           onSynced={() => { loadList(); loadSnapshots(); }}
           onOpenRequired={() => setOpenReq(true)}
         />
+      )}
+
+      {missingAttrsPopup && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.35)" }} onClick={() => setMissingAttrsPopup(null)}>
+          <div
+            className="rounded-xl p-4 w-full max-w-sm shadow-xl"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Незаповнені обов&apos;язкові атрибути</div>
+                <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: "var(--text-dim)" }}>{missingAttrsPopup.productName}</div>
+              </div>
+              <button onClick={() => setMissingAttrsPopup(null)} className="px-2 py-1 rounded-lg text-xs cursor-pointer border-0" style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}>✕</button>
+            </div>
+            <div className="grid gap-1.5">
+              {missingAttrsPopup.names.map((name) => (
+                <div key={name} className="text-xs px-2 py-1.5 rounded-lg" style={{ background: "#d1343811", color: "#d13438" }}>
+                  {name}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Clipboard toast — auto-dismisses in 1.8s via useEffect */}
