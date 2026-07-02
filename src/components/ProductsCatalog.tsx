@@ -86,6 +86,13 @@ type SavedBulkSet = BulkFilter & { id: string; name: string; createdAt: number; 
 // UI-only pseudo-status id for archived (deleted) products. Mirror of the
 // constant in /api/products/route.ts.
 const ARCHIVE_STATUS_ID = -1;
+const DEFAULT_STATUSES: ApiStatus[] = [
+  { id: 1, name: "Немає в наявності" },
+  { id: 2, name: "Очікується поставка" },
+  { id: 3, name: "Під замовлення" },
+  { id: 4, name: "Знято з виробництва" },
+  { id: 5, name: "В наявності" },
+];
 const BULK_SETS_STORAGE_KEY = "agromat.analytics.bulkSets.v1";
 const MAX_GET_QUERY_LENGTH = 1800;
 
@@ -168,6 +175,9 @@ function shiftDateInput(value: string, days: number): string {
   const date = new Date(`${value}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+function todayKyivInput(): string {
+  return kyivDateInput(new Date().toISOString());
 }
 function statusColor(id: number): string {
   switch (id) {
@@ -2404,7 +2414,7 @@ function ChangesTimelineView() {
           title="Показати всі статуси">
           Усі статуси
         </button>
-        {(filters?.statuses || []).map((s) => {
+        {(filters?.statuses?.length ? filters.statuses : DEFAULT_STATUSES).map((s) => {
           const active = statusIds.includes(s.id);
           const color = statusColor(s.id);
           return (
@@ -3816,6 +3826,8 @@ export function ProductsCatalog() {
   const [maxPrice, setMaxPrice] = useState<number | null>(null);
   const [minStock, setMinStock] = useState<number | null>(null);
   const [maxStock, setMaxStock] = useState<number | null>(null);
+  const [firstSeenFrom, setFirstSeenFrom] = useState("");
+  const [firstSeenTo, setFirstSeenTo] = useState("");
   // Bulk filter — null when not active. Stores the raw text too, so reopening
   // the modal pre-fills the textarea for further editing.
   const [bulk, setBulk] = useState<BulkFilter | null>(null);
@@ -3905,7 +3917,7 @@ export function ProductsCatalog() {
   }, [persistBulkSets, savedBulkSets]);
 
   // Reset to page 1 when any filter changes
-  useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
+  useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, firstSeenFrom, firstSeenTo, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
 
   const buildQuery = useCallback((): string => {
     const p = new URLSearchParams();
@@ -3919,6 +3931,8 @@ export function ProductsCatalog() {
     if (maxPrice != null) p.set("max_price", String(maxPrice));
     if (minStock != null) p.set("min_stock", String(minStock));
     if (maxStock != null) p.set("max_stock", String(maxStock));
+    if (firstSeenFrom) p.set("first_seen_from", firstSeenFrom);
+    if (firstSeenTo) p.set("first_seen_to", firstSeenTo);
     if (bulk && bulk.ids.length > 0) {
       p.set("ids_in", bulk.ids.join(","));
     }
@@ -3946,7 +3960,7 @@ export function ProductsCatalog() {
     if (tab === "noAttr") p.set("missing_required_attrs", "true");
     if (tab === "noRev") p.set("has_reviews", "false");
     return p.toString();
-  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, catalogStatsFrom, catalogStatsTo, sortBy, sortDir, tab, asOf]);
+  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, firstSeenFrom, firstSeenTo, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, catalogStatsFrom, catalogStatsTo, sortBy, sortDir, tab, asOf]);
 
   const loadList = useCallback(() => {
     setLoading(true); setError("");
@@ -3981,6 +3995,7 @@ export function ProductsCatalog() {
     setSearch(""); setCategoryId(""); setBrandId(""); setStatusIds([5, 3]);
     setMinPrice(null); setMaxPrice(null);
     setMinStock(null); setMaxStock(null);
+    setFirstSeenFrom(""); setFirstSeenTo("");
     setBulk(null);
     setHasImages(""); setHasAttrs(""); setMissingAttrIds([]); setHasReviews(""); setHasSku("");
     setSortBy("firstSeenAt"); setSortDir("desc"); setTab("all");
@@ -4118,8 +4133,9 @@ export function ProductsCatalog() {
   // Resets unrelated filters so the drill-down is precise (no leftover bias).
   const applyCategoryFilter = useCallback((catId: number, preset: SummaryPreset) => {
     setSearch(""); setBrandId(""); setMinPrice(null); setMaxPrice(null);
+    setFirstSeenFrom(""); setFirstSeenTo("");
     setCategoryId(catId);
-    setHasImages(""); setHasAttrs(""); setHasReviews(""); setHasSku("");
+    setHasImages(""); setHasAttrs(""); setMissingAttrIds([]); setHasReviews(""); setHasSku("");
     setStatusIds([]);  // start from blank so preset-specific status can be set
     setTab("all");
     switch (preset) {
@@ -4145,6 +4161,7 @@ export function ProductsCatalog() {
   const categoryOptions = data?.availableCategories ?? [];
   const brandOptions = data?.availableBrands
     ?? (filters?.brands || []).map((b) => ({ id: b.id, name: b.name, count: 0 }));
+  const statusOptions = filters?.statuses?.length ? filters.statuses : DEFAULT_STATUSES;
   const missingAttrOptions = data?.availableMissingRequiredAttrs ?? [];
   const selectedMissingAttrOptions = missingAttrIds
     .map((id) => missingAttrOptions.find((a) => a.id === id) ?? { id, name: `#${id}`, count: 0 })
@@ -4159,11 +4176,24 @@ export function ProductsCatalog() {
   const removeMissingAttrFilter = (id: number) => {
     setMissingAttrIds((cur) => cur.filter((x) => x !== id));
   };
+  const setFirstSeenLastDays = (days: number) => {
+    const to = todayKyivInput();
+    setFirstSeenFrom(shiftDateInput(to, -(days - 1)));
+    setFirstSeenTo(to);
+  };
+  const changeFirstSeenFrom = (value: string) => {
+    setFirstSeenFrom(value);
+    if (value && firstSeenTo && value > firstSeenTo) setFirstSeenTo(value);
+  };
+  const changeFirstSeenTo = (value: string) => {
+    setFirstSeenTo(value);
+    if (value && firstSeenFrom && value < firstSeenFrom) setFirstSeenFrom(value);
+  };
 
   // Status-id → human name (used by the "Зміна" column in changed7 tab)
   const statusName = useCallback((id: number) => {
-    return filters?.statuses.find((s) => s.id === id)?.name ?? `Статус #${id}`;
-  }, [filters]);
+    return statusOptions.find((s) => s.id === id)?.name ?? `Статус #${id}`;
+  }, [statusOptions]);
 
   const selStyle: React.CSSProperties = {
     background: "var(--bg-input)",
@@ -4436,11 +4466,56 @@ export function ProductsCatalog() {
             count={data?.total ?? 0}
             onChange={(mn, mx) => { setMinStock(mn); setMaxStock(mx); }}
           />
+          <div
+            className="flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1"
+            style={{ background: "var(--bg-input)", border: `1px solid ${firstSeenFrom || firstSeenTo ? "#118dff" : "var(--border2)"}` }}
+          >
+            <span className="text-xs font-semibold whitespace-nowrap" style={{ color: "var(--text-dim)" }}>Вперше:</span>
+            <button
+              type="button"
+              onClick={() => setFirstSeenLastDays(7)}
+              className="text-[11px] px-2 py-0.5 rounded cursor-pointer border-0 whitespace-nowrap"
+              style={{ background: firstSeenFrom || firstSeenTo ? "#118dff22" : "transparent", color: firstSeenFrom || firstSeenTo ? "#118dff" : "var(--text-mid)" }}
+              title="Товари, які вперше з'явились у нас за останні 7 календарних днів"
+            >
+              7 днів
+            </button>
+            <input
+              type="date"
+              value={firstSeenFrom}
+              max={firstSeenTo || undefined}
+              onChange={(e) => changeFirstSeenFrom(e.target.value)}
+              className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold border outline-none"
+              style={{ background: "var(--bg-card)", color: "var(--text)", borderColor: "var(--border2)" }}
+              title="Вперше у нас: дата від"
+            />
+            <span className="text-[11px]" style={{ color: "var(--text-dim)" }}>-</span>
+            <input
+              type="date"
+              value={firstSeenTo}
+              min={firstSeenFrom || undefined}
+              onChange={(e) => changeFirstSeenTo(e.target.value)}
+              className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold border outline-none"
+              style={{ background: "var(--bg-card)", color: "var(--text)", borderColor: "var(--border2)" }}
+              title="Вперше у нас: дата до"
+            />
+            {(firstSeenFrom || firstSeenTo) && (
+              <button
+                type="button"
+                onClick={() => { setFirstSeenFrom(""); setFirstSeenTo(""); }}
+                className="text-[11px] px-1.5 py-0.5 rounded cursor-pointer border-0"
+                style={{ background: "#d1343811", color: "#d13438" }}
+                title="Скинути фільтр по даті"
+              >
+                ✕
+              </button>
+            )}
+          </div>
           {/* Status — multi-select chips. ARCHIVE_STATUS_ID (-1) is a UI-only
               pseudo-status that maps to API field `deleted=true`. */}
           <div className="flex items-center gap-1 flex-wrap rounded-lg p-0.5"
             style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
-            {[...(filters?.statuses || []), { id: ARCHIVE_STATUS_ID, name: "Архів" }].map((s) => {
+            {[...statusOptions, { id: ARCHIVE_STATUS_ID, name: "Архів" }].map((s) => {
               const active = statusIds.includes(s.id);
               const color = s.id === ARCHIVE_STATUS_ID ? "#a19f9d" : statusColor(s.id);
               return (
@@ -4510,7 +4585,7 @@ export function ProductsCatalog() {
             <option value="true">З артикулом</option>
             <option value="false">Без артикулу</option>
           </select>
-          {(search || categoryId !== "" || brandId !== "" || !isDefaultStatusFilter || minPrice != null || maxPrice != null || minStock != null || maxStock != null || hasImages || hasAttrs || missingAttrIds.length > 0 || hasReviews || hasSku || tab !== "all") && (
+          {(search || categoryId !== "" || brandId !== "" || !isDefaultStatusFilter || minPrice != null || maxPrice != null || minStock != null || maxStock != null || firstSeenFrom || firstSeenTo || hasImages || hasAttrs || missingAttrIds.length > 0 || hasReviews || hasSku || tab !== "all") && (
             <button onClick={resetFilters} className="text-xs px-2 py-1 rounded-lg cursor-pointer border-0"
               style={{ background: "#d1343811", color: "#d13438" }}>✕ Скинути</button>
           )}

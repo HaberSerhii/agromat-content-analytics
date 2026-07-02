@@ -122,6 +122,10 @@ async function productsResponse(q: URLSearchParams) {
   const onlyNewDays = parseInt(q.get("only_new_days") || "0", 10);
   const onlyStatusChangedDays = parseInt(q.get("only_status_changed_days") || "0", 10);
   const onlyNewSinceSync = q.get("only_new_since_sync") === "true";
+  const firstSeenFrom = q.get("first_seen_from");
+  const firstSeenTo = q.get("first_seen_to") || firstSeenFrom;
+  const firstSeenFromMs = parseKyivCalendarDate(firstSeenFrom);
+  const firstSeenToMs = parseKyivCalendarDate(firstSeenTo, true);
   const minPrice = q.get("min_price") ? parseFloat(q.get("min_price")!) : null;
   const maxPrice = q.get("max_price") ? parseFloat(q.get("max_price")!) : null;
   const minStock = q.get("min_stock") ? parseInt(q.get("min_stock")!, 10) : null;
@@ -238,6 +242,12 @@ async function productsResponse(q: URLSearchParams) {
     if (deletedOnly === true && !p.deleted) return false;
     if (deletedOnly === false && p.deleted) return false;
     if (newCutoff && p.firstSeenAt < newCutoff) return false;
+    if (firstSeenFromMs != null || firstSeenToMs != null) {
+      const firstSeenMs = Date.parse(p.firstSeenAt);
+      if (!Number.isFinite(firstSeenMs)) return false;
+      if (firstSeenFromMs != null && firstSeenMs < firstSeenFromMs) return false;
+      if (firstSeenToMs != null && firstSeenMs > firstSeenToMs) return false;
+    }
     if (newSinceSyncFromMs != null && newSinceSyncToMs != null) {
       const firstSeenMs = Date.parse(p.firstSeenAt);
       if (!Number.isFinite(firstSeenMs) || firstSeenMs < newSinceSyncFromMs || firstSeenMs > newSinceSyncToMs) return false;
