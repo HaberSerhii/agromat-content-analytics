@@ -424,6 +424,10 @@ function isCanceled(state: string) {
   return state.toLocaleLowerCase("uk").includes("скас");
 }
 
+function isShipmentAllowed(state: string) {
+  return state.toLocaleLowerCase("uk") === "відвантаження дозволено";
+}
+
 function isShipped(row: SalesRow) {
   return Boolean(row.shippedDate) && row.state.toLocaleLowerCase("uk").includes("повністю відвантаж");
 }
@@ -775,15 +779,17 @@ function buildDataset(
     const goodsCodes = splitList(row.goodsCodes);
     if (matchesProductCodes(goodsCodes, productCodeSet)) {
       const statusDate = row.shippedDate || row.createdDate;
-      if (isWithinOptionalFilter(statusDate, filter)) addState(availableStates, row.state, row.docsSum);
-      if (isWithinOptionalFilter(statusDate, filter)) addState(states, row.state, row.docsSum);
+      const statusIgnoresDate = isShipmentAllowed(row.state);
+      if (statusIgnoresDate || isWithinOptionalFilter(statusDate, filter)) addState(availableStates, row.state, row.docsSum);
+      if (statusIgnoresDate || isWithinOptionalFilter(statusDate, filter)) addState(states, row.state, row.docsSum);
     }
 
     const analysisDate = row.shippedDate || row.createdDate;
+    const selectedStatusIgnoresDate = statusSet.has("відвантаження дозволено") && isShipmentAllowed(row.state);
     if (
       matchesProductCodes(goodsCodes, productCodeSet)
-      && isWithinOptionalFilter(analysisDate, filter)
       && (statusSet.size === 0 || statusSet.has(row.state || "Без статусу"))
+      && (isWithinOptionalFilter(analysisDate, filter) || selectedStatusIgnoresDate)
     ) {
       filteredRows.push(row);
       filteredDocs += 1;
