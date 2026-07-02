@@ -40,3 +40,7 @@ next-env.d.ts
 
 # server-side disk data: live cache + daily product snapshots populated by sync
 /data/
+
+# generated reports, exports, workbooks, parser snapshots, and local output deps
+/output/
+/outputs/
