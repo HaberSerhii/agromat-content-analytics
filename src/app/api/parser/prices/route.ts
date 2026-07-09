@@ -65,6 +65,8 @@ interface CompetitorCell {
 
 interface PricesRow {
   productId: number;
+  code: number | null;
+  goodsRef: number | null;
   sku: string | null;
   name: string;
   brand: string | null;
@@ -502,6 +504,8 @@ async function pricesResponse(q: URLSearchParams) {
       }
       return {
         productId: p.id,
+        code: p.code,
+        goodsRef: p.goods_ref,
         sku: p.sku,
         name: p.name,
         brand: p.brand,
