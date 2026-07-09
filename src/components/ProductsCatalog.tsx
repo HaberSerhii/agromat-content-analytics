@@ -2680,7 +2680,6 @@ interface PricesResponse {
 }
 
 type ParserSegment = "all" | "sanitary" | "tile";
-type PricesReportScope = "full" | "segmented";
 
 // Mass-reparse job status returned by /api/parser/job/<id>. Mirrors Flask's
 // _jobs payload shape from Agromat_Parcer/app.py. On completion `result`
@@ -2726,76 +2725,11 @@ const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
 
 const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
 const LOCAL_RUNNER_URL = "http://127.0.0.1:8765";
-const PRICES_EXPORT_PAGE_SIZE = 200;
 
 function canonicalParserAdapter(adapter: string): string {
   if (adapter === "plitka.ua") return "plitka";
   if (adapter === "leoceramika.com" || adapter === "leo-ceramika") return "leoceramika";
   return adapter;
-}
-
-async function downloadCompetitorPricesXlsx(
-  rows: PricesRow[],
-  competitors: PricesCompetitor[],
-  filename: string,
-) {
-  const XLSX = await import("xlsx");
-  const headers = [
-    "ID товара",
-    "Код товара",
-    "goods_ref",
-    "Артикул",
-    "Назва",
-    "Категорія",
-    "Бренд",
-    "Статус",
-    "Наша ціна",
-    ...competitors.map((competitor) => competitor.name),
-  ];
-  const dataRows = rows.map((row) => [
-    row.productId,
-    row.code ?? "",
-    row.goodsRef ?? "",
-    row.sku ?? "",
-    row.name,
-    row.category ?? "",
-    row.brand ?? "",
-    row.status ?? "",
-    row.ourPrice ?? "",
-    ...competitors.map((competitor) => row.byCompetitor[competitor.id]?.price ?? ""),
-  ]);
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-  ws["!cols"] = [
-    { wch: 10 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 18 },
-    { wch: 54 },
-    { wch: 28 },
-    { wch: 18 },
-    { wch: 18 },
-    { wch: 12 },
-    ...competitors.map(() => ({ wch: 16 })),
-  ];
-
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-    const source = rows[rowIndex];
-    if (source.ourUrl) {
-      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: 8 });
-      if (ws[address]) ws[address].l = { Target: source.ourUrl, Tooltip: "Відкрити товар Agromat" };
-    }
-    competitors.forEach((competitor, competitorIndex) => {
-      const cell = source.byCompetitor[competitor.id];
-      if (!cell?.url || cell.price == null) return;
-      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: 9 + competitorIndex });
-      if (ws[address]) ws[address].l = { Target: cell.url, Tooltip: `Відкрити ${competitor.name}` };
-    });
-  }
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Ціни конкурентів");
-  const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
-  triggerDownload(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
 }
 
 function CompetitorPricesView({
@@ -2822,7 +2756,6 @@ function CompetitorPricesView({
   // Mass-reparse job state — null when no job running.
   const [job, setJob] = useState<ParserJob | null>(null);
   const [bulkStarting, setBulkStarting] = useState(false);
-  const [reportBusy, setReportBusy] = useState<PricesReportScope | null>(null);
 
   useEffect(() => {
     const id = window.setTimeout(() => setSearchDebounced(search), 300);
@@ -2831,16 +2764,14 @@ function CompetitorPricesView({
 
   useEffect(() => { setPage(1); }, [searchDebounced, bulk, segment]);
 
-  const buildPricesQuery = useCallback((nextPage: number, nextLimit: number, scope: PricesReportScope = "segmented") => {
+  const buildPricesQuery = useCallback((nextPage: number, nextLimit: number) => {
     const p = new URLSearchParams();
     p.set("page", String(nextPage));
     p.set("limit", String(nextLimit));
     if (data?.snapshotDate) p.set("snapshot_date", data.snapshotDate);
-    if (scope === "segmented") {
-      if (searchDebounced) p.set("search", searchDebounced);
-      if (bulk && bulk.ids.length > 0) p.set("ids_in", bulk.ids.join(","));
-      if (segment !== "all") p.set("segment", segment);
-    }
+    if (searchDebounced) p.set("search", searchDebounced);
+    if (bulk && bulk.ids.length > 0) p.set("ids_in", bulk.ids.join(","));
+    if (segment !== "all") p.set("segment", segment);
     return p;
   }, [bulk, data?.snapshotDate, searchDebounced, segment]);
 
@@ -2854,39 +2785,6 @@ function CompetitorPricesView({
   }, [buildPricesQuery, page, limit]);
 
   useEffect(() => { load(); }, [load]);
-
-  const exportPricesReport = useCallback(async (scope: PricesReportScope) => {
-    setReportBusy(scope);
-    setError("");
-    try {
-      const firstQuery = buildPricesQuery(1, PRICES_EXPORT_PAGE_SIZE, scope);
-      const firstResp = await fetchParserPricesQuery(firstQuery.toString(), { cache: "no-store" });
-      if (!firstResp.ok) throw new Error(`HTTP ${firstResp.status}`);
-      const first = (await firstResp.json()) as PricesResponse;
-      const rows = [...first.rows];
-      const totalPages = Math.max(1, Math.ceil(first.total / PRICES_EXPORT_PAGE_SIZE));
-
-      for (let nextPage = 2; nextPage <= totalPages; nextPage++) {
-        const query = buildPricesQuery(nextPage, PRICES_EXPORT_PAGE_SIZE, scope);
-        const resp = await fetchParserPricesQuery(query.toString(), { cache: "no-store" });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const pageData = (await resp.json()) as PricesResponse;
-        rows.push(...pageData.rows);
-      }
-
-      const stamp = new Date().toISOString().slice(0, 10);
-      const datePart = first.snapshotDate ? `-${first.snapshotDate}` : "";
-      const filePrefix = scope === "full" ? "competitor-prices-full" : "competitor-prices-segmented";
-      await downloadCompetitorPricesXlsx(rows, first.competitors, `${filePrefix}${datePart}-${stamp}.xlsx`);
-      onToast(`${scope === "full" ? "Повний" : "Сегментований"} Excel: ${rows.length.toLocaleString("uk-UA")} товарів`);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "невідомо";
-      setError(`Не вдалось сформувати Excel: ${message}`);
-      throw e;
-    } finally {
-      setReportBusy(null);
-    }
-  }, [buildPricesQuery, onToast]);
 
   const reparse = useCallback(async (productId: number, competitorId: number) => {
     const key = `${productId}:${competitorId}`;
@@ -3078,26 +2976,6 @@ function CompetitorPricesView({
             Знімок цін за <b style={{ color: "var(--text-mid)" }}>{data.snapshotDate}</b>
           </span>
         )}
-        <div className="flex items-center gap-1 flex-wrap">
-          <ExportPill
-            label="Повний звіт"
-            color="#0b7285"
-            bg="rgba(11,114,133,0.12)"
-            busy={reportBusy != null}
-            onClick={() => exportPricesReport("full")}
-            title="Excel: всі товари з парсерного знімка, всі сегменти й усі конкуренти"
-            successLabel="✓ Завантажено"
-          />
-          <ExportPill
-            label="Сегментований звіт"
-            color="#3730a3"
-            bg="rgba(99,102,241,0.18)"
-            busy={reportBusy != null}
-            onClick={() => exportPricesReport("segmented")}
-            title="Excel: тільки поточний пошук, сегмент і набір товарів"
-            successLabel="✓ Завантажено"
-          />
-        </div>
         {/* One mass-reparse button per competitor, derived from the DB list so
             new competitors show up automatically. Under each: when its prices
             were last refreshed + how many changed vs the previous run. Only one
