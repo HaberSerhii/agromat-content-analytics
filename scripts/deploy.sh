@@ -116,6 +116,10 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     echo "CRON_TZ=Europe/Kyiv" >> "$TMP_CRON"
   fi
   echo "$AGROMAT_PRICE_CRON_LINE" >> "$TMP_CRON"
+  # LeoCeramika + Plitka.ua now run at the end of the parser's morning chain.
+  # Remove the old evening cron to avoid a duplicate second refresh.
+  sed -i.bak '/run-simple-price-auto\.sh/d' "$TMP_CRON"
+  rm -f "$TMP_CRON.bak"
   crontab "$TMP_CRON"
   rm -f "$TMP_CRON"
   echo "  cron: $AGROMAT_PRICE_CRON_LINE"

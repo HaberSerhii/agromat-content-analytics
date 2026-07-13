@@ -25,8 +25,8 @@ fi
 trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 {
-  printf '\n[%s] Starting Plitka.ua + LeoCeramika refresh\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
-  node scripts/simple-price-worker.mjs --adapter plitka
+  printf '\n[%s] Starting LeoCeramika + Plitka.ua refresh\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
   node scripts/simple-price-worker.mjs --adapter leoceramika
-  printf '[%s] Finished Plitka.ua + LeoCeramika refresh\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  node scripts/simple-price-worker.mjs --adapter plitka
+  printf '[%s] Finished LeoCeramika + Plitka.ua refresh\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
 } >>"$LOG_FILE" 2>&1

@@ -2723,6 +2723,8 @@ const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
   leoceramika:  { color: "#2f9e44", title: "Швидкий HTTP-парсинг leoceramika.com з meta price / #site_price" },
   kranok:       { color: "#b45309", title: "Live-оновлення цін Kranok за підтвердженими URL" },
   sanhub:       { color: "#0369a1", title: "Live-оновлення цін Sanhub за підтвердженими URL" },
+  imperiia:     { color: "#7c3aed", title: "Live-оновлення цін Імперії сантехніки за підтвердженими URL" },
+  rozetka:      { color: "#00a046", title: "Live-оновлення цін Rozetka за підтвердженими URL" },
 };
 
 const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
