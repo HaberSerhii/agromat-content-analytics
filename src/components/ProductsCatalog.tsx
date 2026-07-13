@@ -2721,6 +2721,8 @@ const COMPETITOR_BTN_META: Record<string, { color: string; title?: string }> = {
   vannaja:      { color: "#9c36b5", title: "Локальний браузерний запуск через Agromat local runner" },
   plitka:       { color: "#0b7285", title: "Швидкий HTTP-парсинг plitka.ua з JSON-LD Product/offers" },
   leoceramika:  { color: "#2f9e44", title: "Швидкий HTTP-парсинг leoceramika.com з meta price / #site_price" },
+  kranok:       { color: "#b45309", title: "Live-оновлення цін Kranok за підтвердженими URL" },
+  sanhub:       { color: "#0369a1", title: "Live-оновлення цін Sanhub за підтвердженими URL" },
 };
 
 const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
@@ -2775,9 +2777,11 @@ function CompetitorPricesView({
     return p;
   }, [bulk, data?.snapshotDate, searchDebounced, segment]);
 
-  const load = useCallback(() => {
+  const load = useCallback((forceRefresh = false) => {
     setLoading(true); setError("");
-    fetchParserPricesQuery(buildPricesQuery(page, limit).toString())
+    const query = buildPricesQuery(page, limit);
+    if (forceRefresh) query.set("refresh", "1");
+    fetchParserPricesQuery(query.toString(), forceRefresh ? { cache: "no-store" } : undefined)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: PricesResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
@@ -2909,7 +2913,7 @@ function CompetitorPricesView({
         setJob(j);
         if (j.status === "done" || j.status === "error") {
           window.clearInterval(id);
-          if (j.status === "done") load(); // Reload table to show fresh prices
+          if (j.status === "done") load(true); // Reload table and counters from fresh DB data
         }
       } catch { /* keep polling */ }
     }, 5_000);
@@ -2980,7 +2984,7 @@ function CompetitorPricesView({
             new competitors show up automatically. Under each: when its prices
             were last refreshed + how many changed vs the previous run. Only one
             Flask job runs at a time (semaphored in app.py), so all are disabled
-            while ANY job is in flight. The daily 05:00 auto-run covers every
+            while ANY job is in flight. The daily 03:00 Europe/Kyiv auto-run covers every
             competitor except Сантехшара/Vannaja, which run on the user's
             laptop through Agromat local runner. */}
         <div className="ml-auto flex gap-1 flex-wrap">
@@ -3002,7 +3006,7 @@ function CompetitorPricesView({
                 <span
                   className="text-[9px] text-center tabular-nums whitespace-nowrap leading-tight"
                   style={{ color: "var(--text-dim)" }}
-                  title="Час останнього оновлення цін + скільки товарів змінили ціну порівняно з попереднім прогоном (автопрогін щодня о 05:00, окрім Сантехшари)">
+                  title="Час останнього оновлення цін + скільки товарів змінили ціну порівняно з попереднім прогоном (автопрогін щодня о 03:00 за Києвом, окрім Сантехшари/Vannaja)">
                   {ts ? `онов. ${fmtDateTime(ts)}` : "— ще не було"}
                   {changed != null && changed > 0 && (
                     <><br /><b style={{ color: "#d83b01" }}>змінено цін: {changed}</b></>
@@ -3015,7 +3019,7 @@ function CompetitorPricesView({
             );
           })}
         </div>
-        <button onClick={load}
+        <button onClick={() => load(true)}
           className="px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border"
           style={{ background: "var(--bg-input)", color: "var(--text-mid)", borderColor: "var(--border2)" }}
           title="Перезавантажити таблицю з БД">↻ Оновити</button>

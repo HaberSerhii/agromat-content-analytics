@@ -16,6 +16,8 @@ const ID_CHUNK = 500;
 const IDENTIFIER_CHUNK = 250;
 const CACHE_TZ = "Europe/Kyiv";
 const CACHE_MAX_ENTRIES = 200;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const HIDDEN_COMPETITOR_ADAPTERS = new Set(["santechshara"]);
 
 type CacheableBody = Record<string, unknown>;
 
@@ -388,11 +390,13 @@ async function pricesResponse(q: URLSearchParams) {
     .select("id, name, adapter_name")
     .order("id", { ascending: true });
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
-  const competitors = (competitorsRaw || []) as Competitor[];
+  const competitors = ((competitorsRaw || []) as Competitor[]).filter(
+    (competitor) => !HIDDEN_COMPETITOR_ADAPTERS.has(competitor.adapter_name.trim().toLowerCase()),
+  );
 
   // 1b) Last price-write time per competitor — the freshest `created_at` across
   //     all of that competitor's snapshots. Surfaces "when were these prices last
-  //     refreshed" in the UI (incl. the daily 05:00 auto-run). One indexed
+  //     refreshed" in the UI (incl. the daily 03:00 Europe/Kyiv auto-run). One indexed
   //     order-by-limit-1 query per competitor (~3 round trips). Best-effort:
   //     a failure just yields null, never blocks the table.
   //     Same query also yields the latest snapshot_date, which seeds the
@@ -537,12 +541,15 @@ async function pricesResponse(q: URLSearchParams) {
 
 async function cachedPricesResponse(q: URLSearchParams) {
   const now = Date.now();
-  const key = canonicalQueryKey(q);
+  const forceRefresh = q.get("refresh") === "1";
+  const canonicalQuery = new URLSearchParams(q);
+  canonicalQuery.delete("refresh");
+  const key = canonicalQueryKey(canonicalQuery);
   const cache = parserPricesCache();
   pruneCache(cache, now);
 
   const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) {
+  if (!forceRefresh && cached && cached.expiresAt > now) {
     cache.delete(key);
     cache.set(key, cached);
     return NextResponse.json(cached.body, { headers: cacheHeaders(cached, "HIT") });
@@ -553,13 +560,13 @@ async function cachedPricesResponse(q: URLSearchParams) {
   if (pending) return pending;
 
   const work = (async () => {
-    const response = await pricesResponse(q);
+    const response = await pricesResponse(canonicalQuery);
     if (response.status !== 200) return response;
 
     const body = await response.clone().json() as CacheableBody;
     const entry: CacheEntry = {
       body,
-      expiresAt: nextKyivMidnightMs(),
+      expiresAt: Math.min(nextKyivMidnightMs(), Date.now() + CACHE_TTL_MS),
       storedAt: Date.now(),
     };
     cache.set(key, entry);
