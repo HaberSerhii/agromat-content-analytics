@@ -149,8 +149,14 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     if command -v systemctl >/dev/null 2>&1; then
       PARCER_SERVICES=$(grep -Rsl -- "$PARCER_DIR" /etc/systemd/system /lib/systemd/system 2>/dev/null \
         | xargs -r -n1 basename \
+        | grep '\.service$' \
         | sort -u || true)
       for PARCER_SERVICE in $PARCER_SERVICES; do
+        PARCER_SERVICE_TYPE=$(systemctl show "$PARCER_SERVICE" -p Type --value 2>/dev/null || true)
+        if [ "$PARCER_SERVICE_TYPE" = "oneshot" ]; then
+          echo "  parser scheduled job not restarted: $PARCER_SERVICE"
+          continue
+        fi
         if timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
           echo "  parser restarted via systemd unit match: $PARCER_SERVICE"
           PARCER_RESTARTED=1
@@ -165,7 +171,8 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
         cwd=$(readlink "$proc/cwd" 2>/dev/null || true)
         if [[ "$cmdline $cwd" == *"$PARCER_DIR"* ]]; then
           PARCER_SERVICE=$(sed -n 's#.*system.slice/\([^/]*\.service\).*#\1#p' "$proc/cgroup" 2>/dev/null | head -1 || true)
-          if [ -n "$PARCER_SERVICE" ] && timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
+          PARCER_SERVICE_TYPE=$(systemctl show "$PARCER_SERVICE" -p Type --value 2>/dev/null || true)
+          if [ -n "$PARCER_SERVICE" ] && [ "$PARCER_SERVICE_TYPE" != "oneshot" ] && timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
             echo "  parser restarted via process match: $PARCER_SERVICE (pid $pid)"
             PARCER_RESTARTED=1
           fi
@@ -185,7 +192,8 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
           continue
         fi
         PARCER_SERVICE=$(sed -n 's#.*system.slice/\([^/]*\.service\).*#\1#p' "/proc/$pid/cgroup" 2>/dev/null | head -1 || true)
-        if [ -n "$PARCER_SERVICE" ]; then
+        PARCER_SERVICE_TYPE=$(systemctl show "$PARCER_SERVICE" -p Type --value 2>/dev/null || true)
+        if [ -n "$PARCER_SERVICE" ] && [ "$PARCER_SERVICE_TYPE" != "oneshot" ]; then
           if timeout 20s systemctl restart --no-block "$PARCER_SERVICE"; then
             echo "  parser restarted via systemd: $PARCER_SERVICE (pid $pid, port $PARCER_PORT)"
             PARCER_RESTARTED=1

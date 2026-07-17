@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
@@ -142,6 +143,24 @@ async function insertRows(db, rows) {
   }
 }
 
+async function publishSnapshot(db, competitorId, result) {
+  const { error } = await db.from("audit_log").insert({
+    action: "parser_run",
+    competitor_id: competitorId,
+    snapshot_date: snapshotDate,
+    job_id: randomUUID(),
+    meta: {
+      mode: "urls_only",
+      category: null,
+      competitor_filter: ADAPTER,
+      source: "vannaja-worker",
+      worker_job_id: jobId,
+      ...result,
+    },
+  });
+  if (error) throw new Error(`publish marker: ${error.message}`);
+}
+
 async function main() {
   const db = createClient(requireEnv("SUPABASE_URL"), requireEnv("SUPABASE_KEY"), { auth: { persistSession: false } });
   const { data: competitor, error: competitorError } = await db
@@ -222,13 +241,15 @@ async function main() {
   }
 
   await insertRows(db, rows);
+  const result = { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked: 0 };
+  if (limit <= 0) await publishSnapshot(db, competitor.id, result);
   await writeJob({
     status: "done",
     current: targets.length,
     total: targets.length,
     label: `Vannaja: готово · знайдено ${found}/${targets.length}`,
     finished_at: Math.floor(Date.now() / 1000),
-    result: { total: targets.length, found, new_finds: newFinds, price_changes: priceChanges, errors, blocked: 0 },
+    result,
   });
 }
 

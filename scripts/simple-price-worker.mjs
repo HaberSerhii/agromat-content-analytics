@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
@@ -283,6 +284,24 @@ async function replaceSnapshotRows(db, competitorId, rows) {
   await insertRows(db, rows);
 }
 
+async function publishSnapshot(db, competitorId, result) {
+  const { error } = await db.from("audit_log").insert({
+    action: "parser_run",
+    competitor_id: competitorId,
+    snapshot_date: snapshotDate,
+    job_id: randomUUID(),
+    meta: {
+      mode: "urls_only",
+      category: null,
+      competitor_filter: adapter,
+      source: "simple-price-worker",
+      worker_job_id: jobId,
+      ...result,
+    },
+  });
+  if (error) throw new Error(`publish marker: ${error.message}`);
+}
+
 class UnusedRealtimeTransport {}
 
 async function main() {
@@ -389,13 +408,15 @@ async function main() {
 
   await writeJob({ label: `${LABEL}: зберігаю знімок ${snapshotDate}` });
   await replaceSnapshotRows(db, competitor.id, rows);
+  const result = { total: targets.length, found, new_finds: 0, price_changes: priceChanges, errors, blocked: 0 };
+  if (!singleProductId && limit <= 0) await publishSnapshot(db, competitor.id, result);
   await writeJob({
     status: "done",
     current: targets.length,
     total: targets.length,
     label: `${LABEL}: готово · знайдено ${found}/${targets.length}`,
     finished_at: Math.floor(Date.now() / 1000),
-    result: { total: targets.length, found, new_finds: 0, price_changes: priceChanges, errors, blocked: 0 },
+    result,
   });
 }
 
