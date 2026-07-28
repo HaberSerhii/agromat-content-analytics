@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/",         label: "Аналіз цін конкурентів" },
-  { href: "/catalog",  label: "Аналіз карток товара" },
-  { href: "/sales",    label: "Аналіз продаж" },
+  { href: "/",           label: "Аналіз цін конкурентів" },
+  { href: "/catalog",    label: "Аналіз карток товара" },
+  { href: "/promotions", label: "Аналіз акційних пропозицій" },
+  { href: "/sales",      label: "Аналіз продаж" },
 ];
 
 export function Tabs() {

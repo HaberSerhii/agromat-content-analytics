@@ -80,6 +80,51 @@ export interface ApiFilters {
   brands: ApiBrand[];
 }
 
+export interface ApiPromotionProduct {
+  id: number;
+  goods_ref: number;
+  code: number;
+  sku: string | null;
+  name: string;
+  url: string;
+  fix_price: number | null;
+  result_price: number | null;
+  status: ApiStatus;
+  promotion_idinc?: number;
+}
+
+export interface ApiRelatedPromotion {
+  id: number;
+  idinc: number;
+  name: string;
+  url: string | null;
+}
+
+export interface ApiPromotion {
+  id: number;
+  idinc: number;
+  name: string;
+  description: string | null;
+  conditions: string | null;
+  active: boolean;
+  percent: number | null;
+  is_special: boolean;
+  special_percent: number | null;
+  is_unlimited: boolean;
+  type: { id: number; name: string } | null;
+  start_date: string | null;
+  end_date: string | null;
+  url: string | null;
+  image: string | null;
+  has_related?: boolean;
+  related_promotions?: ApiRelatedPromotion[];
+  products: ApiPromotionProduct[];
+}
+
+export function isBundlePromotion(promotion: Pick<ApiPromotion, "type">): boolean {
+  return promotion.type?.name.toLocaleLowerCase("uk").trim() === "набори товарів";
+}
+
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 // Resolved lazily per call (rather than at module init) so a missing .env at
 // boot doesn't permanently poison the cached value — the next call after env
@@ -136,6 +181,77 @@ export async function fetchFilters(): Promise<ApiFilters> {
 export interface ProductsPage {
   data: ApiProduct[];
   meta: { total: number; page: number; per_page: number; total_pages: number };
+}
+
+export interface PromotionsPage {
+  data: ApiPromotion[];
+  meta: { total: number; page: number; per_page: number; total_pages: number };
+}
+
+declare global {
+  var _promotionsApiCache: { at: number; data: ApiPromotion[] } | undefined;
+  var _deletedProductIdsCache: { at: number; data: Set<number> } | undefined;
+  var _activeProductIdsWithoutImagesCache: { at: number; data: Set<number> } | undefined;
+}
+
+export async function fetchAllPromotions(): Promise<ApiPromotion[]> {
+  const cached = global._promotionsApiCache;
+  if (cached && Date.now() - cached.at < 5 * 60_000) return cached.data;
+  const response = await getJsonWithRetry<PromotionsPage>("/promotions/?per_page=-1");
+  global._promotionsApiCache = { at: Date.now(), data: response.data };
+  return response.data;
+}
+
+export async function fetchDeletedProductIds(): Promise<Set<number>> {
+  const cached = global._deletedProductIdsCache;
+  if (cached && Date.now() - cached.at < 15 * 60_000) return cached.data;
+
+  const first = await getJsonWithRetry<ProductsPage>("/products/?deleted=true&per_page=200&page=1");
+  const ids = new Set(first.data.map((product) => product.id));
+  const pages = Array.from(
+    { length: Math.max(0, first.meta.total_pages - 1) },
+    (_, index) => index + 2,
+  );
+  // Eight concurrent requests keeps the live site-state lookup quick without
+  // sending all ~60 deleted-product pages to the upstream at once.
+  for (let offset = 0; offset < pages.length; offset += 8) {
+    const batch = await Promise.all(
+      pages.slice(offset, offset + 8).map((page) =>
+        getJsonWithRetry<ProductsPage>(`/products/?deleted=true&per_page=200&page=${page}`),
+      ),
+    );
+    for (const response of batch) {
+      for (const product of response.data) ids.add(product.id);
+    }
+  }
+  global._deletedProductIdsCache = { at: Date.now(), data: ids };
+  return ids;
+}
+
+export async function fetchActiveProductIdsWithoutImages(): Promise<Set<number>> {
+  const cached = global._activeProductIdsWithoutImagesCache;
+  if (cached && Date.now() - cached.at < 15 * 60_000) return cached.data;
+
+  const path = (page: number) =>
+    `/products/?deleted=false&has_images=false&per_page=200&page=${page}`;
+  const first = await getJsonWithRetry<ProductsPage>(path(1));
+  const ids = new Set(first.data.map((product) => product.id));
+  const pages = Array.from(
+    { length: Math.max(0, first.meta.total_pages - 1) },
+    (_, index) => index + 2,
+  );
+  for (let offset = 0; offset < pages.length; offset += 8) {
+    const batch = await Promise.all(
+      pages.slice(offset, offset + 8).map((page) =>
+        getJsonWithRetry<ProductsPage>(path(page)),
+      ),
+    );
+    for (const response of batch) {
+      for (const product of response.data) ids.add(product.id);
+    }
+  }
+  global._activeProductIdsWithoutImagesCache = { at: Date.now(), data: ids };
+  return ids;
 }
 
 export async function fetchProductsPage(page: number, perPage = 200): Promise<ProductsPage> {
