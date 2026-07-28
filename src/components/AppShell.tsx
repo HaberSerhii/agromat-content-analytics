@@ -30,6 +30,18 @@ const SalesDashboard = dynamic(
   },
 );
 
+const PromotionsDashboard = dynamic(
+  () => import("@/components/PromotionsDashboard").then((m) => m.PromotionsDashboard),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>
+        Завантаження акційних пропозицій…
+      </div>
+    ),
+  },
+);
+
 // Default points at the production same-origin nginx location
 // (`/parcer/` → parser UI). In local Next dev, that path belongs to this app
 // unless the parser URL is explicitly configured, so we show a small placeholder
@@ -49,6 +61,7 @@ export function AppShell() {
   const [parserFrameReady, setParserFrameReady] = useState(false);
   const isCompetitors = pathname === "/";
   const isCatalog = pathname === "/catalog";
+  const isPromotions = pathname === "/promotions";
   const isSales = pathname === "/sales";
   const [isLocalHost, setIsLocalHost] = useState(
     () => typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"),
@@ -74,10 +87,14 @@ export function AppShell() {
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
   const [catalogVisited, setCatalogVisited] = useState(isCatalog);
+  const [promotionsVisited, setPromotionsVisited] = useState(isPromotions);
   const [salesVisited, setSalesVisited] = useState(isSales);
   useEffect(() => {
     if (isCatalog) setCatalogVisited(true);
   }, [isCatalog]);
+  useEffect(() => {
+    if (isPromotions) setPromotionsVisited(true);
+  }, [isPromotions]);
   useEffect(() => {
     if (isSales) setSalesVisited(true);
   }, [isSales]);
@@ -140,6 +157,12 @@ export function AppShell() {
       {catalogVisited && (
         <div style={{ display: isCatalog ? "block" : "none" }}>
           <ProductsCatalog />
+        </div>
+      )}
+
+      {promotionsVisited && (
+        <div style={{ display: isPromotions ? "block" : "none" }}>
+          <PromotionsDashboard />
         </div>
       )}
 

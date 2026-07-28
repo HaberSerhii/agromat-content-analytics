@@ -4042,7 +4042,7 @@ export function ProductsCatalog() {
   };
 
   // Pulls every product matching the current filters (single big page) for
-  // CSV / Regex / Cube exports. Capped at 10 000 — practical exports never hit it.
+  // CSV / Regex exports. Capped at 10 000 — practical exports never hit it.
   const [exportBusy, setExportBusy] = useState(false);
   const fetchAllFiltered = useCallback(async (): Promise<ProductLite[]> => {
     setExportBusy(true);
@@ -4085,7 +4085,7 @@ export function ProductsCatalog() {
     }
   };
   // "IDD" exports use product `code` (a.k.a. "Код товара") — consistent across
-  // CSV / Excel / Regex / Cube. Cube wraps it in the MDX `[Код товару]` member.
+  // CSV / Excel / Regex exports use product `code` (a.k.a. "Код товара").
   const exportIddCsv = async () => {
     const items = await fetchAllFiltered();
     const codes = items.map((i) => i.code).filter(Boolean);
@@ -4104,20 +4104,6 @@ export function ProductsCatalog() {
       const codes = items.map((i) => i.code).filter(Boolean).join("|");
       await _copyText(codes);
       setToast(`Regex: ${items.length} кодів товару скопійовано`);
-    } catch (e) {
-      setToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
-    }
-  };
-  const exportIddCube = async () => {
-    try {
-      const items = await fetchAllFiltered();
-      const lines = items
-        .map((i) => i.code)
-        .filter(Boolean)
-        .map((code) => `[Товар].[Код товару].&[${code}]`)
-        .join(",\n");
-      await _copyText(`{\n${lines}\n}`);
-      setToast(`Cube: ${items.length} кодів товару скопійовано`);
     } catch (e) {
       setToast(`Помилка копіювання: ${e instanceof Error ? e.message : "невідомо"}`);
     }
@@ -4642,9 +4628,6 @@ export function ProductsCatalog() {
               onClick={exportIddXlsx} title="Завантажити IDD у XLSX (поточна вибірка)" />
             <ExportPill label="Regex" color="#e66c37" bg="rgba(245,158,11,0.12)" busy={exportBusy}
               onClick={exportIddRegex} title="Скопіювати IDD у форматі id1|id2|…" />
-            <ExportPill label="Cube" color="#6366f1" bg="rgba(99,102,241,0.12)" busy={exportBusy}
-              onClick={exportIddCube} title="Скопіювати IDD у форматі MDX-куба" />
-
             <span className="text-[10px] font-bold uppercase tracking-wider ml-3" style={{ color: "#1e3a8a" }}>Повна аналітика:</span>
             <ExportPill label="↓ Excel" color="#3730a3" bg="rgba(99,102,241,0.18)" busy={exportBusy}
               onClick={exportFullXlsx} title="Excel-файл з усіма полями (код, goods_ref, артикул, назва, категорія, бренд, ціна, залишок, статус, фото, відгуки, атрибути, дати)" />
