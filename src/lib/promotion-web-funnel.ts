@@ -1,0 +1,465 @@
+import { BigQuery } from "@google-cloud/bigquery";
+import type {
+  PromotionWebFunnelResponse,
+  WebFunnelChannel,
+  WebFunnelComparison,
+  WebFunnelPeriod,
+  WebFunnelPeriodKind,
+  WebFunnelStage,
+  WebFunnelStageKey,
+} from "@/lib/promotion-web-funnel-types";
+
+const CHANNELS: WebFunnelChannel[] = ["all", "organic", "cpc", "direct"];
+const STAGES: Array<{ key: WebFunnelStageKey; label: string; order: number }> = [
+  { key: "landing", label: "Старт з URL", order: 1 },
+  { key: "view_item", label: "Перегляд картки товару", order: 2 },
+  { key: "cart", label: "Кошик", order: 3 },
+  { key: "begin_checkout", label: "Checkout", order: 4 },
+  { key: "purchase", label: "Замовлення", order: 5 },
+];
+
+type PeriodKey = "current" | "previous" | "yearAgo";
+
+type PeriodRange = {
+  key: PeriodKey;
+  from: string;
+  to: string;
+  label: string;
+  shortLabel: string;
+};
+
+type QueryRow = {
+  period_key: PeriodKey;
+  channel: WebFunnelChannel;
+  stage_key: WebFunnelStageKey;
+  users: number | string | null;
+};
+
+type CacheEntry = {
+  expiresAt: number;
+  value: PromotionWebFunnelResponse;
+};
+
+const cache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 15 * 60 * 1000;
+
+function getBigQueryProjectId(): string {
+  return process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413";
+}
+
+function getBigQueryDatasetId(): string {
+  return process.env.BIGQUERY_DATASET_ID || "analytics_321347682";
+}
+
+function getBigQueryClient(): BigQuery {
+  return new BigQuery({
+    projectId: getBigQueryProjectId(),
+  });
+}
+
+function parseIsoDate(value: string): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Некоректна дата");
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) throw new Error("Некоректна дата");
+  return date;
+}
+
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function shiftDays(value: string, days: number): string {
+  const date = parseIsoDate(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return isoDate(date);
+}
+
+function startOfWeek(value: string): string {
+  const date = parseIsoDate(value);
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return isoDate(date);
+}
+
+function startOfMonth(value: string): string {
+  const date = parseIsoDate(value);
+  date.setUTCDate(1);
+  return isoDate(date);
+}
+
+function shiftMonths(value: string, months: number): string {
+  const date = parseIsoDate(value);
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return isoDate(date);
+}
+
+function endOfMonth(value: string): string {
+  const date = parseIsoDate(value);
+  date.setUTCMonth(date.getUTCMonth() + 1, 0);
+  return isoDate(date);
+}
+
+function currentKyivDate(): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Kyiv",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date()).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function isoWeekNumber(value: string): { week: number; year: number } {
+  const date = parseIsoDate(value);
+  const target = new Date(date);
+  const day = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1, 12));
+  return {
+    week: Math.ceil((((target.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7),
+    year: target.getUTCFullYear(),
+  };
+}
+
+function periodLabel(kind: WebFunnelPeriodKind, from: string): { label: string; shortLabel: string } {
+  if (kind === "week") {
+    const { week, year } = isoWeekNumber(from);
+    return {
+      label: `Тиждень ${week} (${year})`,
+      shortLabel: `Тиждень ${week}`,
+    };
+  }
+  const date = parseIsoDate(from);
+  const label = new Intl.DateTimeFormat("uk-UA", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+  return {
+    label: label.charAt(0).toUpperCase() + label.slice(1),
+    shortLabel: new Intl.DateTimeFormat("uk-UA", {
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(date),
+  };
+}
+
+function periodRanges(kind: WebFunnelPeriodKind, anchor?: string): {
+  ranges: PeriodRange[];
+  previousAnchor: string;
+  nextAnchor: string;
+  canGoNext: boolean;
+} {
+  const today = currentKyivDate();
+  let currentFrom: string;
+  let currentTo: string;
+  let previousFrom: string;
+  let previousTo: string;
+  let yearAgoFrom: string;
+  let yearAgoTo: string;
+  let nextAnchor: string;
+
+  if (kind === "week") {
+    const latestCompleteFrom = shiftDays(startOfWeek(today), -7);
+    currentFrom = anchor ? startOfWeek(anchor) : latestCompleteFrom;
+    currentTo = shiftDays(currentFrom, 6);
+    previousFrom = shiftDays(currentFrom, -7);
+    previousTo = shiftDays(currentTo, -7);
+    yearAgoFrom = shiftDays(currentFrom, -364);
+    yearAgoTo = shiftDays(currentTo, -364);
+    nextAnchor = shiftDays(currentFrom, 7);
+  } else {
+    const latestCompleteFrom = shiftMonths(startOfMonth(today), -1);
+    currentFrom = anchor ? startOfMonth(anchor) : latestCompleteFrom;
+    currentTo = endOfMonth(currentFrom);
+    previousFrom = shiftMonths(currentFrom, -1);
+    previousTo = endOfMonth(previousFrom);
+    yearAgoFrom = shiftMonths(currentFrom, -12);
+    yearAgoTo = endOfMonth(yearAgoFrom);
+    nextAnchor = shiftMonths(currentFrom, 1);
+  }
+
+  const range = (key: PeriodKey, from: string, to: string): PeriodRange => ({
+    key,
+    from,
+    to,
+    ...periodLabel(kind, from),
+  });
+
+  const latestCompleteFrom = kind === "week"
+    ? shiftDays(startOfWeek(today), -7)
+    : shiftMonths(startOfMonth(today), -1);
+
+  return {
+    ranges: [
+      range("current", currentFrom, currentTo),
+      range("previous", previousFrom, previousTo),
+      range("yearAgo", yearAgoFrom, yearAgoTo),
+    ],
+    previousAnchor: previousFrom,
+    nextAnchor,
+    canGoNext: nextAnchor <= latestCompleteFrom,
+  };
+}
+
+export function normalizeAnalyticsUrl(value: string): { requestedUrl: string; normalizedUrl: string } {
+  const requestedUrl = value.trim();
+  if (!requestedUrl) throw new Error("Вкажіть URL сторінки");
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(requestedUrl) ? requestedUrl : `https://${requestedUrl}`);
+  } catch {
+    throw new Error("Некоректний URL сторінки");
+  }
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+  if (hostname !== "agromat.ua" && !hostname.endsWith(".agromat.ua")) {
+    throw new Error("Дозволені лише сторінки домену agromat.ua");
+  }
+  const pathname = url.pathname.replace(/\/+$/, "") || "/";
+  return {
+    requestedUrl,
+    normalizedUrl: `${hostname}${pathname === "/" ? "" : pathname}`.toLowerCase(),
+  };
+}
+
+function buildSql(ranges: PeriodRange[]): string {
+  const projectId = getBigQueryProjectId().replace(/`/g, "");
+  const datasetId = getBigQueryDatasetId().replace(/`/g, "");
+  const suffixFilter = ranges.map((range) =>
+    `(_TABLE_SUFFIX BETWEEN '${range.from.replaceAll("-", "")}' AND '${range.to.replaceAll("-", "")}')`
+  ).join("\n      OR ");
+  const periodRows = ranges.map((range) =>
+    `SELECT '${range.key}' AS period_key, DATE '${range.from}' AS date_from, DATE '${range.to}' AS date_to`
+  ).join("\nUNION ALL\n");
+
+  return `
+WITH periods AS (
+  ${periodRows}
+),
+base AS (
+  SELECT
+    PARSE_DATE('%Y%m%d', event_date) AS event_day,
+    event_timestamp,
+    event_name,
+    user_pseudo_id,
+    CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS ga_session_id,
+    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') AS page_location,
+    LOWER(COALESCE(collected_traffic_source.manual_source, traffic_source.source, '')) AS traffic_source_name,
+    LOWER(COALESCE(collected_traffic_source.manual_medium, traffic_source.medium, '')) AS traffic_medium,
+    collected_traffic_source.gclid AS gclid
+  FROM \`${projectId}.${datasetId}.events_*\`
+  WHERE (
+      ${suffixFilter}
+    )
+    AND event_name IN ('page_view', 'view_item', 'add_to_cart', 'view_cart', 'begin_checkout', 'purchase')
+    AND user_pseudo_id IS NOT NULL
+),
+events AS (
+  SELECT
+    *,
+    CONCAT(user_pseudo_id, '/', ga_session_id) AS session_key
+  FROM base
+  WHERE ga_session_id IS NOT NULL
+),
+landing_candidates AS (
+  SELECT
+    p.period_key,
+    e.session_key,
+    e.user_pseudo_id,
+    e.event_timestamp,
+    CASE
+      WHEN e.gclid IS NOT NULL
+        OR e.traffic_medium IN ('cpc', 'ppc', 'paid', 'paid_search', 'paidsearch')
+        THEN 'cpc'
+      WHEN e.traffic_medium = 'organic' THEN 'organic'
+      WHEN (e.traffic_source_name IN ('', '(direct)', 'direct')
+        AND e.traffic_medium IN ('', '(none)', 'none', '(not set)'))
+        THEN 'direct'
+      ELSE 'other'
+    END AS channel
+  FROM events e
+  JOIN periods p ON e.event_day BETWEEN p.date_from AND p.date_to
+  WHERE e.event_name = 'page_view'
+    AND REGEXP_REPLACE(
+      REGEXP_REPLACE(LOWER(SPLIT(e.page_location, '?')[SAFE_OFFSET(0)]), r'^https?://(www\\.)?', ''),
+      r'/+$',
+      ''
+    ) = @normalizedUrl
+),
+landings AS (
+  SELECT
+    period_key,
+    session_key,
+    ANY_VALUE(user_pseudo_id HAVING MIN event_timestamp) AS user_pseudo_id,
+    ARRAY_AGG(STRUCT(event_timestamp, channel) ORDER BY event_timestamp LIMIT 1)[OFFSET(0)] AS first_landing
+  FROM landing_candidates
+  GROUP BY period_key, session_key
+),
+step_landing AS (
+  SELECT
+    period_key,
+    session_key,
+    user_pseudo_id,
+    first_landing.event_timestamp AS step_ts,
+    first_landing.channel AS channel
+  FROM landings
+),
+step_view_item AS (
+  SELECT s.period_key, s.session_key, s.user_pseudo_id, s.channel, MIN(e.event_timestamp) AS step_ts
+  FROM step_landing s
+  JOIN events e USING (session_key)
+  WHERE e.event_name = 'view_item' AND e.event_timestamp >= s.step_ts
+  GROUP BY s.period_key, s.session_key, s.user_pseudo_id, s.channel
+),
+step_cart AS (
+  SELECT s.period_key, s.session_key, s.user_pseudo_id, s.channel, MIN(e.event_timestamp) AS step_ts
+  FROM step_view_item s
+  JOIN events e USING (session_key)
+  WHERE e.event_name IN ('add_to_cart', 'view_cart') AND e.event_timestamp >= s.step_ts
+  GROUP BY s.period_key, s.session_key, s.user_pseudo_id, s.channel
+),
+step_begin_checkout AS (
+  SELECT s.period_key, s.session_key, s.user_pseudo_id, s.channel, MIN(e.event_timestamp) AS step_ts
+  FROM step_cart s
+  JOIN events e USING (session_key)
+  WHERE e.event_name = 'begin_checkout' AND e.event_timestamp >= s.step_ts
+  GROUP BY s.period_key, s.session_key, s.user_pseudo_id, s.channel
+),
+step_purchase AS (
+  SELECT s.period_key, s.session_key, s.user_pseudo_id, s.channel, MIN(e.event_timestamp) AS step_ts
+  FROM step_begin_checkout s
+  JOIN events e USING (session_key)
+  WHERE e.event_name = 'purchase' AND e.event_timestamp >= s.step_ts
+  GROUP BY s.period_key, s.session_key, s.user_pseudo_id, s.channel
+),
+stage_rows AS (
+  SELECT period_key, channel, 'landing' AS stage_key, user_pseudo_id FROM step_landing
+  UNION ALL SELECT period_key, channel, 'view_item', user_pseudo_id FROM step_view_item
+  UNION ALL SELECT period_key, channel, 'cart', user_pseudo_id FROM step_cart
+  UNION ALL SELECT period_key, channel, 'begin_checkout', user_pseudo_id FROM step_begin_checkout
+  UNION ALL SELECT period_key, channel, 'purchase', user_pseudo_id FROM step_purchase
+),
+expanded_channels AS (
+  SELECT period_key, selected_channel AS channel, stage_key, user_pseudo_id
+  FROM stage_rows,
+  UNNEST([channel, 'all']) AS selected_channel
+)
+SELECT
+  period_key,
+  channel,
+  stage_key,
+  COUNT(DISTINCT user_pseudo_id) AS users
+FROM expanded_channels
+WHERE channel IN ('all', 'organic', 'cpc', 'direct')
+GROUP BY period_key, channel, stage_key
+ORDER BY period_key, channel, stage_key
+`;
+}
+
+function emptyPeriod(range: PeriodRange): WebFunnelPeriod {
+  const stages: WebFunnelStage[] = STAGES.map((stage) => ({
+    key: stage.key,
+    label: stage.label,
+    users: 0,
+    conversionFromPreviousPct: null,
+    conversionFromStartPct: null,
+  }));
+  return {
+    ...range,
+    available: false,
+    stages,
+    startUsers: 0,
+    orderUsers: 0,
+    conversionRatePct: null,
+  };
+}
+
+function makePeriod(range: PeriodRange, values: Map<WebFunnelStageKey, number>): WebFunnelPeriod {
+  const startUsers = values.get("landing") || 0;
+  let previousUsers: number | null = null;
+  const stages: WebFunnelStage[] = STAGES.map((stage) => {
+    const users = values.get(stage.key) || 0;
+    const result: WebFunnelStage = {
+      key: stage.key,
+      label: stage.label,
+      users,
+      conversionFromPreviousPct: previousUsers && previousUsers > 0 ? (users / previousUsers) * 100 : null,
+      conversionFromStartPct: startUsers > 0 ? (users / startUsers) * 100 : null,
+    };
+    previousUsers = users;
+    return result;
+  });
+  const orderUsers = values.get("purchase") || 0;
+  return {
+    ...range,
+    available: startUsers > 0,
+    stages,
+    startUsers,
+    orderUsers,
+    conversionRatePct: startUsers > 0 ? (orderUsers / startUsers) * 100 : null,
+  };
+}
+
+export async function readPromotionWebFunnel(input: {
+  url: string;
+  periodKind: WebFunnelPeriodKind;
+  anchor?: string;
+}): Promise<PromotionWebFunnelResponse> {
+  const { requestedUrl, normalizedUrl } = normalizeAnalyticsUrl(input.url);
+  const periodKind = input.periodKind === "month" ? "month" : "week";
+  const periodInfo = periodRanges(periodKind, input.anchor);
+  const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}`;
+  const cached = cache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const bigQuery = getBigQueryClient();
+  const [rows] = await bigQuery.query({
+    query: buildSql(periodInfo.ranges),
+    params: { normalizedUrl },
+    location: "EU",
+    maximumBytesBilled: "50000000000",
+  });
+
+  const values = new Map<string, Map<WebFunnelStageKey, number>>();
+  for (const row of rows as QueryRow[]) {
+    const key = `${row.period_key}:${row.channel}`;
+    const stageValues = values.get(key) || new Map<WebFunnelStageKey, number>();
+    stageValues.set(row.stage_key, Number(row.users || 0));
+    values.set(key, stageValues);
+  }
+
+  const rangeMap = new Map(periodInfo.ranges.map((range) => [range.key, range]));
+  const comparisons = Object.fromEntries(CHANNELS.map((channel) => {
+    const period = (key: PeriodKey) => {
+      const range = rangeMap.get(key);
+      if (!range) throw new Error(`Missing ${key} period`);
+      const stageValues = values.get(`${key}:${channel}`);
+      return stageValues ? makePeriod(range, stageValues) : emptyPeriod(range);
+    };
+    const comparison: WebFunnelComparison = {
+      current: period("current"),
+      previous: period("previous"),
+      yearAgo: period("yearAgo"),
+    };
+    return [channel, comparison];
+  })) as Record<WebFunnelChannel, WebFunnelComparison>;
+
+  const result: PromotionWebFunnelResponse = {
+    requestedUrl,
+    normalizedUrl,
+    periodKind,
+    generatedAt: new Date().toISOString(),
+    navigation: {
+      previousAnchor: periodInfo.previousAnchor,
+      nextAnchor: periodInfo.nextAnchor,
+      canGoNext: periodInfo.canGoNext,
+    },
+    comparisons,
+  };
+  cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value: result });
+  return result;
+}

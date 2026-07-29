@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PromotionSalesDashboard } from "@/components/PromotionSalesDashboard";
+import { PromotionWebFunnelDashboard } from "@/components/PromotionWebFunnelDashboard";
 import type {
   PromotionCatalogRow,
   PromotionsCatalogResponse,
@@ -288,20 +289,6 @@ function MultiSelect({
         </div>
       </div>
     </details>
-  );
-}
-
-function EmptySection({ title }: { title: string }) {
-  return (
-    <div
-      className="rounded-2xl border px-6 py-16 text-center"
-      style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
-    >
-      <div className="text-base font-bold" style={{ color: "var(--text)" }}>{title}</div>
-      <div className="mt-2 text-xs" style={{ color: "var(--text-dim)" }}>
-        Розділ підготовлений у навігації. Метрики підключимо після узгодження джерела даних.
-      </div>
-    </div>
   );
 }
 
@@ -754,7 +741,14 @@ export function PromotionsDashboard() {
         )}
       </div>
 
-      {section === "web" && <EmptySection title="Аналіз веб-метрик акцій" />}
+      {section === "web" && (
+        <PromotionWebFunnelDashboard
+          suggestedUrls={(data?.linkedPromotions ?? []).map((promotion) => ({
+            name: promotion.name,
+            url: promotion.url,
+          }))}
+        />
+      )}
       {section === "sales" && <PromotionSalesDashboard />}
 
       {section === "catalog" && (
