@@ -3,6 +3,7 @@ import type {
   PromotionWebFunnelResponse,
   WebFunnelChannel,
   WebFunnelComparison,
+  WebFunnelDevice,
   WebFunnelPeriod,
   WebFunnelPeriodKind,
   WebFunnelStage,
@@ -10,6 +11,7 @@ import type {
 } from "@/lib/promotion-web-funnel-types";
 
 const CHANNELS: WebFunnelChannel[] = ["all", "organic", "cpc", "direct"];
+const DEVICES: WebFunnelDevice[] = ["all", "mobile", "desktop"];
 const STAGES: Array<{ key: WebFunnelStageKey; label: string; order: number }> = [
   { key: "landing", label: "Старт", order: 1 },
   { key: "view_item", label: "Перегляд картки товару", order: 2 },
@@ -31,6 +33,7 @@ type PeriodRange = {
 type QueryRow = {
   period_key: PeriodKey;
   channel: WebFunnelChannel;
+  device: WebFunnelDevice;
   stage_key: WebFunnelStageKey;
   users: number | string | null;
 };
@@ -294,6 +297,7 @@ stage_rows AS (
   SELECT
     p.period_key,
     e.channel,
+    e.device,
     CASE e.event_name
       WHEN 'session_start' THEN 'landing'
       WHEN 'view_item' THEN 'view_item'
@@ -313,7 +317,8 @@ landing_candidates AS (
     e.session_key,
     e.user_pseudo_id,
     e.event_timestamp,
-    e.channel
+    e.channel,
+    e.device
   FROM events e
   JOIN periods p ON e.event_day BETWEEN p.date_from AND p.date_to
   WHERE e.event_name = 'page_view'
@@ -329,7 +334,7 @@ landings AS (
     period_key,
     session_key,
     ANY_VALUE(user_pseudo_id HAVING MIN event_timestamp) AS user_pseudo_id,
-    ARRAY_AGG(STRUCT(event_timestamp, channel) ORDER BY event_timestamp LIMIT 1)[OFFSET(0)] AS first_landing
+    ARRAY_AGG(STRUCT(event_timestamp, channel, device) ORDER BY event_timestamp LIMIT 1)[OFFSET(0)] AS first_landing
   FROM landing_candidates
   GROUP BY period_key, session_key
 ),
@@ -339,11 +344,12 @@ step_landing AS (
     session_key,
     user_pseudo_id,
     first_landing.event_timestamp AS step_ts,
-    first_landing.channel AS channel
+    first_landing.channel AS channel,
+    first_landing.device AS device
   FROM landings
 ),
 stage_rows AS (
-  SELECT period_key, channel, 'landing' AS stage_key, user_pseudo_id
+  SELECT period_key, channel, device, 'landing' AS stage_key, user_pseudo_id
   FROM step_landing
 
   UNION ALL
@@ -351,6 +357,7 @@ stage_rows AS (
   SELECT
     s.period_key,
     s.channel,
+    s.device,
     CASE e.event_name
       WHEN 'view_item' THEN 'view_item'
       WHEN 'add_to_cart' THEN 'cart'
@@ -378,13 +385,15 @@ base AS (
     (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') AS page_location,
     LOWER(COALESCE(collected_traffic_source.manual_source, traffic_source.source, '')) AS traffic_source_name,
     LOWER(COALESCE(collected_traffic_source.manual_medium, traffic_source.medium, '')) AS traffic_medium,
-    collected_traffic_source.gclid AS gclid
+    collected_traffic_source.gclid AS gclid,
+    LOWER(device.category) AS device_category
   FROM \`${projectId}.${datasetId}.events_*\`
   WHERE (
       ${suffixFilter}
     )
     AND event_name IN ('session_start', 'page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase')
     AND user_pseudo_id IS NOT NULL
+    AND geo.country = 'Ukraine'
 ),
 events AS (
   SELECT
@@ -399,24 +408,37 @@ events AS (
         AND traffic_medium IN ('', '(none)', 'none', '(not set)'))
         THEN 'direct'
       ELSE 'other'
-    END AS channel
+    END AS channel,
+    CASE
+      WHEN device_category = 'mobile' THEN 'mobile'
+      WHEN device_category = 'desktop' THEN 'desktop'
+      ELSE 'other'
+    END AS device
   FROM base
 ),
 ${stageCtes},
-expanded_channels AS (
-  SELECT period_key, selected_channel AS channel, stage_key, user_pseudo_id
+expanded_dimensions AS (
+  SELECT
+    period_key,
+    selected_channel AS channel,
+    selected_device AS device,
+    stage_key,
+    user_pseudo_id
   FROM stage_rows,
-  UNNEST([channel, 'all']) AS selected_channel
+  UNNEST([channel, 'all']) AS selected_channel,
+  UNNEST([device, 'all']) AS selected_device
 )
 SELECT
   period_key,
   channel,
+  device,
   stage_key,
   COUNT(DISTINCT user_pseudo_id) AS users
-FROM expanded_channels
+FROM expanded_dimensions
 WHERE channel IN ('all', 'organic', 'cpc', 'direct')
-GROUP BY period_key, channel, stage_key
-ORDER BY period_key, channel, stage_key
+  AND device IN ('all', 'mobile', 'desktop')
+GROUP BY period_key, channel, device, stage_key
+ORDER BY period_key, channel, device, stage_key
 `;
 }
 
@@ -501,32 +523,37 @@ export async function readPromotionWebFunnel(input: {
 
   const values = new Map<string, Map<WebFunnelStageKey, number>>();
   for (const row of rows as QueryRow[]) {
-    const key = `${row.period_key}:${row.channel}`;
+    const key = `${row.period_key}:${row.device}:${row.channel}`;
     const stageValues = values.get(key) || new Map<WebFunnelStageKey, number>();
     stageValues.set(row.stage_key, Number(row.users || 0));
     values.set(key, stageValues);
   }
 
   const rangeMap = new Map(periodInfo.ranges.map((range) => [range.key, range]));
-  const comparisons = Object.fromEntries(CHANNELS.map((channel) => {
-    const period = (key: PeriodKey) => {
-      const range = rangeMap.get(key);
-      if (!range) throw new Error(`Missing ${key} period`);
-      const stageValues = values.get(`${key}:${channel}`);
-      return stageValues ? makePeriod(range, stageValues, scope) : emptyPeriod(range, scope);
-    };
-    const comparison: WebFunnelComparison = {
-      current: period("current"),
-      previous: period("previous"),
-      yearAgo: period("yearAgo"),
-    };
-    return [channel, comparison];
-  })) as Record<WebFunnelChannel, WebFunnelComparison>;
+  const comparisonsByDevice = Object.fromEntries(DEVICES.map((device) => {
+    const channelComparisons = Object.fromEntries(CHANNELS.map((channel) => {
+      const period = (key: PeriodKey) => {
+        const range = rangeMap.get(key);
+        if (!range) throw new Error(`Missing ${key} period`);
+        const stageValues = values.get(`${key}:${device}:${channel}`);
+        return stageValues ? makePeriod(range, stageValues, scope) : emptyPeriod(range, scope);
+      };
+      const comparison: WebFunnelComparison = {
+        current: period("current"),
+        previous: period("previous"),
+        yearAgo: period("yearAgo"),
+      };
+      return [channel, comparison];
+    })) as Record<WebFunnelChannel, WebFunnelComparison>;
+    return [device, channelComparisons];
+  })) as Record<WebFunnelDevice, Record<WebFunnelChannel, WebFunnelComparison>>;
+  const comparisons = comparisonsByDevice.all;
 
   const result: PromotionWebFunnelResponse = {
     requestedUrl,
     normalizedUrl,
     scope,
+    countryFilter: "Ukraine",
     periodKind,
     generatedAt: new Date().toISOString(),
     navigation: {
@@ -535,6 +562,7 @@ export async function readPromotionWebFunnel(input: {
       canGoNext: periodInfo.canGoNext,
     },
     comparisons,
+    comparisonsByDevice,
   };
   cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value: result });
   return result;

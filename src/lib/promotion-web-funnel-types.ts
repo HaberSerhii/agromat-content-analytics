@@ -1,5 +1,6 @@
 export type WebFunnelPeriodKind = "week" | "month" | "custom";
 export type WebFunnelChannel = "all" | "organic" | "cpc" | "direct";
+export type WebFunnelDevice = "all" | "mobile" | "desktop";
 export type WebFunnelStageKey =
   | "landing"
   | "view_item"
@@ -38,6 +39,7 @@ export type PromotionWebFunnelResponse = {
   requestedUrl: string;
   normalizedUrl: string;
   scope: "sitewide" | "page";
+  countryFilter: "Ukraine";
   periodKind: WebFunnelPeriodKind;
   generatedAt: string;
   navigation: {
@@ -46,4 +48,8 @@ export type PromotionWebFunnelResponse = {
     canGoNext: boolean;
   };
   comparisons: Record<WebFunnelChannel, WebFunnelComparison>;
+  comparisonsByDevice: Record<
+    WebFunnelDevice,
+    Record<WebFunnelChannel, WebFunnelComparison>
+  >;
 };

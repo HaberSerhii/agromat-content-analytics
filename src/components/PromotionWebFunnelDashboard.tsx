@@ -5,6 +5,7 @@ import type {
   PromotionWebFunnelResponse,
   WebFunnelChannel,
   WebFunnelComparison,
+  WebFunnelDevice,
   WebFunnelPeriod,
   WebFunnelPeriodKind,
 } from "@/lib/promotion-web-funnel-types";
@@ -19,6 +20,12 @@ const CHANNELS: Array<{ key: WebFunnelChannel; label: string; color: string }> =
   { key: "organic", label: "Органіка", color: "#107c10" },
   { key: "cpc", label: "CPC", color: "#f7630c" },
   { key: "direct", label: "Direct", color: "#744da9" },
+];
+
+const DEVICES: Array<{ key: WebFunnelDevice; label: string }> = [
+  { key: "all", label: "Всі пристрої" },
+  { key: "mobile", label: "Mobile" },
+  { key: "desktop", label: "Desktop" },
 ];
 
 const SITEWIDE_URL = "https://www.agromat.ua/";
@@ -409,6 +416,7 @@ export function PromotionWebFunnelDashboard({
   const [appliedCustomFrom, setAppliedCustomFrom] = useState(DEFAULT_CUSTOM_RANGE.from);
   const [appliedCustomTo, setAppliedCustomTo] = useState(DEFAULT_CUSTOM_RANGE.to);
   const [channel, setChannel] = useState<WebFunnelChannel>("all");
+  const [device, setDevice] = useState<WebFunnelDevice>("all");
   const [data, setData] = useState<PromotionWebFunnelResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -496,7 +504,10 @@ export function PromotionWebFunnelDashboard({
     setAppliedCustomTo(customTo);
   };
 
-  const comparison = data?.comparisons[channel] ?? null;
+  const selectedComparisons = data
+    ? data.comparisonsByDevice?.[device] ?? data.comparisons
+    : null;
+  const comparison = selectedComparisons?.[channel] ?? null;
 
   return (
     <div className="space-y-4">
@@ -537,6 +548,27 @@ export function PromotionWebFunnelDashboard({
 
           <div>
             <div className="mb-1 text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
+              Пристрій
+            </div>
+            <div className="flex rounded-xl border p-0.5" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+              {DEVICES.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setDevice(item.key)}
+                  className="rounded-lg border-0 px-3 py-2 text-[11px] font-bold"
+                  style={device === item.key
+                    ? { background: "#fff", color: "#0078d4", boxShadow: "var(--shadow-sm)" }
+                    : { background: "transparent", color: "var(--text-dim)" }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
               Канал
             </div>
             <div className="flex rounded-xl border p-0.5" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
@@ -561,6 +593,9 @@ export function PromotionWebFunnelDashboard({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="rounded-lg px-2.5 py-1 text-[10px] font-semibold" style={{ background: "#e8f4ff", color: "#0067b8" }}>
               {data.scope === "sitewide" ? "Увесь сайт" : data.normalizedUrl}
+            </span>
+            <span className="rounded-lg px-2.5 py-1 text-[10px] font-semibold" style={{ background: "#e5f3e5", color: "#107c10" }}>
+              Тільки Україна
             </span>
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
               {data.scope === "sitewide"
@@ -703,7 +738,7 @@ export function PromotionWebFunnelDashboard({
                   key={item.key}
                   label={item.label}
                   color={item.color}
-                  comparison={data.comparisons[item.key]}
+                  comparison={selectedComparisons?.[item.key] ?? data.comparisons[item.key]}
                   periodKind={periodKind}
                 />
               ))}
