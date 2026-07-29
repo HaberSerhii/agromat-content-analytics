@@ -21,7 +21,39 @@ const CHANNELS: Array<{ key: WebFunnelChannel; label: string; color: string }> =
   { key: "direct", label: "Direct", color: "#744da9" },
 ];
 
+const SITEWIDE_URL = "https://www.agromat.ua/";
 const numberFmt = new Intl.NumberFormat("uk-UA");
+
+function kyivIsoToday(): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Kyiv",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date()).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function shiftIsoDays(value: string, days: number): string {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function defaultCustomRange(): { from: string; to: string } {
+  const to = shiftIsoDays(kyivIsoToday(), -1);
+  return { from: shiftIsoDays(to, -6), to };
+}
+
+const DEFAULT_CUSTOM_RANGE = defaultCustomRange();
+
+function periodComparisonCode(periodKind: WebFunnelPeriodKind): string {
+  if (periodKind === "week") return "WoW";
+  if (periodKind === "month") return "MoM";
+  return "Період";
+}
 
 function formatUsers(value: number): string {
   return numberFmt.format(value);
@@ -121,7 +153,7 @@ function ComparisonSummary({
   comparison: WebFunnelComparison;
   periodKind: WebFunnelPeriodKind;
 }) {
-  const periodCode = periodKind === "week" ? "WoW" : "MoM";
+  const periodCode = periodComparisonCode(periodKind);
   return (
     <section className="rounded-2xl border p-4" style={{ borderColor: "var(--border2)", background: "#fff" }}>
       <div className="text-center text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
@@ -158,17 +190,17 @@ function FunnelComparisonChart({
   const left = comparison.previous;
   const right = comparison.current;
   const width = compact ? 460 : 820;
-  const top = compact ? 52 : 58;
-  const stepHeight = compact ? 68 : 76;
+  const top = compact ? 58 : 70;
+  const stepHeight = compact ? 88 : 112;
   const bottomPad = compact ? 22 : 28;
   const height = top + stepHeight * left.stages.length + bottomPad;
   const center = width / 2;
-  const maxHalf = compact ? 170 : 310;
-  const minHalf = compact ? 22 : 34;
+  const maxHalf = compact ? 170 : 270;
+  const minHalf = compact ? 28 : 48;
   const base = Math.max(1, left.startUsers, right.startUsers);
   const visualWidth = (value: number) => {
     if (value <= 0) return minHalf;
-    return Math.max(minHalf, maxHalf * Math.pow(value / base, 0.43));
+    return Math.max(minHalf, maxHalf * Math.pow(value / base, 0.38));
   };
   const leftWidths = left.stages.map((stage) => visualWidth(stage.users));
   const rightWidths = right.stages.map((stage) => visualWidth(stage.users));
@@ -223,6 +255,26 @@ function FunnelComparisonChart({
             const rightBetter = leftConversion != null && rightConversion != null && rightConversion > leftConversion;
             return (
               <g key={stage.key}>
+                {index === 0 && (
+                  <>
+                    <ellipse
+                      cx={center - leftTop / 2}
+                      cy={y1}
+                      rx={leftTop / 2}
+                      ry={compact ? 9 : 13}
+                      fill="#b9ddff"
+                      opacity={left.available ? 0.95 : 0.25}
+                    />
+                    <ellipse
+                      cx={center + rightTop / 2}
+                      cy={y1}
+                      rx={rightTop / 2}
+                      ry={compact ? 9 : 13}
+                      fill="#f8c7ab"
+                      opacity={right.available ? 0.95 : 0.25}
+                    />
+                  </>
+                )}
                 <polygon
                   points={`${center - leftTop},${y1} ${center},${y1} ${center},${y2} ${center - leftBottom},${y2}`}
                   fill={`url(#${blueId})`}
@@ -325,7 +377,7 @@ function ChannelPanel({
       </div>
       <FunnelComparisonChart comparison={comparison} compact />
       <div className="mt-2 text-center text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
-        {periodKind === "week" ? "WoW" : "MoM"} · {comparison.previous.shortLabel} vs {comparison.current.shortLabel}
+        {periodComparisonCode(periodKind)} · {comparison.previous.shortLabel} vs {comparison.current.shortLabel}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <ComparisonMetricCard title="CR" baseline={comparison.previous} current={comparison.current} kind="cr" />
@@ -349,9 +401,13 @@ export function PromotionWebFunnelDashboard({
 }) {
   const dataListId = useId();
   const [draftUrl, setDraftUrl] = useState("");
-  const [appliedUrl, setAppliedUrl] = useState("");
+  const [appliedUrl, setAppliedUrl] = useState(SITEWIDE_URL);
   const [periodKind, setPeriodKind] = useState<WebFunnelPeriodKind>("week");
   const [anchor, setAnchor] = useState("");
+  const [customFrom, setCustomFrom] = useState(DEFAULT_CUSTOM_RANGE.from);
+  const [customTo, setCustomTo] = useState(DEFAULT_CUSTOM_RANGE.to);
+  const [appliedCustomFrom, setAppliedCustomFrom] = useState(DEFAULT_CUSTOM_RANGE.from);
+  const [appliedCustomTo, setAppliedCustomTo] = useState(DEFAULT_CUSTOM_RANGE.to);
   const [channel, setChannel] = useState<WebFunnelChannel>("all");
   const [data, setData] = useState<PromotionWebFunnelResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -371,6 +427,10 @@ export function PromotionWebFunnelDashboard({
     const controller = new AbortController();
     const params = new URLSearchParams({ url: appliedUrl, period: periodKind });
     if (anchor) params.set("anchor", anchor);
+    if (periodKind === "custom") {
+      params.set("from", appliedCustomFrom);
+      params.set("to", appliedCustomTo);
+    }
     setLoading(true);
     setError("");
     fetch(`/api/promotions/web-funnel?${params.toString()}`, {
@@ -391,22 +451,49 @@ export function PromotionWebFunnelDashboard({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [anchor, appliedUrl, periodKind]);
+  }, [anchor, appliedCustomFrom, appliedCustomTo, appliedUrl, periodKind]);
 
   const applyUrl = (event: React.FormEvent) => {
     event.preventDefault();
-    const next = draftUrl.trim();
-    if (!next) {
-      setError("Вставте URL сторінки");
-      return;
-    }
+    const next = draftUrl.trim() || SITEWIDE_URL;
     setAnchor("");
+    setData(null);
     setAppliedUrl(next);
+  };
+
+  const changeDraftUrl = (value: string) => {
+    setDraftUrl(value);
+    if (!value.trim()) {
+      setAnchor("");
+      setData(null);
+      setError("");
+      setAppliedUrl(SITEWIDE_URL);
+    }
   };
 
   const changePeriod = (value: WebFunnelPeriodKind) => {
     setPeriodKind(value);
     setAnchor("");
+    if (value === "custom") {
+      setAppliedCustomFrom(customFrom);
+      setAppliedCustomTo(customTo);
+    }
+  };
+
+  const applyCustomPeriod = () => {
+    if (!customFrom || !customTo) {
+      setError("Оберіть початок і кінець періоду");
+      return;
+    }
+    if (customFrom > customTo) {
+      setError("Дата початку має бути раніше дати завершення");
+      return;
+    }
+    setError("");
+    setAnchor("");
+    setData(null);
+    setAppliedCustomFrom(customFrom);
+    setAppliedCustomTo(customTo);
   };
 
   const comparison = data?.comparisons[channel] ?? null;
@@ -420,15 +507,15 @@ export function PromotionWebFunnelDashboard({
         <div className="flex flex-wrap items-end gap-3">
           <form onSubmit={applyUrl} className="min-w-[300px] flex-1">
             <label className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
-              URL сторінки для воронки
+              URL сторінки · порожнє поле показує весь сайт
             </label>
             <div className="flex gap-2">
               <input
                 type="search"
                 value={draftUrl}
-                onChange={(event) => setDraftUrl(event.target.value)}
+                onChange={(event) => changeDraftUrl(event.target.value)}
                 list={dataListId}
-                placeholder="https://www.agromat.ua/discount/..."
+                placeholder="Весь сайт — або вставте URL окремої сторінки"
                 className="h-10 min-w-0 flex-1 rounded-xl border px-3 text-xs outline-none"
                 style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text)" }}
               />
@@ -443,7 +530,7 @@ export function PromotionWebFunnelDashboard({
                 className="h-10 rounded-xl border-0 px-5 text-xs font-bold text-white disabled:opacity-50"
                 style={{ background: "#118dff" }}
               >
-                {loading ? "Рахуємо…" : "Побудувати"}
+                {loading ? "Рахуємо…" : draftUrl.trim() ? "Побудувати" : "Весь сайт"}
               </button>
             </div>
           </form>
@@ -473,10 +560,12 @@ export function PromotionWebFunnelDashboard({
         {data && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="rounded-lg px-2.5 py-1 text-[10px] font-semibold" style={{ background: "#e8f4ff", color: "#0067b8" }}>
-              {data.normalizedUrl}
+              {data.scope === "sitewide" ? "Увесь сайт" : data.normalizedUrl}
             </span>
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              Унікальні користувачі · одна сесія · послідовні кроки
+              {data.scope === "sitewide"
+                ? "Унікальні користувачі кожної події GA4 · як у загальній воронці Looker"
+                : "Унікальні користувачі · події після відвідування URL в одній сесії"}
             </span>
           </div>
         )}
@@ -488,12 +577,11 @@ export function PromotionWebFunnelDashboard({
         </div>
       )}
 
-      {!appliedUrl && !error && (
+      {loading && !data && !error && (
         <section className="rounded-2xl border px-6 py-16 text-center" style={{ background: "#fff", borderColor: "var(--border)" }}>
-          <div className="text-base font-bold" style={{ color: "var(--text)" }}>Вставте URL сторінки</div>
+          <div className="text-base font-bold" style={{ color: "var(--text)" }}>Будуємо воронку…</div>
           <div className="mx-auto mt-2 max-w-xl text-xs leading-5" style={{ color: "var(--text-dim)" }}>
-            Дашборд знайде користувачів цієї сторінки в GA4 і покаже, скільки з них переглянули товар,
-            додали його в кошик, почали оформлення та зробили замовлення.
+            Отримуємо унікальних користувачів із GA4 та порівнюємо вибрані періоди.
           </div>
         </section>
       )}
@@ -509,6 +597,7 @@ export function PromotionWebFunnelDashboard({
                 {([
                   ["week", "Тижні"],
                   ["month", "Місяці"],
+                  ["custom", "Календар"],
                 ] as Array<[WebFunnelPeriodKind, string]>).map(([value, label]) => (
                   <button
                     key={value}
@@ -523,15 +612,54 @@ export function PromotionWebFunnelDashboard({
                   </button>
                 ))}
               </div>
-              <button
-                type="button"
-                onClick={() => setAnchor(data.navigation.previousAnchor)}
-                className="h-8 w-8 rounded-lg border text-sm font-bold"
-                style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text-mid)" }}
-                aria-label="Попередній період"
-              >
-                ◀
-              </button>
+
+              {periodKind === "custom" && (
+                <div className="flex flex-wrap items-end gap-2 rounded-xl border p-2" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+                  <label className="text-[9px] font-bold uppercase tracking-[0.08em]" style={{ color: "var(--text-dim)" }}>
+                    Від
+                    <input
+                      type="date"
+                      value={customFrom}
+                      max={DEFAULT_CUSTOM_RANGE.to}
+                      onChange={(event) => setCustomFrom(event.target.value)}
+                      className="mt-1 block h-8 rounded-lg border px-2 text-xs font-semibold outline-none"
+                      style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text)" }}
+                    />
+                  </label>
+                  <label className="text-[9px] font-bold uppercase tracking-[0.08em]" style={{ color: "var(--text-dim)" }}>
+                    До
+                    <input
+                      type="date"
+                      value={customTo}
+                      max={DEFAULT_CUSTOM_RANGE.to}
+                      onChange={(event) => setCustomTo(event.target.value)}
+                      className="mt-1 block h-8 rounded-lg border px-2 text-xs font-semibold outline-none"
+                      style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text)" }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={applyCustomPeriod}
+                    disabled={loading}
+                    className="h-8 rounded-lg border-0 px-3 text-[11px] font-bold text-white disabled:opacity-50"
+                    style={{ background: "#118dff" }}
+                  >
+                    Застосувати
+                  </button>
+                </div>
+              )}
+
+              {periodKind !== "custom" && (
+                <button
+                  type="button"
+                  onClick={() => setAnchor(data.navigation.previousAnchor)}
+                  className="h-8 w-8 rounded-lg border text-sm font-bold"
+                  style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text-mid)" }}
+                  aria-label="Попередній період"
+                >
+                  ◀
+                </button>
+              )}
               <span className="rounded-lg border px-3 py-1.5 text-xs font-bold" style={{ borderColor: "#b9dfff", background: "#f6fbff", color: "#0078d4" }}>
                 {comparison.previous.label}
               </span>
@@ -539,16 +667,18 @@ export function PromotionWebFunnelDashboard({
               <span className="rounded-lg border px-3 py-1.5 text-xs font-bold" style={{ borderColor: "#f8c4a8", background: "#fff8f4", color: "#f05a1a" }}>
                 {comparison.current.label}
               </span>
-              <button
-                type="button"
-                onClick={() => setAnchor(data.navigation.nextAnchor)}
-                disabled={!data.navigation.canGoNext}
-                className="h-8 w-8 rounded-lg border text-sm font-bold disabled:opacity-30"
-                style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text-mid)" }}
-                aria-label="Наступний період"
-              >
-                ▶
-              </button>
+              {periodKind !== "custom" && (
+                <button
+                  type="button"
+                  onClick={() => setAnchor(data.navigation.nextAnchor)}
+                  disabled={!data.navigation.canGoNext}
+                  className="h-8 w-8 rounded-lg border text-sm font-bold disabled:opacity-30"
+                  style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text-mid)" }}
+                  aria-label="Наступний період"
+                >
+                  ▶
+                </button>
+              )}
               {loading && <span className="text-[10px]" style={{ color: "#118dff" }}>Оновлюємо дані…</span>}
             </div>
           </section>

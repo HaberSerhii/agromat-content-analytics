@@ -8,11 +8,20 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const pageUrl = url.searchParams.get("url") || "";
-    const periodKind: WebFunnelPeriodKind = url.searchParams.get("period") === "month"
-      ? "month"
+    const requestedPeriod = url.searchParams.get("period");
+    const periodKind: WebFunnelPeriodKind = requestedPeriod === "month" || requestedPeriod === "custom"
+      ? requestedPeriod
       : "week";
     const anchor = url.searchParams.get("anchor") || undefined;
-    const data = await readPromotionWebFunnel({ url: pageUrl, periodKind, anchor });
+    const dateFrom = url.searchParams.get("from") || undefined;
+    const dateTo = url.searchParams.get("to") || undefined;
+    const data = await readPromotionWebFunnel({
+      url: pageUrl,
+      periodKind,
+      anchor,
+      dateFrom,
+      dateTo,
+    });
     return NextResponse.json(data, {
       headers: {
         "Cache-Control": "private, max-age=60, stale-while-revalidate=900",
@@ -23,4 +32,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
-

@@ -1,4 +1,4 @@
-export type WebFunnelPeriodKind = "week" | "month";
+export type WebFunnelPeriodKind = "week" | "month" | "custom";
 export type WebFunnelChannel = "all" | "organic" | "cpc" | "direct";
 export type WebFunnelStageKey =
   | "landing"
@@ -37,6 +37,7 @@ export type WebFunnelComparison = {
 export type PromotionWebFunnelResponse = {
   requestedUrl: string;
   normalizedUrl: string;
+  scope: "sitewide" | "page";
   periodKind: WebFunnelPeriodKind;
   generatedAt: string;
   navigation: {
