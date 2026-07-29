@@ -84,6 +84,11 @@ export type SalesPlanSummary = {
   daysInMonth: number;
 };
 
+export type SalesDocumentStatusSummary = {
+  states: Array<{ state: string; docs: number; revenue: number }>;
+  cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+};
+
 export type SalesDataset = {
   source: {
     bucket: string;
@@ -129,6 +134,7 @@ export type SalesDataset = {
     states: Array<{ state: string; docs: number; revenue: number }>;
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
     cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+    documentStatusesBySegment: Array<SalesDocumentStatusSummary & { segment: "Плитка" | "Сантехніка" }>;
   };
 };
 
@@ -769,6 +775,16 @@ function buildDataset(
   const states = new Map<string, { state: string; docs: number; revenue: number }>();
   const availableStates = new Map<string, { state: string; docs: number; revenue: number }>();
   const cancelReasons = new Map<string, { reason: string; docs: number; revenue: number }>();
+  const documentStatusesBySegment = new Map<
+    "Плитка" | "Сантехніка",
+    {
+      states: Map<string, { state: string; docs: number; revenue: number }>;
+      cancelReasons: Map<string, { reason: string; docs: number; revenue: number }>;
+    }
+  >([
+    ["Плитка", { states: new Map(), cancelReasons: new Map() }],
+    ["Сантехніка", { states: new Map(), cancelReasons: new Map() }],
+  ]);
   const planMonths = new Map<string, SalesMonthSummary>();
   const planReturnedRevenueByMonth = new Map<string, number>();
   const planSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
@@ -792,8 +808,22 @@ function buildDataset(
     if (matchesProductCodes(goodsCodes, productCodeSet)) {
       const statusDate = row.shippedDate || row.createdDate;
       const statusIgnoresDate = isShipmentAllowed(row.state);
-      if (statusIgnoresDate || isWithinOptionalFilter(statusDate, filter)) addState(availableStates, row.state, row.docsSum);
-      if (statusIgnoresDate || isWithinOptionalFilter(statusDate, filter)) addState(states, row.state, row.docsSum);
+      const matchesStatusDate = statusIgnoresDate || isWithinOptionalFilter(statusDate, filter);
+      if (matchesStatusDate) {
+        addState(availableStates, row.state, row.docsSum);
+        addState(states, row.state, row.docsSum);
+        if (isCanceled(row.state)) addCancelReason(cancelReasons, row.cancelReason, row.docsSum);
+
+        if (row.planGroup === "Плитка" || row.planGroup === "Сантехніка") {
+          const segmentSummary = documentStatusesBySegment.get(row.planGroup);
+          if (segmentSummary) {
+            addState(segmentSummary.states, row.state, row.docsSum);
+            if (isCanceled(row.state)) {
+              addCancelReason(segmentSummary.cancelReasons, row.cancelReason, row.docsSum);
+            }
+          }
+        }
+      }
     }
 
     const analysisDate = row.shippedDate || row.createdDate;
@@ -811,7 +841,6 @@ function buildDataset(
       if (isCanceled(row.state)) {
         selectedCanceledDocs += 1;
         selectedCanceledRevenue += row.docsSum;
-        addCancelReason(cancelReasons, row.cancelReason, row.docsSum);
       }
 
       addBucket(segments, row.planGroup, row, row.docsSum, row.goodsCount);
@@ -934,6 +963,11 @@ function buildDataset(
       states: [...states.values()].sort((a, b) => b.docs - a.docs),
       availableStates: [...availableStates.values()].sort((a, b) => b.docs - a.docs),
       cancelReasons: [...cancelReasons.values()].sort((a, b) => b.docs - a.docs),
+      documentStatusesBySegment: [...documentStatusesBySegment.entries()].map(([segment, summary]) => ({
+        segment,
+        states: [...summary.states.values()].sort((a, b) => b.docs - a.docs),
+        cancelReasons: [...summary.cancelReasons.values()].sort((a, b) => b.docs - a.docs),
+      })),
     },
   };
 }

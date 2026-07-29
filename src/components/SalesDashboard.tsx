@@ -106,6 +106,11 @@ type SalesDataset = {
     states: Array<{ state: string; docs: number; revenue: number }>;
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
     cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+    documentStatusesBySegment: Array<{
+      segment: "Плитка" | "Сантехніка";
+      states: Array<{ state: string; docs: number; revenue: number }>;
+      cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+    }>;
   };
 };
 
@@ -278,14 +283,59 @@ function CategoryRankingList({
 function DocumentStatusOverview({
   states,
   cancelReasons,
+  documentStatusesBySegment,
 }: {
   states: SalesDataset["summary"]["states"];
   cancelReasons: SalesDataset["summary"]["cancelReasons"];
+  documentStatusesBySegment: SalesDataset["summary"]["documentStatusesBySegment"];
 }) {
-  const maxRows = Math.max(states.length, cancelReasons.length);
+  const [selectedSegment, setSelectedSegment] = useState<"Усі" | "Плитка" | "Сантехніка">("Усі");
+  const segmentSummary = selectedSegment === "Усі"
+    ? null
+    : documentStatusesBySegment.find((item) => item.segment === selectedSegment);
+  const visibleStates = segmentSummary?.states || states;
+  const visibleCancelReasons = segmentSummary?.cancelReasons || cancelReasons;
+  const totalDocuments = visibleStates.reduce((total, item) => total + item.docs, 0);
+  const canceledDocuments = visibleStates
+    .filter((item) => item.state.toLocaleLowerCase("uk").includes("скасован"))
+    .reduce((total, item) => total + item.docs, 0);
+  const canceledShare = totalDocuments ? (canceledDocuments / totalDocuments) * 100 : null;
+  const maxRows = Math.max(visibleStates.length, visibleCancelReasons.length);
   return (
     <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-      <div className="text-sm font-bold mb-3" style={{ color: "var(--text)" }}>Статуси документів</div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Статуси документів</div>
+          <div
+            className="rounded-lg border px-2.5 py-1 text-xs"
+            style={{ borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}
+            title={`Скасовано ${fmtNum(canceledDocuments)} із ${fmtNum(totalDocuments)} документів`}
+          >
+            Частка скасованих: <b>{fmtPct(canceledShare)}</b>
+            <span className="ml-1 opacity-75">({fmtNum(canceledDocuments)} із {fmtNum(totalDocuments)})</span>
+          </div>
+        </div>
+        <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
+          {(["Усі", "Плитка", "Сантехніка"] as const).map((segment) => {
+            const active = selectedSegment === segment;
+            return (
+              <button
+                key={segment}
+                type="button"
+                onClick={() => setSelectedSegment(segment)}
+                aria-pressed={active}
+                className="h-7 rounded-md px-3 text-xs font-bold transition-colors"
+                style={{
+                  background: active ? "#118dff" : "transparent",
+                  color: active ? "#fff" : "var(--text-dim)",
+                }}
+              >
+                {segment}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <div className="min-w-[680px]">
           <div className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_108px_20px_minmax(0,1.3fr)_72px_108px] gap-x-2 text-[11px] font-bold" style={{ color: "var(--text-dim)" }}>
@@ -299,8 +349,8 @@ function DocumentStatusOverview({
           </div>
           <div className="mt-2 space-y-2">
             {Array.from({ length: maxRows }).map((_, index) => {
-              const state = states[index];
-              const reason = cancelReasons[index];
+              const state = visibleStates[index];
+              const reason = visibleCancelReasons[index];
               return (
                 <div key={index} className="grid grid-cols-[minmax(0,1.3fr)_72px_108px_20px_minmax(0,1.3fr)_72px_108px] gap-x-2 text-xs">
                   <span className="font-semibold truncate" style={{ color: "var(--text)" }} title={state?.state}>{state?.state || ""}</span>
@@ -829,6 +879,7 @@ export function SalesDashboard() {
         <DocumentStatusOverview
           states={data.summary.states}
           cancelReasons={data.summary.cancelReasons || []}
+          documentStatusesBySegment={data.summary.documentStatusesBySegment || []}
         />
       </section>
 
