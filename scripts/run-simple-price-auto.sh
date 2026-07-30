@@ -26,7 +26,10 @@ trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 {
   printf '\n[%s] Starting LeoCeramika + Plitka.ua refresh\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
-  node scripts/simple-price-worker.mjs --adapter leoceramika
-  node scripts/simple-price-worker.mjs --adapter plitka
-  printf '[%s] Finished LeoCeramika + Plitka.ua refresh\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  FAILED=0
+  node scripts/simple-price-worker.mjs --adapter leoceramika --skip-if-published-today || FAILED=1
+  node scripts/simple-price-worker.mjs --adapter plitka --skip-if-published-today || FAILED=1
+  printf '[%s] Finished LeoCeramika + Plitka.ua refresh (status=%s)\n' \
+    "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$FAILED"
+  exit "$FAILED"
 } >>"$LOG_FILE" 2>&1

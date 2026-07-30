@@ -333,7 +333,8 @@ APP_DIR=/path/to/Agromat-Analytics ./scripts/setup-vps-storage.sh
 
 - щогодини `scripts/run-products-sync.sh` для каталогу карток;
 - щогодини на 10-й хвилині `scripts/run-agromat-price-sync.sh` для цін Агромата в аналізі конкурентів (`products.actual_price` у Supabase);
-- щодня після Rozetka ранковий parser chain запускає LeoCeramika, потім Plitka.ua.
+- окремий cron о 09:30 та 13:30 запускає LeoCeramika, потім Plitka.ua; повторна
+  спроба пропускає вже успішно опублікований за поточну дату snapshot.
 
 Перевірка після налаштування:
 

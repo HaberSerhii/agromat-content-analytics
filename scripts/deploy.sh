@@ -116,13 +116,19 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     echo "CRON_TZ=Europe/Kyiv" >> "$TMP_CRON"
   fi
   echo "$AGROMAT_PRICE_CRON_LINE" >> "$TMP_CRON"
-  # LeoCeramika + Plitka.ua now run at the end of the parser's morning chain.
-  # Remove the old evening cron to avoid a duplicate second refresh.
+  # Tile competitors run independently from the long general parser chain.
+  # A second daily attempt is safe: completed snapshots are detected and skipped.
   sed -i.bak '/run-simple-price-auto\.sh/d' "$TMP_CRON"
   rm -f "$TMP_CRON.bak"
+  SIMPLE_PRICE_LOG="${SIMPLE_PRICE_LOG:-/var/log/agromat-simple-price.log}"
+  touch "$SIMPLE_PRICE_LOG" 2>/dev/null || true
+  chmod +x "$APP_DIR/scripts/run-simple-price-auto.sh"
+  SIMPLE_PRICE_CRON_LINE="30 9,13 * * * APP_DIR=$APP_DIR SIMPLE_PRICE_LOG=$SIMPLE_PRICE_LOG $APP_DIR/scripts/run-simple-price-auto.sh"
+  echo "$SIMPLE_PRICE_CRON_LINE" >> "$TMP_CRON"
   crontab "$TMP_CRON"
   rm -f "$TMP_CRON"
   echo "  cron: $AGROMAT_PRICE_CRON_LINE"
+  echo "  tile cron: $SIMPLE_PRICE_CRON_LINE"
 
   CURRENT_STEP="deploy companion Agromat_Parcer"
   echo "▸ $CURRENT_STEP"

@@ -34,6 +34,8 @@ const requestedSnapshotDate = argv.get("snapshot-date") || null;
 const limit = Number(process.env.SIMPLE_PRICE_LIMIT || argv.get("limit") || "0");
 const waitMs = Number(process.env.SIMPLE_PRICE_WAIT_MS || argv.get("wait-ms") || "200");
 const timeoutMs = Number(process.env.SIMPLE_PRICE_TIMEOUT_MS || argv.get("timeout-ms") || "25000");
+const dryRun = argv.has("dry-run");
+const skipIfPublishedToday = argv.has("skip-if-published-today");
 const today = new Date().toISOString().slice(0, 10);
 const snapshotDate = requestedSnapshotDate || today;
 
@@ -244,20 +246,52 @@ async function fetchTargets(db, competitorId) {
   return limit > 0 ? out.slice(0, limit) : out;
 }
 
-async function fetchLatestSuccessful(db, competitorId, beforeDate = null) {
+async function fetchLatestPublishedDate(db, competitorId, beforeDate = null) {
+  let auditQuery = db
+    .from("audit_log")
+    .select("snapshot_date")
+    .eq("action", "parser_run")
+    .eq("competitor_id", competitorId)
+    .not("snapshot_date", "is", null)
+    .order("snapshot_date", { ascending: false })
+    .limit(1);
+  if (beforeDate) auditQuery = auditQuery.lt("snapshot_date", beforeDate);
+  const { data: auditRows, error: auditError } = await auditQuery;
+  if (auditError) throw new Error(`latest audit_log: ${auditError.message}`);
+  if (auditRows?.[0]?.snapshot_date) return auditRows[0].snapshot_date;
+
+  // Compatibility fallback for snapshots created before publish markers were
+  // introduced. This only asks PostgREST for one date instead of scanning the
+  // competitor's complete price history.
+  let snapshotQuery = db
+    .from("price_snapshots")
+    .select("snapshot_date")
+    .eq("competitor_id", competitorId)
+    .not("price", "is", null)
+    .order("snapshot_date", { ascending: false })
+    .limit(1);
+  if (beforeDate) snapshotQuery = snapshotQuery.lt("snapshot_date", beforeDate);
+  const { data: snapshotRows, error: snapshotError } = await snapshotQuery;
+  if (snapshotError) throw new Error(`latest snapshot date: ${snapshotError.message}`);
+  return snapshotRows?.[0]?.snapshot_date || null;
+}
+
+async function fetchSuccessfulSnapshot(db, competitorId, beforeDate = null) {
   const out = new Map();
+  const date = await fetchLatestPublishedDate(db, competitorId, beforeDate);
+  if (!date) return out;
+
   let from = 0;
-  for (let i = 0; i < 100; i++) {
-    let query = db
+  for (let i = 0; i < 50; i++) {
+    const { data, error } = await db
       .from("price_snapshots")
       .select("product_id,price,status,found_url,confidence,found_brand,url_approved,snapshot_date")
       .eq("competitor_id", competitorId)
+      .eq("snapshot_date", date)
       .not("price", "is", null)
-      .order("snapshot_date", { ascending: false })
+      .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
-    if (beforeDate) query = query.lt("snapshot_date", beforeDate);
-    const { data, error } = await query;
-    if (error) throw new Error(`latest price_snapshots: ${error.message}`);
+    if (error) throw new Error(`snapshot ${date}: ${error.message}`);
     const rows = data || [];
     for (const row of rows) if (!out.has(row.product_id)) out.set(row.product_id, row);
     if (rows.length < PAGE_SIZE) break;
@@ -274,14 +308,25 @@ async function insertRows(db, rows) {
   }
 }
 
-async function replaceSnapshotRows(db, competitorId, rows) {
-  const { error: deleteError } = await db
-    .from("price_snapshots")
-    .delete()
-    .eq("competitor_id", competitorId)
-    .eq("snapshot_date", snapshotDate);
-  if (deleteError) throw new Error(`price_snapshots delete: ${deleteError.message}`);
+async function appendSnapshotRows(db, rows) {
+  // Snapshot reads already prefer the newest created_at for each
+  // product/competitor pair. Appending makes publication atomic from the
+  // dashboard's perspective and avoids a table-wide DELETE timing out before
+  // a new snapshot can be saved. A same-day retry may leave older duplicates,
+  // but they are ignored by readers and are safer than deleting live data.
   await insertRows(db, rows);
+}
+
+async function hasPublishedSnapshot(db, competitorId) {
+  const { data, error } = await db
+    .from("audit_log")
+    .select("job_id")
+    .eq("action", "parser_run")
+    .eq("competitor_id", competitorId)
+    .eq("snapshot_date", snapshotDate)
+    .limit(1);
+  if (error) throw new Error(`published snapshot check: ${error.message}`);
+  return Boolean(data?.length);
 }
 
 async function publishSnapshot(db, competitorId, result) {
@@ -319,11 +364,24 @@ async function main() {
   const competitor = competitors?.[0];
   if (compErr || !competitor) throw new Error(`competitor not found: ${compErr?.message || adapter}`);
 
+  if (skipIfPublishedToday && await hasPublishedSnapshot(db, competitor.id)) {
+    const result = { total: 0, found: 0, new_finds: 0, price_changes: 0, errors: 0, blocked: 0, skipped: true };
+    await writeJob({
+      status: "done",
+      current: 0,
+      total: 0,
+      label: `${LABEL}: знімок ${snapshotDate} вже опубліковано`,
+      finished_at: Math.floor(Date.now() / 1000),
+      result,
+    });
+    return;
+  }
+
   await writeJob({ label: `${LABEL}: читаю URL-и з БД` });
   const [targets, latestSuccessful, previousSuccessful] = await Promise.all([
     fetchTargets(db, competitor.id),
-    fetchLatestSuccessful(db, competitor.id),
-    fetchLatestSuccessful(db, competitor.id, snapshotDate),
+    fetchSuccessfulSnapshot(db, competitor.id),
+    fetchSuccessfulSnapshot(db, competitor.id, snapshotDate),
   ]);
   await writeJob({
     status: "running",
@@ -407,14 +465,16 @@ async function main() {
   }
 
   await writeJob({ label: `${LABEL}: зберігаю знімок ${snapshotDate}` });
-  await replaceSnapshotRows(db, competitor.id, rows);
   const result = { total: targets.length, found, new_finds: 0, price_changes: priceChanges, errors, blocked: 0 };
-  if (!singleProductId && limit <= 0) await publishSnapshot(db, competitor.id, result);
+  if (!dryRun) {
+    await appendSnapshotRows(db, rows);
+    if (!singleProductId && limit <= 0) await publishSnapshot(db, competitor.id, result);
+  }
   await writeJob({
     status: "done",
     current: targets.length,
     total: targets.length,
-    label: `${LABEL}: готово · знайдено ${found}/${targets.length}`,
+    label: `${LABEL}: ${dryRun ? "dry-run готово" : "готово"} · знайдено ${found}/${targets.length}`,
     finished_at: Math.floor(Date.now() / 1000),
     result,
   });
