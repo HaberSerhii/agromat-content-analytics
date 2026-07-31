@@ -17,6 +17,15 @@ export type PromotionProductMetricRow = {
   listToProductConversionPct: number | null;
   addToWishlistEvents: number;
   addToWishlistUsers: number;
+  productViews: number;
+  soldQty: number;
+  productToSaleConversionPct: number | null;
+};
+
+export type PromotionMissingProduct = {
+  goodsRef: number;
+  code: number | null;
+  name: string;
 };
 
 export type PromotionProductMetricsResponse = {
@@ -35,16 +44,24 @@ export type PromotionProductMetricsResponse = {
     viewItemListEvents: number;
     selectItemEvents: number;
     addToWishlistEvents: number;
+    productViewEvents: number;
     unmatchedGoodsRefs: number;
   };
+  missingProducts: PromotionMissingProduct[];
   rankings: {
     addToCart: PromotionProductMetricRow[];
     listToProduct: PromotionProductMetricRow[];
     addToWishlist: PromotionProductMetricRow[];
+    productToSale: PromotionProductMetricRow[];
+    antiListToProduct: PromotionProductMetricRow[];
+    antiProductToSale: PromotionProductMetricRow[];
   };
   totals: {
     addToCart: number;
     listToProduct: number;
     addToWishlist: number;
+    productToSale: number;
+    antiListToProduct: number;
+    antiProductToSale: number;
   };
 };

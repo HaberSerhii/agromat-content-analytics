@@ -191,6 +191,7 @@ export interface PromotionsPage {
 declare global {
   var _promotionsApiCache: { at: number; data: ApiPromotion[] } | undefined;
   var _deletedProductIdsCache: { at: number; data: Set<number> } | undefined;
+  var _deletedProductsCache: { at: number; data: ApiProduct[] } | undefined;
   var _activeProductIdsWithoutImagesCache: { at: number; data: Set<number> } | undefined;
 }
 
@@ -206,8 +207,18 @@ export async function fetchDeletedProductIds(): Promise<Set<number>> {
   const cached = global._deletedProductIdsCache;
   if (cached && Date.now() - cached.at < 15 * 60_000) return cached.data;
 
+  const products = await fetchDeletedProducts();
+  const ids = new Set(products.map((product) => product.id));
+  global._deletedProductIdsCache = { at: Date.now(), data: ids };
+  return ids;
+}
+
+export async function fetchDeletedProducts(): Promise<ApiProduct[]> {
+  const cached = global._deletedProductsCache;
+  if (cached && Date.now() - cached.at < 15 * 60_000) return cached.data;
+
   const first = await getJsonWithRetry<ProductsPage>("/products/?deleted=true&per_page=200&page=1");
-  const ids = new Set(first.data.map((product) => product.id));
+  const products = [...first.data];
   const pages = Array.from(
     { length: Math.max(0, first.meta.total_pages - 1) },
     (_, index) => index + 2,
@@ -221,11 +232,11 @@ export async function fetchDeletedProductIds(): Promise<Set<number>> {
       ),
     );
     for (const response of batch) {
-      for (const product of response.data) ids.add(product.id);
+      products.push(...response.data);
     }
   }
-  global._deletedProductIdsCache = { at: Date.now(), data: ids };
-  return ids;
+  global._deletedProductsCache = { at: Date.now(), data: products };
+  return products;
 }
 
 export async function fetchActiveProductIdsWithoutImages(): Promise<Set<number>> {
