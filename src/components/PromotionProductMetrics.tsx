@@ -14,7 +14,6 @@ const numberFmt = new Intl.NumberFormat("uk-UA");
 
 type RankingKind =
   | "listToProduct"
-  | "addToWishlist"
   | "productToSale"
   | "antiListToProduct"
   | "antiProductToSale";
@@ -26,7 +25,7 @@ type RankingConfig = {
   rankLabel: "TOP" | "АНТИ TOP";
 };
 
-const TOP_RANKING_CONFIG: RankingConfig[] = [
+const RANKING_CONFIG: RankingConfig[] = [
   {
     kind: "listToProduct",
     title: "Конверсія Список → Картка",
@@ -34,10 +33,10 @@ const TOP_RANKING_CONFIG: RankingConfig[] = [
     rankLabel: "TOP",
   },
   {
-    kind: "addToWishlist",
-    title: "Додавали в обране",
-    color: "#744da9",
-    rankLabel: "TOP",
+    kind: "antiListToProduct",
+    title: "АНТИТОП Список → Картка",
+    color: "#c23934",
+    rankLabel: "АНТИ TOP",
   },
   {
     kind: "productToSale",
@@ -45,18 +44,9 @@ const TOP_RANKING_CONFIG: RankingConfig[] = [
     color: "#f7630c",
     rankLabel: "TOP",
   },
-];
-
-const ANTI_RANKING_CONFIG: RankingConfig[] = [
-  {
-    kind: "antiListToProduct",
-    title: "Список → Картка",
-    color: "#c23934",
-    rankLabel: "АНТИ TOP",
-  },
   {
     kind: "antiProductToSale",
-    title: "Картка товару → Продаж",
+    title: "АНТИТОП Картка товару → Продаж",
     color: "#a4262c",
     rankLabel: "АНТИ TOP",
   },
@@ -102,16 +92,7 @@ function metricValue(kind: RankingKind, row: PromotionProductMetricRow) {
       </div>
     );
   }
-  const events = row.addToWishlistEvents;
-  const users = row.addToWishlistUsers;
-  return (
-    <div className="text-right">
-      <div className="font-black tabular-nums" style={{ color: "var(--text)" }}>{numberFmt.format(events)}</div>
-      <div className="mt-0.5 text-[9px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-        {numberFmt.format(users)} користувачів
-      </div>
-    </div>
-  );
+  return null;
 }
 
 function ProductRanking({
@@ -304,7 +285,6 @@ export function PromotionProductMetrics({
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Record<RankingKind, boolean>>({
     listToProduct: false,
-    addToWishlist: false,
     productToSale: false,
     antiListToProduct: false,
     antiProductToSale: false,
@@ -326,7 +306,6 @@ export function PromotionProductMetrics({
     setError("");
     setExpanded({
       listToProduct: false,
-      addToWishlist: false,
       productToSale: false,
       antiListToProduct: false,
       antiProductToSale: false,
@@ -398,7 +377,7 @@ export function PromotionProductMetrics({
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
-            TOP товарів за веб-метриками
+            Товарна аналітика за веб-метриками
           </div>
         </div>
         <label className="flex w-full cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 sm:w-auto" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
@@ -454,26 +433,8 @@ export function PromotionProductMetrics({
 
       {data && (
         <>
-          <div className={`mt-4 grid gap-4 lg:grid-cols-2 min-[1800px]:grid-cols-3 ${loading ? "opacity-60" : ""}`}>
-            {TOP_RANKING_CONFIG.map((config) => (
-              <ProductRanking
-                key={config.kind}
-                {...config}
-                rows={data.rankings[config.kind]}
-                total={data.totals[config.kind]}
-                expanded={expanded[config.kind]}
-                onToggle={() => setExpanded((current) => ({ ...current, [config.kind]: !current[config.kind] }))}
-                copiedCode={copiedCode}
-                onCopyCode={copyCode}
-              />
-            ))}
-          </div>
-
-          <div className="mt-6 text-xs font-black uppercase tracking-[0.12em]" style={{ color: "#a4262c" }}>
-            АНТИ TOP товарів
-          </div>
-          <div className={`mt-3 grid gap-4 lg:grid-cols-2 ${loading ? "opacity-60" : ""}`}>
-            {ANTI_RANKING_CONFIG.map((config) => (
+          <div className={`mt-4 grid gap-4 lg:grid-cols-2 ${loading ? "opacity-60" : ""}`}>
+            {RANKING_CONFIG.map((config) => (
               <ProductRanking
                 key={config.kind}
                 {...config}
