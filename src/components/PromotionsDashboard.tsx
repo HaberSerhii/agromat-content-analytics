@@ -212,7 +212,7 @@ function Select({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       title={title}
-      className="h-9 rounded-lg border px-3 text-xs outline-none"
+      className="h-9 w-full min-w-0 rounded-lg border px-3 text-xs outline-none sm:w-auto"
       style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text-mid)" }}
     >
       {children}
@@ -241,16 +241,16 @@ function MultiSelect({
   };
 
   return (
-    <details className="relative">
+    <details className="relative w-full sm:w-auto">
       <summary
-        className="h-9 min-w-[220px] max-w-[330px] cursor-pointer list-none rounded-lg border px-3 flex items-center justify-between gap-3 text-xs"
+        className="flex h-9 w-full min-w-0 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border px-3 text-xs sm:min-w-[220px] sm:max-w-[330px]"
         style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text-mid)" }}
       >
         <span className="truncate">{label}: {allSelected ? "усі" : count}</span>
         <span style={{ color: "var(--text-muted)" }}>▾</span>
       </summary>
       <div
-        className="absolute z-50 mt-1 w-[390px] max-w-[80vw] rounded-xl border p-2 shadow-xl"
+        className="absolute left-0 z-50 mt-1 w-[min(390px,calc(100vw-2rem))] rounded-xl border p-2 shadow-xl"
         style={{ background: "#fff", borderColor: "var(--border2)" }}
       >
         <div className="flex gap-2 border-b pb-2 mb-1" style={{ borderColor: "var(--border)" }}>
@@ -567,10 +567,10 @@ export function PromotionsDashboard() {
   return (
     <div className="space-y-3">
       <div
-        className="rounded-2xl border p-5"
+        className="rounded-2xl border p-3 sm:p-5"
         style={{ background: "var(--bg-card)", borderColor: "#118dff44", boxShadow: "var(--shadow-sm)" }}
       >
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>
             Акційні пропозиції. {section === "catalog"
               ? "Каталог."
@@ -579,24 +579,25 @@ export function PromotionsDashboard() {
                 : "Продажі."}
           </div>
           <div
-            className="flex flex-wrap gap-1 rounded-xl border p-0.5"
+            className="grid w-full grid-cols-3 gap-1 rounded-xl border p-0.5 lg:w-auto"
             style={{ background: "var(--bg-input)", borderColor: "var(--border2)" }}
           >
             {([
-              ["catalog", "Аналіз каталогу"],
-              ["web", "Аналіз веб-метрик"],
-              ["sales", "Аналіз продажів"],
-            ] as [Section, string][]).map(([value, label]) => (
+              ["catalog", "Аналіз каталогу", "Каталог"],
+              ["web", "Аналіз веб-метрик", "Веб-метрики"],
+              ["sales", "Аналіз продажів", "Продажі"],
+            ] as [Section, string, string][]).map(([value, label, shortLabel]) => (
               <button
                 key={value}
                 type="button"
                 onClick={() => setSection(value)}
-                className="rounded-lg border-0 px-3 py-1 text-xs font-semibold"
+                className="min-w-0 rounded-lg border-0 px-1.5 py-1.5 text-[11px] font-semibold sm:px-3 sm:text-xs"
                 style={section === value
                   ? { background: "#118dff", color: "#fff" }
                   : { background: "transparent", color: "var(--text-dim)" }}
               >
-                {label}
+                <span className="sm:hidden">{shortLabel}</span>
+                <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
           </div>
@@ -604,7 +605,7 @@ export function PromotionsDashboard() {
 
         {section === "catalog" && (
           <>
-            <div className="mt-3 flex flex-wrap items-end justify-end gap-2">
+            <div className="mt-3 grid w-full grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_36px] items-end justify-end gap-2 sm:flex">
             <button
               type="button"
               aria-label="Попередній день"
@@ -616,7 +617,7 @@ export function PromotionsDashboard() {
             >
               ←
             </button>
-            <label className="block">
+            <label className="block min-w-0">
               <span className="mb-1 block text-[9px] font-bold uppercase" style={{ color: "var(--text-dim)" }}>
                 Дата від
               </span>
@@ -625,11 +626,11 @@ export function PromotionsDashboard() {
                 value={dateFrom}
                 max={dateTo || undefined}
                 onChange={(event) => changeDateFrom(event.target.value)}
-                className="h-9 rounded-lg border px-3 text-xs font-semibold"
+                className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
                 style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text)" }}
               />
             </label>
-            <label className="block">
+            <label className="block min-w-0">
               <span className="mb-1 block text-[9px] font-bold uppercase" style={{ color: "var(--text-dim)" }}>
                 Дата до
               </span>
@@ -638,7 +639,7 @@ export function PromotionsDashboard() {
                 value={dateTo}
                 min={dateFrom || undefined}
                 onChange={(event) => changeDateTo(event.target.value)}
-                className="h-9 rounded-lg border px-3 text-xs font-semibold"
+                className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
                 style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text)" }}
               />
             </label>
@@ -766,12 +767,12 @@ export function PromotionsDashboard() {
               </span>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Пошук: назва, code, sku, goods_ref, ID акції…"
-                className="h-9 min-w-[290px] flex-1 rounded-lg border px-3 text-xs outline-none"
+                className="col-span-2 h-9 w-full min-w-0 flex-1 rounded-lg border px-3 text-xs outline-none sm:col-span-1 sm:min-w-[290px]"
                 style={{ background: "var(--bg-input)", borderColor: "var(--border2)" }}
               />
               <Select value={category} onChange={setCategory}>
@@ -795,7 +796,7 @@ export function PromotionsDashboard() {
               </Select>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               <MultiSelect
                 label="Акції P2"
                 options={promotionOptions}
@@ -837,7 +838,7 @@ export function PromotionsDashboard() {
               <button
                 type="button"
                 onClick={clearFilters}
-                className="h-9 rounded-lg border px-3 text-xs font-semibold"
+                className="h-9 w-full rounded-lg border px-3 text-xs font-semibold sm:w-auto"
                 style={{ borderColor: "var(--border2)", color: "var(--text-dim)" }}
               >
                 Скинути
@@ -853,7 +854,7 @@ export function PromotionsDashboard() {
               boxShadow: "inset 0 0 0 1px rgba(147,197,253,0.2)",
             }}
           >
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs font-bold uppercase tracking-wider" style={{ color: "#1e40af" }}>
                 ● Аналітика
               </div>
@@ -891,7 +892,7 @@ export function PromotionsDashboard() {
                 title="Скопіювати goods_ref у форматі id1|id2|…"
               />
 
-              <span className="ml-3 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#1e3a8a" }}>IDD:</span>
+              <span className="w-full text-[10px] font-bold uppercase tracking-wider sm:ml-3 sm:w-auto" style={{ color: "#1e3a8a" }}>IDD:</span>
               <ExportPill
                 label="↓ CSV"
                 color="#107c10"
@@ -920,7 +921,7 @@ export function PromotionsDashboard() {
                 title="Скопіювати коди товарів у форматі id1|id2|…"
               />
 
-              <span className="ml-3 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#1e3a8a" }}>Повна аналітика:</span>
+              <span className="w-full text-[10px] font-bold uppercase tracking-wider sm:ml-3 sm:w-auto" style={{ color: "#1e3a8a" }}>Повна аналітика:</span>
               <ExportPill
                 label="↓ Excel"
                 color="#3730a3"
@@ -946,7 +947,112 @@ export function PromotionsDashboard() {
           )}
           {!loading && !error && (
             <>
-              <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 300px)" }}>
+              <div className="divide-y lg:hidden" style={{ borderColor: "var(--border)" }}>
+                {visibleItems.map((item) => {
+                  const style = changeStyle(item.change);
+                  const isMissing = kpiFilter === "not_site";
+                  return (
+                    <article
+                      key={item.key}
+                      className="p-3"
+                      style={{
+                        background: isMissing ? "#fff6f6" : style.bg,
+                        borderColor: "var(--border)",
+                        borderLeft: `3px solid ${isMissing ? "#d13438" : style.border}`,
+                      }}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 text-[10px] font-extrabold" style={{ color: isMissing ? "#d13438" : style.color }}>
+                          {isMissing ? "НЕМАЄ НА САЙТІ" : style.label}
+                        </span>
+                        <span className="truncate text-[10px]" style={{ color: "var(--text-muted)" }}>
+                          goods_ref: {item.goodsRef || "—"}
+                        </span>
+                        <span
+                          className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums"
+                          style={(item.stockQty ?? 0) > 0
+                            ? { background: "#e5f3e5", color: "#107c10" }
+                            : { background: "#fde8e8", color: "#a4262c" }}
+                        >
+                          Залишок: {item.stockQty ?? "—"}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex items-start gap-2">
+                        <span className="shrink-0 text-xs font-extrabold" style={{ color: "#0078d4" }}>
+                          {item.code || `ID ${item.productId}`}
+                        </span>
+                        <div className="min-w-0 text-xs font-semibold leading-4">
+                          {item.productUrl && !isMissing ? (
+                            <a href={item.productUrl} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: "var(--text)" }}>
+                              {item.name}
+                            </a>
+                          ) : (
+                            <span style={{ color: "var(--text-mid)" }}>{item.name || "Дані товару відсутні"}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {!isMissing && (
+                        <>
+                          <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg p-2 text-[10px]" style={{ background: "rgba(255,255,255,.72)" }}>
+                            <div>
+                              <span style={{ color: "var(--text-muted)" }}>Ціна</span>
+                              <div className="font-bold" style={{ color: "var(--text)" }}>{formatMoney(item.basePrice)}</div>
+                            </div>
+                            <div className="text-right">
+                              <span style={{ color: "var(--text-muted)" }}>Акційна</span>
+                              <div className="font-extrabold" style={{ color: "#d13438" }}>
+                                {formatMoney(item.promoPrice)}{item.discountPct == null ? "" : ` · −${item.discountPct}%`}
+                              </div>
+                            </div>
+                            <div className="min-w-0">
+                              <span style={{ color: "var(--text-muted)" }}>Категорія / бренд</span>
+                              <div className="truncate font-semibold" title={`${item.categoryName} · ${item.brand}`}>
+                                {[item.categoryName, item.brand].filter(Boolean).join(" · ") || "—"}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span style={{ color: "var(--text-muted)" }}>Статус</span>
+                              <div className="truncate font-semibold" style={{ color: statusColor(item.statusName, item.stockQty) }}>
+                                ● {item.statusName}
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      <div className="mt-2 border-t pt-2 text-[10px] leading-4" style={{ borderColor: "var(--border)" }}>
+                        <div className="font-semibold" style={{ color: "var(--text)" }}>
+                          {item.promotionId} / {item.promotionIdinc} · {item.promotionName}
+                        </div>
+                        <div style={{ color: "var(--text-muted)" }}>
+                          {item.promotionType} · {formatDate(item.promotionStartDate)}–{formatDate(item.promotionEndDate)}
+                        </div>
+                        {item.linkedPromotions.map((promotion) => (
+                          <a
+                            key={promotion.idinc}
+                            href={promotion.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 block truncate font-semibold hover:underline"
+                            style={{ color: "#0078d4" }}
+                          >
+                            {promotion.name} ↗
+                          </a>
+                        ))}
+                      </div>
+                    </article>
+                  );
+                })}
+                {visibleItems.length === 0 && (
+                  <div className="px-4 py-12 text-center text-sm" style={{ color: "var(--text-dim)" }}>
+                    За вибраними фільтрами товарів немає.
+                  </div>
+                )}
+              </div>
+
+              <div className="hidden overflow-auto lg:block" style={{ maxHeight: "calc(100vh - 300px)" }}>
                 <table className="w-full min-w-[2050px] border-collapse text-xs">
                   <thead className="sticky top-0 z-10" style={{ background: "#fafafa" }}>
                     <tr style={{ color: "var(--text-dim)" }}>
@@ -1073,9 +1179,9 @@ export function PromotionsDashboard() {
                   </div>
                 )}
               </div>
-              <div className="flex items-center justify-between border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+              <div className="flex flex-col gap-2 border-t px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
                 <span>Показано {visibleItems.length} із {filtered.length} товарних позицій</span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2 sm:justify-start">
                   <button
                     type="button"
                     disabled={page <= 1}

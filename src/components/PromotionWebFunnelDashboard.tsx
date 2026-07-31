@@ -216,10 +216,10 @@ function FunnelComparisonChart({
   const orangeId = useId().replaceAll(":", "");
 
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="w-full min-w-0 overflow-hidden">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className={compact ? "mx-auto block min-w-[400px]" : "mx-auto block min-w-[620px]"}
+        className="mx-auto block h-auto w-full min-w-0"
         role="img"
         aria-label={`Воронка ${left.label} у порівнянні з ${right.label}`}
         style={{ width: "100%", maxWidth: compact ? 680 : 900 }}
@@ -513,15 +513,15 @@ export function PromotionWebFunnelDashboard({
   return (
     <div className="space-y-4">
       <section
-        className="rounded-2xl border p-4"
+        className="rounded-2xl border p-3 sm:p-4"
         style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}
       >
-        <div className="flex flex-wrap items-end gap-3">
-          <form onSubmit={applyUrl} className="min-w-[300px] flex-1">
+        <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-end">
+          <form onSubmit={applyUrl} className="w-full min-w-0 flex-1">
             <label className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
               URL сторінки · порожнє поле показує весь сайт
             </label>
-            <div className="flex gap-2">
+            <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
               <input
                 type="search"
                 value={draftUrl}
@@ -539,7 +539,7 @@ export function PromotionWebFunnelDashboard({
               <button
                 type="submit"
                 disabled={loading}
-                className="h-10 rounded-xl border-0 px-5 text-xs font-bold text-white disabled:opacity-50"
+                className="h-10 w-full rounded-xl border-0 px-5 text-xs font-bold text-white disabled:opacity-50 sm:w-auto"
                 style={{ background: "#118dff" }}
               >
                 {loading ? "Рахуємо…" : draftUrl.trim() ? "Побудувати" : "Весь сайт"}
@@ -547,17 +547,17 @@ export function PromotionWebFunnelDashboard({
             </div>
           </form>
 
-          <div>
+          <div className="min-w-0 sm:w-auto">
             <div className="mb-1 text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
               Пристрій
             </div>
-            <div className="flex rounded-xl border p-0.5" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+            <div className="grid w-full grid-cols-3 rounded-xl border p-0.5 sm:w-auto" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
               {DEVICES.map((item) => (
                 <button
                   key={item.key}
                   type="button"
                   onClick={() => setDevice(item.key)}
-                  className="rounded-lg border-0 px-3 py-2 text-[11px] font-bold"
+                  className="min-w-0 rounded-lg border-0 px-2 py-2 text-[11px] font-bold sm:px-3"
                   style={device === item.key
                     ? { background: "#fff", color: "#0078d4", boxShadow: "var(--shadow-sm)" }
                     : { background: "transparent", color: "var(--text-dim)" }}
@@ -568,17 +568,17 @@ export function PromotionWebFunnelDashboard({
             </div>
           </div>
 
-          <div>
+          <div className="min-w-0 sm:w-auto">
             <div className="mb-1 text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
               Канал
             </div>
-            <div className="flex rounded-xl border p-0.5" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+            <div className="grid w-full grid-cols-4 rounded-xl border p-0.5 sm:w-auto" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
               {CHANNELS.map((item) => (
                 <button
                   key={item.key}
                   type="button"
                   onClick={() => setChannel(item.key)}
-                  className="rounded-lg border-0 px-3 py-2 text-[11px] font-bold"
+                  className="min-w-0 rounded-lg border-0 px-1.5 py-2 text-[10px] font-bold sm:px-3 sm:text-[11px]"
                   style={channel === item.key
                     ? { background: "#fff", color: item.color, boxShadow: "var(--shadow-sm)" }
                     : { background: "transparent", color: "var(--text-dim)" }}
@@ -628,8 +628,8 @@ export function PromotionWebFunnelDashboard({
             className="rounded-2xl border p-3"
             style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex rounded-xl border p-0.5" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="grid w-full grid-cols-3 rounded-xl border p-0.5 sm:w-auto" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
                 {([
                   ["week", "Тижні"],
                   ["month", "Місяці"],
@@ -650,7 +650,7 @@ export function PromotionWebFunnelDashboard({
               </div>
 
               {periodKind === "custom" && (
-                <div className="flex flex-wrap items-end gap-2 rounded-xl border p-2" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+                <div className="grid w-full grid-cols-2 items-end gap-2 rounded-xl border p-2 sm:flex sm:w-auto sm:flex-wrap" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
                   <label className="text-[9px] font-bold uppercase tracking-[0.08em]" style={{ color: "var(--text-dim)" }}>
                     Від
                     <input
@@ -658,7 +658,7 @@ export function PromotionWebFunnelDashboard({
                       value={customFrom}
                       max={DEFAULT_CUSTOM_RANGE.to}
                       onChange={(event) => setCustomFrom(event.target.value)}
-                      className="mt-1 block h-8 rounded-lg border px-2 text-xs font-semibold outline-none"
+                      className="mt-1 block h-8 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold outline-none"
                       style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text)" }}
                     />
                   </label>
@@ -669,7 +669,7 @@ export function PromotionWebFunnelDashboard({
                       value={customTo}
                       max={DEFAULT_CUSTOM_RANGE.to}
                       onChange={(event) => setCustomTo(event.target.value)}
-                      className="mt-1 block h-8 rounded-lg border px-2 text-xs font-semibold outline-none"
+                      className="mt-1 block h-8 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold outline-none"
                       style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text)" }}
                     />
                   </label>
@@ -677,7 +677,7 @@ export function PromotionWebFunnelDashboard({
                     type="button"
                     onClick={applyCustomPeriod}
                     disabled={loading}
-                    className="h-8 rounded-lg border-0 px-3 text-[11px] font-bold text-white disabled:opacity-50"
+                    className="col-span-2 h-8 w-full rounded-lg border-0 px-3 text-[11px] font-bold text-white disabled:opacity-50 sm:w-auto"
                     style={{ background: "#118dff" }}
                   >
                     Застосувати
@@ -685,6 +685,7 @@ export function PromotionWebFunnelDashboard({
                 </div>
               )}
 
+              <div className="flex min-w-0 items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
               {periodKind !== "custom" && (
                 <button
                   type="button"
@@ -715,13 +716,14 @@ export function PromotionWebFunnelDashboard({
                   ▶
                 </button>
               )}
-              {loading && <span className="text-[10px]" style={{ color: "#118dff" }}>Оновлюємо дані…</span>}
+              {loading && <span className="shrink-0 text-[10px]" style={{ color: "#118dff" }}>Оновлюємо дані…</span>}
+              </div>
             </div>
           </section>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(340px,.8fr)]">
             <section
-              className="rounded-2xl border p-4"
+              className="rounded-2xl border p-2 sm:p-4"
               style={{ background: "#fff", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}
             >
               <FunnelComparisonChart comparison={comparison} />

@@ -508,8 +508,9 @@ export function PromotionSalesDashboard() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
-        <div className="flex flex-wrap items-end gap-3">
+      <section className="rounded-xl border p-3 sm:p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
+        <div className="flex flex-wrap items-end gap-2 sm:gap-3">
+          <div className="grid w-full grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_36px] items-end gap-2 md:w-auto">
           <button
             type="button"
             aria-label="Попередній день"
@@ -519,25 +520,25 @@ export function PromotionSalesDashboard() {
           >
             ←
           </button>
-          <label className="block">
+          <label className="block min-w-0">
             <span className="mb-1 block text-[10px] font-bold uppercase" style={{ color: "var(--text-dim)" }}>Дата від</span>
             <input
               type="date"
               value={dateFrom}
               max={dateTo}
               onChange={(event) => changeFrom(event.target.value)}
-              className="h-9 rounded-lg border px-3 text-xs font-semibold"
+              className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
               style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}
             />
           </label>
-          <label className="block">
+          <label className="block min-w-0">
             <span className="mb-1 block text-[10px] font-bold uppercase" style={{ color: "var(--text-dim)" }}>Дата до</span>
             <input
               type="date"
               value={dateTo}
               min={dateFrom}
               onChange={(event) => changeTo(event.target.value)}
-              className="h-9 rounded-lg border px-3 text-xs font-semibold"
+              className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
               style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}
             />
           </label>
@@ -550,6 +551,7 @@ export function PromotionSalesDashboard() {
           >
             →
           </button>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -557,7 +559,7 @@ export function PromotionSalesDashboard() {
               setDateFrom(range.from);
               setDateTo(range.to);
             }}
-            className="h-9 rounded-lg border px-3 text-xs font-bold"
+            className="h-9 flex-1 rounded-lg border px-3 text-xs font-bold sm:flex-none"
             style={{ borderColor: "#118dff", background: "#118dff", color: "#fff" }}
           >
             Поточний місяць
@@ -569,12 +571,12 @@ export function PromotionSalesDashboard() {
               setDateFrom(range.from);
               setDateTo(range.to);
             }}
-            className="h-9 rounded-lg border px-3 text-xs font-bold"
+            className="h-9 flex-1 rounded-lg border px-3 text-xs font-bold sm:flex-none"
             style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}
           >
             Минулий місяць
           </button>
-          <div className="ml-auto text-right">
+          <div className="ml-0 w-full text-left sm:ml-auto sm:w-auto sm:text-right">
             <div className="text-2xl font-black tabular-nums" style={{ color: "#118dff" }}>
               {numberFmt.format(data.summary.activePromotions)}
             </div>

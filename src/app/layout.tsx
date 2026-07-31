@@ -20,13 +20,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://www.agromat.ua" crossOrigin="anonymous" />
       </head>
       <body>
-        <div className="min-h-screen px-4 py-4">
-          <header className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="min-h-screen px-2 py-2 sm:px-4 sm:py-4">
+          <header className="mb-3 flex min-w-0 flex-col gap-2 sm:mb-4 lg:flex-row lg:items-center lg:justify-between">
             {/* eslint-disable-next-line @next/next/no-img-element -- external SVG logo is tiny and should load directly from the source */}
             <img
               src="https://www.agromat.ua/img/components/logo.svg"
               alt="Agromat"
-              className="h-9 block"
+              className="block h-7 self-start sm:h-9"
               style={{ filter: "brightness(0) saturate(100%) invert(20%) sepia(100%) saturate(2800%) hue-rotate(185deg) brightness(90%)" }}
             />
             <Tabs />
