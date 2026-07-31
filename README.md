@@ -362,6 +362,8 @@ curl -s http://127.0.0.1:3000/api/products/snapshots
 | GET     | `/api/products/sync/status`           | Поточний стан синку (для polling-у з UI). Завжди bypass кешу.                                                     |
 | POST    | `/api/products/sync`                  | Тригерить повний sync. Захищено `Authorization: Bearer ${CRON_SECRET || NEXT_PUBLIC_DASHBOARD_SECRET}`.            |
 | GET/POST| `/api/products/required-attrs`        | GET — повертає поточний конфіг. POST — оновлює (потребує заголовок `x-dashboard-secret`).                         |
+| GET     | `/api/promotions/web-funnel`          | Воронка GA4 для всього сайту або відвідувачів заданого URL за період, каналом і пристроєм.                       |
+| GET     | `/api/promotions/product-metrics`     | TOP товарів за `add_to_cart`, CTR списку `select_item / view_item_list` і `add_to_wishlist`; зв'язок з каталогом за `item_id = goods_ref`. |
 
 ---
 

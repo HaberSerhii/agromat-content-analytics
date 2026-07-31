@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { PromotionProductMetrics } from "@/components/PromotionProductMetrics";
 import type {
   PromotionWebFunnelResponse,
   WebFunnelChannel,
@@ -744,6 +745,14 @@ export function PromotionWebFunnelDashboard({
               ))}
             </div>
           </div>
+
+          <PromotionProductMetrics
+            url={appliedUrl}
+            from={comparison.current.from}
+            to={comparison.current.to}
+            channel={channel}
+            device={device}
+          />
         </>
       )}
     </div>
