@@ -140,10 +140,10 @@ function ProductRanking({
   const visibleRows = rows.slice(0, expanded ? 250 : 20);
   return (
     <section className="overflow-hidden rounded-2xl border" style={{ background: "#fff", borderColor: "var(--border)" }}>
-      <div className="border-b px-4 py-3" style={{ borderColor: "var(--border2)" }}>
+      <div className="border-b px-3 py-3 sm:px-4" style={{ borderColor: "var(--border2)" }}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-xs font-black uppercase tracking-[0.08em]" style={{ color }}>{title}</div>
+            <div className="text-[11px] font-black uppercase tracking-[0.08em] sm:text-xs" style={{ color }}>{title}</div>
           </div>
           <span className="shrink-0 rounded-lg px-2 py-1 text-[9px] font-black" style={{ background: `${color}12`, color }}>
             {rankLabel} {expanded ? Math.min(250, total) : Math.min(20, total)}
@@ -156,7 +156,54 @@ function ProductRanking({
           <div className="text-xs font-bold" style={{ color: "var(--text-mid)" }}>Немає даних за вибраний період</div>
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="divide-y lg:hidden" style={{ borderColor: "var(--border2)" }}>
+          {visibleRows.map((row, index) => (
+            <article key={row.goodsRef} className="p-3" style={{ borderColor: "var(--border2)" }}>
+              <div className="flex items-center gap-2">
+                <span className="w-5 shrink-0 text-right text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+                  {index + 1}
+                </span>
+                {row.code != null ? (
+                  <button
+                    type="button"
+                    onClick={() => onCopyCode(row.code as number)}
+                    className="rounded border-0 bg-transparent p-0 text-[11px] font-bold tabular-nums hover:underline"
+                    style={{ color: copiedCode === row.code ? "#107c10" : "#0078d4" }}
+                    title="Скопіювати код товару"
+                  >
+                    {copiedCode === row.code ? "✓ " : ""}{row.code}
+                  </button>
+                ) : (
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Без коду</span>
+                )}
+                <span
+                  className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums"
+                  style={row.inStock
+                    ? { background: "#e5f3e5", color: "#107c10" }
+                    : { background: "#fde8e8", color: "#a4262c" }}
+                >
+                  Залишок: {row.stockQty == null ? "—" : numberFmt.format(row.stockQty)}
+                </span>
+              </div>
+              <div className="mt-2 text-xs leading-4">
+                {row.url ? (
+                  <a href={row.url} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline" style={{ color: "var(--text)" }}>
+                    {row.name}
+                  </a>
+                ) : (
+                  <span className="font-semibold" style={{ color: "var(--text-mid)" }}>{row.name}</span>
+                )}
+              </div>
+              <div className="mt-2 flex justify-end rounded-lg px-2 py-1.5" style={{ background: "var(--bg-input)" }}>
+                {metricValue(kind, row)}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {visibleRows.length > 0 && (
+        <div className="hidden overflow-x-auto lg:block">
           <table className="w-full border-collapse text-[10px]">
             <thead>
               <tr style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>
@@ -347,14 +394,14 @@ export function PromotionProductMetrics({
   };
 
   return (
-    <section className="rounded-2xl border p-4" style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="rounded-2xl border p-3 sm:p-4" style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}>
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
             TOP товарів за веб-метриками
           </div>
         </div>
-        <label className="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+        <label className="flex w-full cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 sm:w-auto" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
           <input
             type="checkbox"
             checked={includeOutOfStock}

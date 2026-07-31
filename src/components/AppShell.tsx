@@ -113,7 +113,7 @@ export function AppShell() {
             borderColor: "var(--border)",
             background: "var(--bg-card)",
             boxShadow: "var(--shadow-sm)",
-            height: "calc(100vh - 90px)",
+            height: "calc(100dvh - 118px)",
           }}
         >
           {parserFrameReady ? (
