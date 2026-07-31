@@ -12,40 +12,85 @@ import type {
 
 const numberFmt = new Intl.NumberFormat("uk-UA");
 
-type RankingKind = "addToCart" | "listToProduct" | "addToWishlist";
+type RankingKind =
+  | "listToProduct"
+  | "addToWishlist"
+  | "productToSale"
+  | "antiListToProduct"
+  | "antiProductToSale";
 
-const RANKING_CONFIG: Array<{
+type RankingConfig = {
   kind: RankingKind;
   title: string;
-  description: string;
-  emptyEvent: string;
   color: string;
-}> = [
-  {
-    kind: "addToCart",
-    title: "Додавали в кошик",
-    description: "За кількістю подій add_to_cart",
-    emptyEvent: "add_to_cart",
-    color: "#118dff",
-  },
+  rankLabel: "TOP" | "АНТИ TOP";
+};
+
+const TOP_RANKING_CONFIG: RankingConfig[] = [
   {
     kind: "listToProduct",
     title: "Конверсія Список → Картка",
-    description: "Переходи select_item ÷ покази товару view_item_list · мін. 20 показів",
-    emptyEvent: "view_item_list / select_item",
     color: "#107c10",
+    rankLabel: "TOP",
   },
   {
     kind: "addToWishlist",
     title: "Додавали в обране",
-    description: "За кількістю подій add_to_wishlist",
-    emptyEvent: "add_to_wishlist",
     color: "#744da9",
+    rankLabel: "TOP",
+  },
+  {
+    kind: "productToSale",
+    title: "Картка товару → Продаж",
+    color: "#f7630c",
+    rankLabel: "TOP",
   },
 ];
 
+const ANTI_RANKING_CONFIG: RankingConfig[] = [
+  {
+    kind: "antiListToProduct",
+    title: "Список → Картка",
+    color: "#c23934",
+    rankLabel: "АНТИ TOP",
+  },
+  {
+    kind: "antiProductToSale",
+    title: "Картка товару → Продаж",
+    color: "#a4262c",
+    rankLabel: "АНТИ TOP",
+  },
+];
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function formatQty(value: number): string {
+  return Number.isInteger(value) ? numberFmt.format(value) : value.toLocaleString("uk-UA", { maximumFractionDigits: 2 });
+}
+
 function metricValue(kind: RankingKind, row: PromotionProductMetricRow) {
-  if (kind === "listToProduct") {
+  if (kind === "productToSale" || kind === "antiProductToSale") {
+    return (
+      <div className="text-right">
+        <div className="font-black tabular-nums" style={{ color: "#f7630c" }}>
+          {row.productToSaleConversionPct == null ? "—" : `${row.productToSaleConversionPct.toFixed(1)}%`}
+        </div>
+        <div className="mt-0.5 text-[9px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+          {numberFmt.format(row.productViews)} переходів · {formatQty(row.soldQty)} шт.
+        </div>
+      </div>
+    );
+  }
+  if (kind === "listToProduct" || kind === "antiListToProduct") {
     return (
       <div className="text-right">
         <div className="font-black tabular-nums" style={{ color: "#107c10" }}>
@@ -57,8 +102,8 @@ function metricValue(kind: RankingKind, row: PromotionProductMetricRow) {
       </div>
     );
   }
-  const events = kind === "addToCart" ? row.addToCartEvents : row.addToWishlistEvents;
-  const users = kind === "addToCart" ? row.addToCartUsers : row.addToWishlistUsers;
+  const events = row.addToWishlistEvents;
+  const users = row.addToWishlistUsers;
   return (
     <div className="text-right">
       <div className="font-black tabular-nums" style={{ color: "var(--text)" }}>{numberFmt.format(events)}</div>
@@ -72,9 +117,8 @@ function metricValue(kind: RankingKind, row: PromotionProductMetricRow) {
 function ProductRanking({
   kind,
   title,
-  description,
-  emptyEvent,
   color,
+  rankLabel,
   rows,
   total,
   expanded,
@@ -84,9 +128,8 @@ function ProductRanking({
 }: {
   kind: RankingKind;
   title: string;
-  description: string;
-  emptyEvent: string;
   color: string;
+  rankLabel: "TOP" | "АНТИ TOP";
   rows: PromotionProductMetricRow[];
   total: number;
   expanded: boolean;
@@ -101,10 +144,9 @@ function ProductRanking({
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-xs font-black uppercase tracking-[0.08em]" style={{ color }}>{title}</div>
-            <div className="mt-1 text-[10px] leading-4" style={{ color: "var(--text-muted)" }}>{description}</div>
           </div>
           <span className="shrink-0 rounded-lg px-2 py-1 text-[9px] font-black" style={{ background: `${color}12`, color }}>
-            TOP {expanded ? Math.min(250, total) : Math.min(20, total)}
+            {rankLabel} {expanded ? Math.min(250, total) : Math.min(20, total)}
           </span>
         </div>
       </div>
@@ -112,9 +154,6 @@ function ProductRanking({
       {visibleRows.length === 0 ? (
         <div className="px-5 py-10 text-center">
           <div className="text-xs font-bold" style={{ color: "var(--text-mid)" }}>Немає даних за вибраний період</div>
-          <div className="mx-auto mt-1 max-w-sm text-[10px] leading-4" style={{ color: "var(--text-muted)" }}>
-            Перевірте, чи передається подія <code>{emptyEvent}</code> з числовим <code>item_id = goods_ref</code>.
-          </div>
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -190,7 +229,9 @@ function ProductRanking({
           className="w-full border-0 border-t px-4 py-2.5 text-[10px] font-bold"
           style={{ borderColor: "var(--border2)", background: "var(--bg-input)", color }}
         >
-          {expanded ? "Згорнути до TOP 20" : `Показати TOP ${Math.min(250, total)}`}
+          {expanded
+            ? `Згорнути до ${rankLabel} 20`
+            : `Показати ${rankLabel} ${Math.min(250, total)}`}
         </button>
       )}
     </section>
@@ -215,11 +256,14 @@ export function PromotionProductMetrics({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Record<RankingKind, boolean>>({
-    addToCart: false,
     listToProduct: false,
     addToWishlist: false,
+    productToSale: false,
+    antiListToProduct: false,
+    antiProductToSale: false,
   });
   const [copiedCode, setCopiedCode] = useState<number | null>(null);
+  const [missingExportState, setMissingExportState] = useState<"idle" | "loading" | "done" | "empty">("idle");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -233,7 +277,13 @@ export function PromotionProductMetrics({
     });
     setLoading(true);
     setError("");
-    setExpanded({ addToCart: false, listToProduct: false, addToWishlist: false });
+    setExpanded({
+      listToProduct: false,
+      addToWishlist: false,
+      productToSale: false,
+      antiListToProduct: false,
+      antiProductToSale: false,
+    });
     fetch(`/api/promotions/product-metrics?${params.toString()}`, {
       cache: "no-store",
       signal: controller.signal,
@@ -264,15 +314,44 @@ export function PromotionProductMetrics({
     }
   };
 
+  const exportMissingCodes = async () => {
+    if (!data) return;
+    const codes = [...new Set(
+      data.missingProducts
+        .map((product) => product.code)
+        .filter((code): code is number => code != null && code > 0),
+    )].sort((left, right) => left - right);
+    if (codes.length === 0) {
+      setMissingExportState("empty");
+      window.setTimeout(() => setMissingExportState("idle"), 1800);
+      return;
+    }
+    setMissingExportState("loading");
+    try {
+      const XLSX = await import("xlsx");
+      const sheet = XLSX.utils.aoa_to_sheet([["IDD"], ...codes.map((code) => [code])]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "IDD");
+      const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+      triggerDownload(
+        new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+        `missing-products-idd-${from}-${to}.xlsx`,
+      );
+      await navigator.clipboard.writeText(codes.join("\n")).catch(() => undefined);
+      setMissingExportState("done");
+    } catch {
+      setMissingExportState("idle");
+      return;
+    }
+    window.setTimeout(() => setMissingExportState("idle"), 1800);
+  };
+
   return (
     <section className="rounded-2xl border p-4" style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
             TOP товарів за веб-метриками
-          </div>
-          <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
-            GA4 item_id → goods_ref · актуальна назва, код, URL та залишок із API каталогу
           </div>
         </div>
         <label className="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
@@ -288,14 +367,28 @@ export function PromotionProductMetrics({
         </label>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2 text-[9px]">
-        <span className="rounded-lg px-2 py-1 font-semibold" style={{ background: "#e5f3e5", color: "#107c10" }}>
-          {includeOutOfStock ? "Усі залишки" : "За замовчуванням: залишок > 1"}
-        </span>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[9px]">
         {data && data.tracking.unmatchedGoodsRefs > 0 && (
-          <span className="rounded-lg px-2 py-1 font-semibold" style={{ background: "#fff4ce", color: "#8a6d00" }}>
-            {numberFmt.format(data.tracking.unmatchedGoodsRefs)} goods_ref не знайдено в поточному каталозі
-          </span>
+          <>
+            <span className="rounded-lg px-2 py-1 font-semibold" style={{ background: "#fff4ce", color: "#8a6d00" }}>
+              {numberFmt.format(data.tracking.unmatchedGoodsRefs)} товаров, которые присутствуют в анализе, отсутствуют на сайте
+            </span>
+            <button
+              type="button"
+              onClick={exportMissingCodes}
+              disabled={missingExportState === "loading"}
+              className="rounded-lg border px-2.5 py-1 font-bold disabled:opacity-50"
+              style={{ borderColor: "#d5b55b", background: "#fff", color: "#7a5b00" }}
+            >
+              {missingExportState === "loading"
+                ? "Выгружаем…"
+                : missingExportState === "done"
+                  ? "✓ Выгружено"
+                  : missingExportState === "empty"
+                    ? "Нет IDD"
+                    : "Выгрузить IDD"}
+            </button>
+          </>
         )}
         {loading && <span className="px-2 py-1 font-semibold" style={{ color: "#118dff" }}>Оновлюємо TOP…</span>}
       </div>
@@ -313,20 +406,40 @@ export function PromotionProductMetrics({
       )}
 
       {data && (
-        <div className={`mt-4 grid gap-4 xl:grid-cols-3 ${loading ? "opacity-60" : ""}`}>
-          {RANKING_CONFIG.map((config) => (
-            <ProductRanking
-              key={config.kind}
-              {...config}
-              rows={data.rankings[config.kind]}
-              total={data.totals[config.kind]}
-              expanded={expanded[config.kind]}
-              onToggle={() => setExpanded((current) => ({ ...current, [config.kind]: !current[config.kind] }))}
-              copiedCode={copiedCode}
-              onCopyCode={copyCode}
-            />
-          ))}
-        </div>
+        <>
+          <div className={`mt-4 grid gap-4 lg:grid-cols-2 min-[1800px]:grid-cols-3 ${loading ? "opacity-60" : ""}`}>
+            {TOP_RANKING_CONFIG.map((config) => (
+              <ProductRanking
+                key={config.kind}
+                {...config}
+                rows={data.rankings[config.kind]}
+                total={data.totals[config.kind]}
+                expanded={expanded[config.kind]}
+                onToggle={() => setExpanded((current) => ({ ...current, [config.kind]: !current[config.kind] }))}
+                copiedCode={copiedCode}
+                onCopyCode={copyCode}
+              />
+            ))}
+          </div>
+
+          <div className="mt-6 text-xs font-black uppercase tracking-[0.12em]" style={{ color: "#a4262c" }}>
+            АНТИ TOP товарів
+          </div>
+          <div className={`mt-3 grid gap-4 lg:grid-cols-2 ${loading ? "opacity-60" : ""}`}>
+            {ANTI_RANKING_CONFIG.map((config) => (
+              <ProductRanking
+                key={config.kind}
+                {...config}
+                rows={data.rankings[config.kind]}
+                total={data.totals[config.kind]}
+                expanded={expanded[config.kind]}
+                onToggle={() => setExpanded((current) => ({ ...current, [config.kind]: !current[config.kind] }))}
+                copiedCode={copiedCode}
+                onCopyCode={copyCode}
+              />
+            ))}
+          </div>
+        </>
       )}
     </section>
   );

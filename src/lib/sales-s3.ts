@@ -1007,6 +1007,37 @@ export async function readSalesDataset(filter?: SalesDateFilter): Promise<SalesD
   return buildDataset(rows, source, filter);
 }
 
+// Product quantities from documents that completed their whole lifecycle
+// inside the selected interval: both order creation and full shipment dates
+// must be within the range. Reuses the same parsed/cache-backed S3 dataset as
+// the sales dashboards, so product web analytics and sales analytics agree.
+export async function readCompletedSalesProductQuantities(input: {
+  from: string;
+  to: string;
+}): Promise<Map<number, number>> {
+  const { rows } = await readCachedSalesRows();
+  const normalizedFrom = normalizeDateFilter(input.from) || input.from;
+  const normalizedTo = normalizeDateFilter(input.to) || input.to;
+  const rangeFrom = normalizedFrom <= normalizedTo ? normalizedFrom : normalizedTo;
+  const rangeTo = normalizedFrom <= normalizedTo ? normalizedTo : normalizedFrom;
+  const quantities = new Map<number, number>();
+
+  for (const row of rows) {
+    if (!isShipped(row) || !row.shippedDate) continue;
+    const createdDate = normalizeShippedDate(row.createdDate);
+    if (!createdDate || row.shippedDate < createdDate) continue;
+    if (createdDate < rangeFrom || createdDate > rangeTo) continue;
+    if (row.shippedDate < rangeFrom || row.shippedDate > rangeTo) continue;
+    for (const item of row.items) {
+      const code = parseInt(item.code, 10);
+      if (!Number.isFinite(code) || code <= 0) continue;
+      quantities.set(code, (quantities.get(code) || 0) + item.qty);
+    }
+  }
+
+  return quantities;
+}
+
 function canonicalPromotionSalesStatus(value: string): PromotionSalesStatus | null {
   const normalized = value.toLocaleLowerCase("uk").trim();
   if (normalized.includes("повністю відвантаж")) return "Повністю відвантажений";
