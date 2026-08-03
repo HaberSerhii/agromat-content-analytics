@@ -86,6 +86,19 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   else
     echo "  PRODUCT_SNAPSHOTS_DIR not set — using app-local data/product-snapshots"
   fi
+  PROMOTIONS_DIR="${PROMOTIONS_SNAPSHOT_DIR:-}"
+  if [ -z "$PROMOTIONS_DIR" ] && [ -f ".env" ]; then
+    PROMOTIONS_DIR=$(awk -F= '/^PROMOTIONS_SNAPSHOT_DIR=/{print substr($0, index($0, "=") + 1)}' .env | tail -1)
+  fi
+  if [ -z "$PROMOTIONS_DIR" ] && [ -n "$SNAPSHOT_DIR" ]; then
+    PROMOTIONS_DIR="$(dirname "$SNAPSHOT_DIR")/promotion-snapshots"
+  fi
+  if [ -n "$PROMOTIONS_DIR" ]; then
+    mkdir -p "$PROMOTIONS_DIR"
+    echo "  promotion snapshot dir: $PROMOTIONS_DIR"
+  else
+    echo "  PROMOTIONS_SNAPSHOT_DIR not set — using app-local data/promotion-snapshots"
+  fi
 
   CURRENT_STEP="npm run build"
   echo "▸ $CURRENT_STEP"

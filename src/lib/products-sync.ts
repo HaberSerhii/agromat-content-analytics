@@ -2,7 +2,8 @@
 // previous lite snapshot to detect new items + status changes, writes new shards.
 
 import type { ApiProduct } from "@/lib/products-api";
-import { fetchFilters, fetchProductsPage } from "@/lib/products-api";
+import { fetchAllPromotions, fetchFilters, fetchProductsPage } from "@/lib/products-api";
+import { writePromotionsDailySnapshot } from "@/lib/promotions-daily-snapshots";
 import {
   type ProductLite,
   type ProductFull,
@@ -28,6 +29,18 @@ import {
 } from "@/lib/products-store";
 
 const MAX_STATUS_HISTORY = 20;
+
+function kyivCalendarDate(date = new Date()): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Kyiv",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
 
 function avgRating(reviews: ApiProduct["reviews"]): number | null {
   if (!reviews?.length) return null;
@@ -387,10 +400,20 @@ export async function runSync(): Promise<SyncState> {
 
     // Per-day snapshot for the "view state on day X" picker. Best-effort.
     try {
-      const today = startedAt.slice(0, 10); // YYYY-MM-DD from ISO
+      const today = kyivCalendarDate(new Date(startedAt));
       await writeDailySnapshot(today, lites, startedAt);
     } catch (e) {
       console.warn("[products-sync] writeDailySnapshot failed:", e instanceof Error ? e.message : e);
+    }
+
+    // Daily promotion membership/history snapshot. Stored beside product
+    // snapshots on the VPS and overwritten by later same-day syncs so the file
+    // represents the latest known state for that Kyiv calendar day.
+    try {
+      const promotions = await fetchAllPromotions();
+      writePromotionsDailySnapshot(kyivCalendarDate(new Date(startedAt)), promotions, startedAt);
+    } catch (e) {
+      console.warn("[products-sync] writePromotionsDailySnapshot failed:", e instanceof Error ? e.message : e);
     }
 
     // Per-product change log — powers the "Історія змін" modal. Best-effort:

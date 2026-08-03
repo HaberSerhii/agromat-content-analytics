@@ -15,6 +15,10 @@ type KpiFilter =
   | "promotions"
   | "new_promotions"
   | "disabled_promotions"
+  | "added_products"
+  | "deleted_products"
+  | "switched_products"
+  | "updated_products"
   | "products"
   | "linked"
   | "not_site"
@@ -106,6 +110,7 @@ async function downloadPromotionsXlsx(rows: PromotionCatalogRow[], filename: str
     "Категорія": row.categoryName,
     "Бренд": row.brand,
     "Базова ціна": row.basePrice ?? "",
+    "Попередня акційна ціна": row.previousPromoPrice ?? "",
     "Акційна ціна": row.promoPrice ?? "",
     "% знижки": row.discountPct ?? "",
     "Залишок": row.stockQty ?? "",
@@ -193,6 +198,7 @@ function changeStyle(change: PromotionCatalogRow["change"]) {
   if (change === "add") return { color: "#107c10", bg: "#f1faf1", border: "#107c10", label: "ADD ↗" };
   if (change === "delete") return { color: "#d13438", bg: "#fff4f4", border: "#d13438", label: "DELETE" };
   if (change === "switch") return { color: "#8a6500", bg: "#fff9df", border: "#e0a800", label: "SWITCH" };
+  if (change === "update") return { color: "#005a9e", bg: "#f2f8fd", border: "#118dff", label: "PRICE" };
   return { color: "#8a8886", bg: "#fff", border: "#e1dfdd", label: "—" };
 }
 
@@ -358,28 +364,36 @@ export function PromotionsDashboard() {
   const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
-    fetch("/api/promotions/catalog", { cache: "no-store" })
+    const params = new URLSearchParams();
+    if (dateFrom && dateTo) {
+      params.set("from", dateFrom);
+      params.set("to", dateTo);
+    }
+    const query = params.size ? `?${params.toString()}` : "";
+    fetch(`/api/promotions/catalog${query}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити акції");
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           const nextData = payload as PromotionsCatalogResponse;
           setData(nextData);
-          setDateFrom((current) => current || nextData.today);
-          setDateTo((current) => current || nextData.today);
+          setDateFrom((current) => current || nextData.fromDate);
+          setDateTo((current) => current || nextData.toDate);
           setError("");
         }
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Не вдалося завантажити акції");
+        if (!controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : "Не вдалося завантажити акції");
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
-    return () => { cancelled = true; };
-  }, []);
+    return () => controller.abort();
+  }, [dateFrom, dateTo]);
 
   const facets = useMemo(() => {
     const items = data?.items ?? [];
@@ -416,8 +430,6 @@ export function PromotionsDashboard() {
   const baseFiltered = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     return (data?.items ?? []).filter((item) => {
-      if (dateTo && item.promotionStartDate && item.promotionStartDate > dateTo) return false;
-      if (dateFrom && item.promotionEndDate && item.promotionEndDate < dateFrom) return false;
       if (normalizedSearch && ![
         item.name,
         item.sku ?? "",
@@ -452,7 +464,7 @@ export function PromotionsDashboard() {
       return true;
     });
   }, [
-    attributes, brand, category, data, dateFrom, dateTo, photo, price, reviews, search,
+    attributes, brand, category, data, photo, price, reviews, search,
     selectedLinks, selectedPromotions, sku, statuses, stock,
   ]);
 
@@ -472,6 +484,10 @@ export function PromotionsDashboard() {
       notOnSite: countUnique((item) => item.onSite === false),
       newPromotions: representedOptions.filter((promotion) => promotion.isNew).length,
       disabledPromotions: representedOptions.filter((promotion) => !promotion.active).length,
+      addedProducts: new Set(baseFiltered.filter((item) => item.change === "add").map((item) => item.productId)).size,
+      deletedProducts: new Set(baseFiltered.filter((item) => item.change === "delete").map((item) => item.productId)).size,
+      switchedProducts: new Set(baseFiltered.filter((item) => item.change === "switch").map((item) => item.productId)).size,
+      updatedProducts: new Set(baseFiltered.filter((item) => item.change === "update").map((item) => item.productId)).size,
       noPhoto: countUnique((item) => item.onSite && item.imagesCount === 0),
       missingAttributes: countUnique((item) =>
         item.onSite && item.missingRequiredAttrsCount > 0),
@@ -484,28 +500,35 @@ export function PromotionsDashboard() {
     if (kpiFilter === "all") return baseFiltered;
     const promotions = new Map((data?.promotions ?? []).map((promotion) => [promotion.idinc, promotion]));
     return baseFiltered.filter((item) => {
-      if (item.change === "delete") return false;
       const promotion = promotions.get(item.promotionIdinc);
       switch (kpiFilter) {
+        case "added_products":
+          return item.change === "add";
+        case "deleted_products":
+          return item.change === "delete";
+        case "switched_products":
+          return item.change === "switch";
+        case "updated_products":
+          return item.change === "update";
         case "promotions":
         case "products":
-          return true;
+          return item.change !== "delete";
         case "new_promotions":
-          return promotion?.isNew === true;
+          return item.change !== "delete" && promotion?.isNew === true;
         case "disabled_promotions":
-          return promotion?.active === false;
+          return item.change !== "delete" && promotion?.active === false;
         case "linked":
-          return item.linkedPromotions.length > 0;
+          return item.change !== "delete" && item.linkedPromotions.length > 0;
         case "not_site":
-          return item.onSite === false;
+          return item.change !== "delete" && item.onSite === false;
         case "no_photo":
-          return item.onSite && item.imagesCount === 0;
+          return item.change !== "delete" && item.onSite && item.imagesCount === 0;
         case "missing_attributes":
-          return item.onSite && item.missingRequiredAttrsCount > 0;
+          return item.change !== "delete" && item.onSite && item.missingRequiredAttrsCount > 0;
         case "no_reviews":
-          return item.onSite && item.reviewsCount === 0;
+          return item.change !== "delete" && item.onSite && item.reviewsCount === 0;
         case "no_sku":
-          return item.onSite && !item.sku;
+          return item.change !== "delete" && item.onSite && !item.sku;
         default:
           return true;
       }
@@ -545,8 +568,8 @@ export function PromotionsDashboard() {
     setSelectedPromotions(null);
     setSelectedLinks(null);
     setKpiFilter("all");
-    setDateFrom(data?.today ?? "");
-    setDateTo(data?.today ?? "");
+    setDateFrom(data?.fromDate ?? "");
+    setDateTo(data?.toDate ?? "");
   };
   const toggleKpiFilter = (value: KpiFilter) => {
     setKpiFilter((current) => current === value ? "all" : value);
@@ -560,9 +583,25 @@ export function PromotionsDashboard() {
     if (dateFrom && value < dateFrom) setDateFrom(value);
   };
   const shiftDateRange = (days: number) => {
+    const dates = data?.snapshotDates ?? [];
+    const fromIndex = dates.indexOf(dateFrom);
+    const toIndex = dates.indexOf(dateTo);
+    if (fromIndex >= 0 && toIndex >= 0) {
+      const nextFrom = fromIndex + days;
+      const nextTo = toIndex + days;
+      if (nextFrom < 0 || nextTo < 0 || nextFrom >= dates.length || nextTo >= dates.length) return;
+      setDateFrom(dates[nextFrom]);
+      setDateTo(dates[nextTo]);
+      return;
+    }
     setDateFrom((current) => shiftIsoDate(current, days));
     setDateTo((current) => shiftIsoDate(current, days));
   };
+
+  const oldestSnapshotDate = data?.snapshotDates[0];
+  const newestSnapshotDate = data?.snapshotDates.at(-1);
+  const canShiftBack = Boolean(oldestSnapshotDate && dateFrom > oldestSnapshotDate);
+  const canShiftForward = Boolean(newestSnapshotDate && dateTo < newestSnapshotDate);
 
   return (
     <div className="space-y-3">
@@ -609,9 +648,9 @@ export function PromotionsDashboard() {
             <button
               type="button"
               aria-label="Попередній день"
-              title="Зсунути період на день назад"
+              title="Перейти до попередніх знімків"
               onClick={() => shiftDateRange(-1)}
-              disabled={!dateFrom || !dateTo}
+              disabled={!dateFrom || !dateTo || !canShiftBack}
               className="mb-0.5 h-9 w-9 rounded-lg border text-lg font-bold disabled:opacity-40"
               style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text-mid)" }}
             >
@@ -624,6 +663,7 @@ export function PromotionsDashboard() {
               <input
                 type="date"
                 value={dateFrom}
+                min={oldestSnapshotDate}
                 max={dateTo || undefined}
                 onChange={(event) => changeDateFrom(event.target.value)}
                 className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
@@ -638,6 +678,7 @@ export function PromotionsDashboard() {
                 type="date"
                 value={dateTo}
                 min={dateFrom || undefined}
+                max={newestSnapshotDate}
                 onChange={(event) => changeDateTo(event.target.value)}
                 className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
                 style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text)" }}
@@ -646,9 +687,9 @@ export function PromotionsDashboard() {
             <button
               type="button"
               aria-label="Наступний день"
-              title="Зсунути період на день вперед"
+              title="Перейти до наступних знімків"
               onClick={() => shiftDateRange(1)}
-              disabled={!dateFrom || !dateTo}
+              disabled={!dateFrom || !dateTo || !canShiftForward}
               className="mb-0.5 h-9 w-9 rounded-lg border text-lg font-bold disabled:opacity-40"
               style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text-mid)" }}
             >
@@ -668,7 +709,7 @@ export function PromotionsDashboard() {
               <SummaryCard
                 value={summary.newPromotions}
                 label="Нові акції"
-                detail="Після стартового baseline"
+                detail="Між вибраними знімками"
                 color="#118dff"
                 active={kpiFilter === "new_promotions"}
                 onClick={() => toggleKpiFilter("new_promotions")}
@@ -680,6 +721,38 @@ export function PromotionsDashboard() {
                 color="#d13438"
                 active={kpiFilter === "disabled_promotions"}
                 onClick={() => toggleKpiFilter("disabled_promotions")}
+              />
+              <SummaryCard
+                value={summary.addedProducts}
+                label="Додано товарів"
+                detail="Між вибраними знімками"
+                color="#107c10"
+                active={kpiFilter === "added_products"}
+                onClick={() => toggleKpiFilter("added_products")}
+              />
+              <SummaryCard
+                value={summary.deletedProducts}
+                label="Видалено товарів"
+                detail="Між вибраними знімками"
+                color="#d13438"
+                active={kpiFilter === "deleted_products"}
+                onClick={() => toggleKpiFilter("deleted_products")}
+              />
+              <SummaryCard
+                value={summary.switchedProducts}
+                label="Перенесено товарів"
+                detail="В іншу акцію"
+                color="#8764b8"
+                active={kpiFilter === "switched_products"}
+                onClick={() => toggleKpiFilter("switched_products")}
+              />
+              <SummaryCard
+                value={summary.updatedProducts}
+                label="Змінено акційну ціну"
+                detail="Між вибраними знімками"
+                color="#118dff"
+                active={kpiFilter === "updated_products"}
+                onClick={() => toggleKpiFilter("updated_products")}
               />
               <SummaryCard
                 value={summary.products}
@@ -763,7 +836,9 @@ export function PromotionsDashboard() {
                 {data ? `${filtered.length} товарних позицій` : "Завантаження…"}
               </span>
               <span className="ml-auto text-[11px]" style={{ color: "var(--text-muted)" }}>
-                {data ? `${summary.promotions} акцій у періоді · baseline ${formatDate(data.baselineCapturedAt.slice(0, 10))}` : ""}
+                {data
+                  ? `${summary.promotions} акцій на ${formatDate(data.toDate)} · порівняння з ${formatDate(data.fromDate)}`
+                  : ""}
               </span>
             </div>
 
@@ -936,7 +1011,7 @@ export function PromotionsDashboard() {
 
           {loading && (
             <div className="px-6 py-16 text-center text-sm font-semibold" style={{ color: "var(--text-dim)" }}>
-              Завантажуємо актуальні акції та порівнюємо зі стартовим складом…
+              Завантажуємо знімки акцій та порівнюємо вибрані дати…
             </div>
           )}
           {!loading && error && (
@@ -1117,7 +1192,14 @@ export function PromotionsDashboard() {
                           <td className="border-b px-2 py-2 max-w-[230px] truncate" title={item.categoryName} style={{ borderColor: "var(--border)" }}>{item.categoryName}</td>
                           <td className="border-b px-2 py-2 max-w-[150px] truncate" style={{ borderColor: "var(--border)" }}>{item.brand}</td>
                           <td className="border-b px-2 py-2 whitespace-nowrap" style={{ borderColor: "var(--border)" }}>{formatMoney(item.basePrice)}</td>
-                          <td className="border-b px-2 py-2 font-bold whitespace-nowrap" style={{ borderColor: "var(--border)", color: "#d13438" }}>{formatMoney(item.promoPrice)}</td>
+                          <td className="border-b px-2 py-2 font-bold whitespace-nowrap" style={{ borderColor: "var(--border)", color: "#d13438" }}>
+                            {item.previousPromoPrice != null && (
+                              <span className="mr-1 text-[10px] font-medium line-through" style={{ color: "var(--text-muted)" }}>
+                                {formatMoney(item.previousPromoPrice)}
+                              </span>
+                            )}
+                            {formatMoney(item.promoPrice)}
+                          </td>
                           <td className="border-b px-2 py-2 font-bold whitespace-nowrap" style={{ borderColor: "var(--border)", color: item.discountPct ? "#107c10" : "var(--text-dim)" }}>
                             {item.discountPct == null ? "—" : `${item.discountPct}%`}
                           </td>
