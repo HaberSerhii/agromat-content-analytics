@@ -23,6 +23,7 @@ import {
 } from "@/lib/products-store";
 import { readDiskSnapshot } from "@/lib/products-disk-cache";
 import type {
+  HistoricalPromotionLink,
   PromotionCatalogRow,
   PromotionLink,
   PromotionOption,
@@ -47,12 +48,24 @@ function kyivToday(): string {
 
 function isDateCurrentPricingPromotion(promotion: ApiPromotion, date: string): boolean {
   if (promotion.has_related) return false;
+  return isPromotionEffectiveOnDate(promotion, date);
+}
+
+function isPromotionEffectiveOnDate(promotion: ApiPromotion, date: string): boolean {
   if (promotion.is_unlimited) return true;
   return (!promotion.start_date || promotion.start_date <= date)
     && (!promotion.end_date || promotion.end_date >= date);
 }
 
-function buildPublicLinks(all: ApiPromotion[]): Map<number, PromotionLink[]> {
+function publicPromotionLink(promotion: ApiPromotion): PromotionLink {
+  return {
+    idinc: promotion.idinc,
+    name: promotion.name,
+    url: (promotion.url ?? "").replace(/\/actions\//, "/discount/").replace(/\/?$/, "/"),
+  };
+}
+
+function buildPublicLinks(all: ApiPromotion[], date: string): Map<number, PromotionLink[]> {
   const links = new Map<number, PromotionLink[]>();
   const add = (sourceIdinc: number, link: PromotionLink) => {
     const current = links.get(sourceIdinc) ?? [];
@@ -61,12 +74,8 @@ function buildPublicLinks(all: ApiPromotion[]): Map<number, PromotionLink[]> {
   };
 
   for (const promotion of all) {
-    if (!promotion.active || !promotion.url) continue;
-    const publicLink = {
-      idinc: promotion.idinc,
-      name: promotion.name,
-      url: promotion.url.replace(/\/actions\//, "/discount/").replace(/\/?$/, "/"),
-    };
+    if (!promotion.url || !isPromotionEffectiveOnDate(promotion, date)) continue;
+    const publicLink = publicPromotionLink(promotion);
     if (promotion.has_related) {
       for (const related of promotion.related_promotions ?? []) add(related.idinc, publicLink);
     } else {
@@ -74,6 +83,29 @@ function buildPublicLinks(all: ApiPromotion[]): Map<number, PromotionLink[]> {
     }
   }
   return links;
+}
+
+function buildHistoricalLinks(all: ApiPromotion[], today: string): HistoricalPromotionLink[] {
+  return all
+    .filter((promotion) => (
+      !isBundlePromotion(promotion)
+      && Boolean(promotion.url)
+      && (promotion.products.length > 0 || (promotion.related_promotions?.length ?? 0) > 0)
+      && (!promotion.start_date || promotion.start_date <= today)
+    ))
+    .map((promotion) => ({
+      ...publicPromotionLink(promotion),
+      active: promotion.active,
+      startDate: promotion.start_date,
+      endDate: promotion.end_date,
+      productCount: promotion.products.length,
+      relatedPromotionIdincs: (promotion.related_promotions ?? []).map((related) => related.idinc),
+    }))
+    .sort((a, b) => (
+      (b.endDate ?? today).localeCompare(a.endDate ?? today)
+      || (b.startDate ?? "").localeCompare(a.startDate ?? "")
+      || b.idinc - a.idinc
+    ));
 }
 
 function pct(basePrice: number | null, promoPrice: number | null): number | null {
@@ -116,13 +148,6 @@ function membershipMap(promotions: ApiPromotion[]): Map<string, Set<number>> {
   return membership;
 }
 
-function missingDateResponse(date: string, availableDates: string[]) {
-  return NextResponse.json({
-    error: `Немає знімка акцій за ${date}`,
-    availableDates,
-  }, { status: 404 });
-}
-
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -144,23 +169,35 @@ export async function GET(request: Request) {
       readProductAttributeIndex(),
     ]).then(([requiredAttrs, attrIndex]) => ({ requiredAttrs, attrIndex }));
 
+    const liveCatalogData = Promise.all([readAllLite(), readLiteSyncedAt()])
+      .then(([products, liveSyncedAt]) => ({ products, syncedAt: liveSyncedAt }))
+      .catch(() => {
+        const disk = readDiskSnapshot();
+        return { products: disk?.products ?? [], syncedAt: disk?.syncedAt ?? null };
+      });
+    const [allLivePromotions, liveCatalog] = await Promise.all([
+      fetchAllPromotions(),
+      liveCatalogData,
+    ]);
+    const liveCapturedAt = new Date().toISOString();
+    const historicalLinkedPromotions = buildHistoricalLinks(allLivePromotions, today);
+    const availableDates = listPromotionsSnapshotDates();
+    const historyMinDate = historicalLinkedPromotions
+      .map((promotion) => promotion.startDate)
+      .filter((date): date is string => Boolean(date && DATE_RE.test(date)))
+      .sort((a, b) => a.localeCompare(b))[0] ?? availableDates[0] ?? today;
+
     let targetAllPromotions: ApiPromotion[];
     let targetCapturedAt: string;
     let targetCatalogProducts: ProductLite[];
     let syncedAt: string | null;
+    let targetReconstructed = false;
 
     if (targetIsLive) {
-      const catalogData = Promise.all([readAllLite(), readLiteSyncedAt()])
-        .then(([products, liveSyncedAt]) => ({ products, syncedAt: liveSyncedAt }))
-        .catch(() => {
-          const disk = readDiskSnapshot();
-          return { products: disk?.products ?? [], syncedAt: disk?.syncedAt ?? null };
-        });
-      const [allPromotions, catalog] = await Promise.all([fetchAllPromotions(), catalogData]);
-      targetAllPromotions = allPromotions;
-      targetCapturedAt = new Date().toISOString();
-      targetCatalogProducts = catalog.products;
-      syncedAt = catalog.syncedAt;
+      targetAllPromotions = allLivePromotions;
+      targetCapturedAt = liveCapturedAt;
+      targetCatalogProducts = liveCatalog.products;
+      syncedAt = liveCatalog.syncedAt;
       // Opening today's dashboard also self-heals a missed cron capture.
       try {
         writePromotionsDailySnapshot(
@@ -176,15 +213,20 @@ export async function GET(request: Request) {
         Promise.resolve(readPromotionsDailySnapshot(toDate)),
         readDailySnapshot(toDate),
       ]);
-      const availableDates = listPromotionsSnapshotDates();
-      if (!promotionSnapshot) return missingDateResponse(toDate, availableDates);
-      targetAllPromotions = promotionSnapshot.promotions;
-      targetCapturedAt = promotionSnapshot.capturedAt;
-      targetCatalogProducts = productSnapshot?.products ?? [];
-      syncedAt = productSnapshot?.syncedAt ?? null;
+      if (promotionSnapshot) {
+        targetAllPromotions = promotionSnapshot.promotions;
+        targetCapturedAt = promotionSnapshot.capturedAt;
+        targetCatalogProducts = productSnapshot?.products ?? liveCatalog.products;
+        syncedAt = productSnapshot?.syncedAt ?? liveCatalog.syncedAt;
+      } else {
+        targetAllPromotions = allLivePromotions;
+        targetCapturedAt = liveCapturedAt;
+        targetCatalogProducts = liveCatalog.products;
+        syncedAt = liveCatalog.syncedAt;
+        targetReconstructed = true;
+      }
     }
 
-    const availableDates = listPromotionsSnapshotDates();
     const defaultFrom = [...availableDates].reverse().find((date) => date < toDate) ?? toDate;
     const fromDate = requestedFrom ?? defaultFrom;
     if (fromDate > toDate) {
@@ -194,19 +236,27 @@ export async function GET(request: Request) {
     let baselineAllPromotions: ApiPromotion[];
     let baselineCapturedAt: string;
     let baselineCatalogProducts: ProductLite[];
+    let baselineReconstructed = false;
     if (fromDate === toDate) {
       baselineAllPromotions = targetAllPromotions;
       baselineCapturedAt = targetCapturedAt;
       baselineCatalogProducts = targetCatalogProducts;
+      baselineReconstructed = targetReconstructed;
     } else {
       const [promotionSnapshot, productSnapshot] = await Promise.all([
         Promise.resolve(readPromotionsDailySnapshot(fromDate)),
         readDailySnapshot(fromDate),
       ]);
-      if (!promotionSnapshot) return missingDateResponse(fromDate, availableDates);
-      baselineAllPromotions = promotionSnapshot.promotions;
-      baselineCapturedAt = promotionSnapshot.capturedAt;
-      baselineCatalogProducts = productSnapshot?.products ?? [];
+      if (promotionSnapshot) {
+        baselineAllPromotions = promotionSnapshot.promotions;
+        baselineCapturedAt = promotionSnapshot.capturedAt;
+        baselineCatalogProducts = productSnapshot?.products ?? liveCatalog.products;
+      } else {
+        baselineAllPromotions = allLivePromotions;
+        baselineCapturedAt = liveCapturedAt;
+        baselineCatalogProducts = liveCatalog.products;
+        baselineReconstructed = true;
+      }
     }
 
     const [{ requiredAttrs, attrIndex }, deletedProductIds, activeProductIdsWithoutImages] = await Promise.all([
@@ -223,8 +273,8 @@ export async function GET(request: Request) {
     const baselineById = promotionMap(baseline);
     const currentMembership = membershipMap(current);
     const baselineMembership = membershipMap(baseline);
-    const currentLinks = buildPublicLinks(targetAll);
-    const baselineLinks = buildPublicLinks(baselineAll);
+    const currentLinks = buildPublicLinks(targetAll, toDate);
+    const baselineLinks = buildPublicLinks(baselineAll, fromDate);
     const targetCatalogMaps = mapCatalogProducts(targetCatalogProducts);
     const baselineCatalogMaps = mapCatalogProducts(baselineCatalogProducts);
 
@@ -356,7 +406,7 @@ export async function GET(request: Request) {
     })).sort((a, b) => a.name.localeCompare(b.name, "uk"));
 
     const uniqueLinks = new Map<number, PromotionLink>();
-    for (const links of currentLinks.values()) {
+    for (const links of [...baselineLinks.values(), ...currentLinks.values()]) {
       for (const link of links) uniqueLinks.set(link.idinc, link);
     }
 
@@ -364,9 +414,14 @@ export async function GET(request: Request) {
       items,
       promotions,
       linkedPromotions: [...uniqueLinks.values()].sort((a, b) => a.name.localeCompare(b.name, "uk")),
+      historicalLinkedPromotions,
       baselineCapturedAt,
       snapshotCapturedAt: targetCapturedAt,
       snapshotDates: availableDates,
+      historyMinDate,
+      historyMaxDate: today,
+      baselineReconstructed,
+      targetReconstructed,
       fromDate,
       toDate,
       syncedAt,

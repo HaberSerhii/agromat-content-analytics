@@ -6,6 +6,14 @@ export interface PromotionLink {
   url: string;
 }
 
+export interface HistoricalPromotionLink extends PromotionLink {
+  active: boolean;
+  startDate: string | null;
+  endDate: string | null;
+  productCount: number;
+  relatedPromotionIdincs: number[];
+}
+
 export interface PromotionOption {
   id: number;
   idinc: number;
@@ -59,9 +67,14 @@ export interface PromotionsCatalogResponse {
   items: PromotionCatalogRow[];
   promotions: PromotionOption[];
   linkedPromotions: PromotionLink[];
+  historicalLinkedPromotions: HistoricalPromotionLink[];
   baselineCapturedAt: string;
   snapshotCapturedAt: string;
   snapshotDates: string[];
+  historyMinDate: string;
+  historyMaxDate: string;
+  baselineReconstructed: boolean;
+  targetReconstructed: boolean;
   fromDate: string;
   toDate: string;
   syncedAt: string | null;
