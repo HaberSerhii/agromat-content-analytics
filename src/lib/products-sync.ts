@@ -3,7 +3,10 @@
 
 import type { ApiProduct } from "@/lib/products-api";
 import { fetchAllPromotions, fetchFilters, fetchProductsPage } from "@/lib/products-api";
-import { writePromotionsDailySnapshot } from "@/lib/promotions-daily-snapshots";
+import {
+  selectPromotionsForDailySnapshot,
+  writePromotionsDailySnapshot,
+} from "@/lib/promotions-daily-snapshots";
 import {
   type ProductLite,
   type ProductFull,
@@ -411,7 +414,12 @@ export async function runSync(): Promise<SyncState> {
     // represents the latest known state for that Kyiv calendar day.
     try {
       const promotions = await fetchAllPromotions();
-      writePromotionsDailySnapshot(kyivCalendarDate(new Date(startedAt)), promotions, startedAt);
+      const date = kyivCalendarDate(new Date(startedAt));
+      writePromotionsDailySnapshot(
+        date,
+        selectPromotionsForDailySnapshot(promotions, date),
+        startedAt,
+      );
     } catch (e) {
       console.warn("[products-sync] writePromotionsDailySnapshot failed:", e instanceof Error ? e.message : e);
     }

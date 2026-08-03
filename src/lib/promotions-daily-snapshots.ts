@@ -7,7 +7,7 @@
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
-import type { ApiPromotion } from "@/lib/products-api";
+import { isBundlePromotion, type ApiPromotion } from "@/lib/products-api";
 
 const DEFAULT_PARENT_DIR = process.env.PRODUCT_SNAPSHOTS_DIR
   ? path.dirname(process.env.PRODUCT_SNAPSHOTS_DIR)
@@ -22,6 +22,22 @@ export interface PromotionsDailySnapshot {
   date: string;
   capturedAt: string;
   promotions: ApiPromotion[];
+}
+
+// The upstream endpoint returns more than a thousand legacy promotions. A
+// historical day only needs pricing promotions that apply on that day plus
+// active public/related promotions used to rebuild discount-page links.
+export function selectPromotionsForDailySnapshot(
+  promotions: ApiPromotion[],
+  date: string,
+): ApiPromotion[] {
+  return promotions.filter((promotion) => {
+    if (isBundlePromotion(promotion)) return false;
+    if (promotion.has_related) return promotion.active && Boolean(promotion.url);
+    if (promotion.is_unlimited) return true;
+    return (!promotion.start_date || promotion.start_date <= date)
+      && (!promotion.end_date || promotion.end_date >= date);
+  });
 }
 
 interface ManifestEntry {

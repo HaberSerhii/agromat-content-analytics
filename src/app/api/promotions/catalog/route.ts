@@ -10,6 +10,7 @@ import {
 import {
   listPromotionsSnapshotDates,
   readPromotionsDailySnapshot,
+  selectPromotionsForDailySnapshot,
   writePromotionsDailySnapshot,
 } from "@/lib/promotions-daily-snapshots";
 import {
@@ -162,7 +163,11 @@ export async function GET(request: Request) {
       syncedAt = catalog.syncedAt;
       // Opening today's dashboard also self-heals a missed cron capture.
       try {
-        writePromotionsDailySnapshot(today, targetAllPromotions, targetCapturedAt);
+        writePromotionsDailySnapshot(
+          today,
+          selectPromotionsForDailySnapshot(targetAllPromotions, today),
+          targetCapturedAt,
+        );
       } catch (error) {
         console.warn("[promotions/catalog] snapshot capture failed:", error instanceof Error ? error.message : error);
       }

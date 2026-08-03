@@ -25,6 +25,15 @@ type RankingConfig = {
   rankLabel: "TOP" | "АНТИ TOP";
 };
 
+type RankingExportContext = {
+  from: string;
+  to: string;
+  channel: WebFunnelChannel;
+  device: WebFunnelDevice;
+  includeOutOfStock: boolean;
+  total: number;
+};
+
 const RANKING_CONFIG: RankingConfig[] = [
   {
     kind: "listToProduct",
@@ -61,6 +70,111 @@ function triggerDownload(blob: Blob, filename: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function rankingSlug(kind: RankingKind): string {
+  const slugs: Record<RankingKind, string> = {
+    listToProduct: "list-to-product",
+    productToSale: "product-to-sale",
+    antiListToProduct: "anti-list-to-product",
+    antiProductToSale: "anti-product-to-sale",
+  };
+  return slugs[kind];
+}
+
+function rankingColumns(kind: RankingKind): string[] {
+  if (kind === "listToProduct" || kind === "antiListToProduct") {
+    return ["Конверсія список → картка", "Переходи в картку", "Покази у списку"];
+  }
+  return ["Конверсія картка → продаж", "Переходи в картку", "Продано, шт."];
+}
+
+function rankingValues(kind: RankingKind, row: PromotionProductMetricRow): (number | null)[] {
+  if (kind === "listToProduct" || kind === "antiListToProduct") {
+    return [
+      row.listToProductConversionPct == null ? null : row.listToProductConversionPct / 100,
+      row.listClicks,
+      row.listImpressions,
+    ];
+  }
+  return [
+    row.productToSaleConversionPct == null ? null : row.productToSaleConversionPct / 100,
+    row.productViews,
+    row.soldQty,
+  ];
+}
+
+async function downloadRankingXlsx(
+  config: RankingConfig,
+  rows: PromotionProductMetricRow[],
+  context: RankingExportContext,
+): Promise<void> {
+  const exportRows = rows.slice(0, 250);
+  const XLSX = await import("xlsx");
+  const headers = [
+    "#",
+    "IDD / Код товару",
+    "goods_ref",
+    "Товар",
+    "URL",
+    "Залишок",
+    "Є в наявності",
+    ...rankingColumns(config.kind),
+  ];
+  const values = exportRows.map((row, index) => [
+    index + 1,
+    row.code,
+    row.goodsRef,
+    row.name,
+    row.url,
+    row.stockQty,
+    row.inStock ? "Так" : "Ні",
+    ...rankingValues(config.kind, row),
+  ]);
+  const rankingSheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
+  rankingSheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${values.length + 1}` };
+  rankingSheet["!cols"] = [
+    { wch: 6 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 58 },
+    { wch: 48 },
+    { wch: 12 },
+    { wch: 14 },
+    ...rankingColumns(config.kind).map((label) => ({ wch: Math.max(18, label.length + 2) })),
+  ];
+  exportRows.forEach((row, index) => {
+    const urlCell = rankingSheet[`E${index + 2}`];
+    if (urlCell && row.url) urlCell.l = { Target: row.url, Tooltip: "Відкрити товар на сайті" };
+  });
+  const percentageColumn = XLSX.utils.encode_col(7);
+  for (let rowNumber = 2; rowNumber <= values.length + 1; rowNumber += 1) {
+    const cell = rankingSheet[`${percentageColumn}${rowNumber}`];
+    if (cell && cell.t === "n") cell.z = "0.0%";
+  }
+
+  const metadataSheet = XLSX.utils.aoa_to_sheet([
+    ["Параметр", "Значення"],
+    ["Рейтинг", `${config.rankLabel} · ${config.title}`],
+    ["Період від", context.from],
+    ["Період до", context.to],
+    ["Канал", context.channel],
+    ["Пристрій", context.device],
+    ["Товари без залишку", context.includeOutOfStock ? "Включено" : "Виключено"],
+    ["Вивантажено товарів", exportRows.length],
+    ["Усього товарів у рейтингу", context.total],
+    ["Створено", new Date().toISOString()],
+  ]);
+  metadataSheet["!cols"] = [{ wch: 28 }, { wch: 48 }];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, rankingSheet, config.rankLabel === "TOP" ? "ТОП 250" : "АНТИТОП 250");
+  XLSX.utils.book_append_sheet(workbook, metadataSheet, "Параметри");
+  const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx", compression: true }) as ArrayBuffer;
+  triggerDownload(
+    new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    `${rankingSlug(config.kind)}-${context.from}-${context.to}.xlsx`,
+  );
 }
 
 function formatQty(value: number): string {
@@ -106,6 +220,8 @@ function ProductRanking({
   onToggle,
   copiedCode,
   onCopyCode,
+  exporting,
+  onExport,
 }: {
   kind: RankingKind;
   title: string;
@@ -117,6 +233,8 @@ function ProductRanking({
   onToggle: () => void;
   copiedCode: number | null;
   onCopyCode: (code: number) => void;
+  exporting: boolean;
+  onExport: () => void;
 }) {
   const visibleRows = rows.slice(0, expanded ? 250 : 20);
   return (
@@ -126,9 +244,21 @@ function ProductRanking({
           <div>
             <div className="text-[11px] font-black uppercase tracking-[0.08em] sm:text-xs" style={{ color }}>{title}</div>
           </div>
-          <span className="shrink-0 rounded-lg px-2 py-1 text-[9px] font-black" style={{ background: `${color}12`, color }}>
-            {rankLabel} {expanded ? Math.min(250, total) : Math.min(20, total)}
-          </span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onExport}
+              disabled={exporting || rows.length === 0}
+              className="rounded-lg border px-2 py-1 text-[9px] font-black disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ borderColor: `${color}55`, background: "#fff", color }}
+              title={`Завантажити ${rankLabel} ${Math.min(250, rows.length)} товарів у Excel`}
+            >
+              {exporting ? "…" : "↓ EXCEL 250"}
+            </button>
+            <span className="rounded-lg px-2 py-1 text-[9px] font-black" style={{ background: `${color}12`, color }}>
+              {rankLabel} {expanded ? Math.min(250, total) : Math.min(20, total)}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -290,6 +420,7 @@ export function PromotionProductMetrics({
     antiProductToSale: false,
   });
   const [copiedCode, setCopiedCode] = useState<number | null>(null);
+  const [exportingRanking, setExportingRanking] = useState<RankingKind | null>(null);
   const [missingExportState, setMissingExportState] = useState<"idle" | "loading" | "done" | "empty">("idle");
 
   useEffect(() => {
@@ -372,6 +503,23 @@ export function PromotionProductMetrics({
     window.setTimeout(() => setMissingExportState("idle"), 1800);
   };
 
+  const exportRanking = async (config: RankingConfig) => {
+    if (!data || exportingRanking) return;
+    setExportingRanking(config.kind);
+    try {
+      await downloadRankingXlsx(config, data.rankings[config.kind], {
+        from: data.from,
+        to: data.to,
+        channel: data.channel,
+        device: data.device,
+        includeOutOfStock: data.includeOutOfStock,
+        total: data.totals[config.kind],
+      });
+    } finally {
+      setExportingRanking(null);
+    }
+  };
+
   return (
     <section className="rounded-2xl border p-3 sm:p-4" style={{ background: "var(--bg-card)", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -444,6 +592,8 @@ export function PromotionProductMetrics({
                 onToggle={() => setExpanded((current) => ({ ...current, [config.kind]: !current[config.kind] }))}
                 copiedCode={copiedCode}
                 onCopyCode={copyCode}
+                exporting={exportingRanking === config.kind}
+                onExport={() => exportRanking(config)}
               />
             ))}
           </div>
