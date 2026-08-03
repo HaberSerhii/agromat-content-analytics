@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PromotionSalesDashboard } from "@/components/PromotionSalesDashboard";
 import { PromotionWebFunnelDashboard } from "@/components/PromotionWebFunnelDashboard";
 import type {
+  HistoricalPromotionLink,
   PromotionCatalogRow,
   PromotionsCatalogResponse,
 } from "@/lib/promotions-types";
@@ -298,6 +299,77 @@ function MultiSelect({
   );
 }
 
+function HistoricalPromotionPicker({
+  options,
+  selectedId,
+  onSelect,
+}: {
+  options: HistoricalPromotionLink[];
+  selectedId: string;
+  onSelect: (promotion: HistoricalPromotionLink) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleOptions = options.filter((promotion) => !normalizedQuery || [
+    String(promotion.idinc),
+    promotion.name,
+    promotion.url,
+    promotion.startDate ?? "",
+    promotion.endDate ?? "",
+  ].some((value) => value.toLowerCase().includes(normalizedQuery))).slice(0, 250);
+  const selected = options.find((promotion) => String(promotion.idinc) === selectedId);
+
+  return (
+    <details className="relative w-full sm:w-auto">
+      <summary
+        className="flex h-9 w-full min-w-0 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border px-3 text-xs font-semibold sm:min-w-[250px] sm:max-w-[380px]"
+        style={{ background: selected ? "#e8f4ff" : "var(--bg-input)", borderColor: selected ? "#118dff" : "var(--border2)", color: selected ? "#005a9e" : "var(--text-mid)" }}
+      >
+        <span className="truncate">{selected ? `Архів: ${selected.name}` : "Архів прив’язаних акцій"}</span>
+        <span style={{ color: "var(--text-muted)" }}>▾</span>
+      </summary>
+      <div
+        className="absolute left-0 z-50 mt-1 w-[min(460px,calc(100vw-2rem))] rounded-xl border p-2 shadow-xl"
+        style={{ background: "#fff", borderColor: "var(--border2)" }}
+      >
+        <input
+          value={query}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Пошук за назвою, IDINC, датою або URL…"
+          className="mb-2 h-9 w-full rounded-lg border px-3 text-xs outline-none"
+          style={{ background: "var(--bg-input)", borderColor: "var(--border2)" }}
+        />
+        <div className="max-h-80 overflow-auto">
+          {visibleOptions.map((promotion) => (
+            <button
+              key={promotion.idinc}
+              type="button"
+              onClick={(event) => {
+                onSelect(promotion);
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+              className="block w-full rounded-lg px-2 py-2 text-left hover:bg-slate-50"
+              style={{ color: "var(--text-mid)" }}
+            >
+              <span className="block text-xs font-semibold">{promotion.idinc} · {promotion.name}</span>
+              <span className="block text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {formatDate(promotion.startDate)}–{formatDate(promotion.endDate)} · {promotion.productCount} товарів
+                {promotion.relatedPromotionIdincs.length > 0 ? ` · ${promotion.relatedPromotionIdincs.length} прив’язок P2` : ""}
+              </span>
+            </button>
+          ))}
+          {visibleOptions.length === 0 && (
+            <div className="px-2 py-4 text-center text-xs" style={{ color: "var(--text-muted)" }}>
+              Акцій не знайдено
+            </div>
+          )}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function SummaryCard({
   value,
   label,
@@ -357,6 +429,7 @@ export function PromotionsDashboard() {
   const [statuses, setStatuses] = useState<SetFilter>(null);
   const [selectedPromotions, setSelectedPromotions] = useState<SetFilter>(null);
   const [selectedLinks, setSelectedLinks] = useState<SetFilter>(null);
+  const [historicalLinkId, setHistoricalLinkId] = useState("");
   const [page, setPage] = useState(1);
   const [exportBusy, setExportBusy] = useState(false);
   const [kpiFilter, setKpiFilter] = useState<KpiFilter>("all");
@@ -567,6 +640,7 @@ export function PromotionsDashboard() {
     setStatuses(null);
     setSelectedPromotions(null);
     setSelectedLinks(null);
+    setHistoricalLinkId("");
     setKpiFilter("all");
     setDateFrom(data?.fromDate ?? "");
     setDateTo(data?.toDate ?? "");
@@ -582,26 +656,27 @@ export function PromotionsDashboard() {
     setDateTo(value);
     if (dateFrom && value < dateFrom) setDateFrom(value);
   };
+  const selectHistoricalPromotion = (promotion: HistoricalPromotionLink) => {
+    const historyMinDate = data?.historyMinDate ?? promotion.startDate ?? promotion.endDate ?? "";
+    const historyMaxDate = data?.historyMaxDate ?? promotion.endDate ?? promotion.startDate ?? "";
+    const promotionFrom = promotion.startDate ?? promotion.endDate ?? historyMinDate;
+    const promotionTo = promotion.endDate ?? historyMaxDate;
+    setHistoricalLinkId(String(promotion.idinc));
+    setDateFrom(promotionFrom < historyMinDate ? historyMinDate : promotionFrom);
+    setDateTo(promotionTo > historyMaxDate ? historyMaxDate : promotionTo);
+    setSelectedLinks(new Set([String(promotion.idinc)]));
+    setSelectedPromotions(null);
+    setKpiFilter("all");
+  };
   const shiftDateRange = (days: number) => {
-    const dates = data?.snapshotDates ?? [];
-    const fromIndex = dates.indexOf(dateFrom);
-    const toIndex = dates.indexOf(dateTo);
-    if (fromIndex >= 0 && toIndex >= 0) {
-      const nextFrom = fromIndex + days;
-      const nextTo = toIndex + days;
-      if (nextFrom < 0 || nextTo < 0 || nextFrom >= dates.length || nextTo >= dates.length) return;
-      setDateFrom(dates[nextFrom]);
-      setDateTo(dates[nextTo]);
-      return;
-    }
     setDateFrom((current) => shiftIsoDate(current, days));
     setDateTo((current) => shiftIsoDate(current, days));
   };
 
-  const oldestSnapshotDate = data?.snapshotDates[0];
-  const newestSnapshotDate = data?.snapshotDates.at(-1);
-  const canShiftBack = Boolean(oldestSnapshotDate && dateFrom > oldestSnapshotDate);
-  const canShiftForward = Boolean(newestSnapshotDate && dateTo < newestSnapshotDate);
+  const historyMinDate = data?.historyMinDate;
+  const historyMaxDate = data?.historyMaxDate;
+  const canShiftBack = Boolean(historyMinDate && dateFrom > historyMinDate);
+  const canShiftForward = Boolean(historyMaxDate && dateTo < historyMaxDate);
 
   return (
     <div className="space-y-3">
@@ -644,6 +719,13 @@ export function PromotionsDashboard() {
 
         {section === "catalog" && (
           <>
+            <div className="mt-3 flex justify-end">
+              <HistoricalPromotionPicker
+                options={data?.historicalLinkedPromotions ?? []}
+                selectedId={historicalLinkId}
+                onSelect={selectHistoricalPromotion}
+              />
+            </div>
             <div className="mt-3 grid w-full grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_36px] items-end justify-end gap-2 sm:flex">
             <button
               type="button"
@@ -663,7 +745,7 @@ export function PromotionsDashboard() {
               <input
                 type="date"
                 value={dateFrom}
-                min={oldestSnapshotDate}
+                min={historyMinDate}
                 max={dateTo || undefined}
                 onChange={(event) => changeDateFrom(event.target.value)}
                 className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
@@ -678,7 +760,7 @@ export function PromotionsDashboard() {
                 type="date"
                 value={dateTo}
                 min={dateFrom || undefined}
-                max={newestSnapshotDate}
+                max={historyMaxDate}
                 onChange={(event) => changeDateTo(event.target.value)}
                 className="h-9 w-full min-w-0 rounded-lg border px-2 text-xs font-semibold sm:px-3"
                 style={{ background: "var(--bg-input)", borderColor: "var(--border2)", color: "var(--text)" }}
@@ -696,6 +778,11 @@ export function PromotionsDashboard() {
               →
             </button>
           </div>
+            {(data?.baselineReconstructed || data?.targetReconstructed) && (
+              <div className="mt-2 text-right text-[10px]" style={{ color: "#8a6500" }}>
+                Архівний період відновлено з даних P2; каталог товарів показано у поточному стані.
+              </div>
+            )}
 
             <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
               <SummaryCard
@@ -879,7 +966,7 @@ export function PromotionsDashboard() {
                 onChange={setSelectedPromotions}
               />
               <MultiSelect
-                label="Прив’язані акції / URL"
+                label="Прив’язані акції / URL у періоді"
                 options={linkOptions}
                 selected={selectedLinks}
                 onChange={setSelectedLinks}

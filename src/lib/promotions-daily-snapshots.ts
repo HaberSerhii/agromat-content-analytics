@@ -24,19 +24,25 @@ export interface PromotionsDailySnapshot {
   promotions: ApiPromotion[];
 }
 
+function appliesOnDate(promotion: ApiPromotion, date: string): boolean {
+  if (promotion.is_unlimited) return true;
+  return (!promotion.start_date || promotion.start_date <= date)
+    && (!promotion.end_date || promotion.end_date >= date);
+}
+
 // The upstream endpoint returns more than a thousand legacy promotions. A
-// historical day only needs pricing promotions that apply on that day plus
-// active public/related promotions used to rebuild discount-page links.
+// historical day only needs pricing promotions and public/related promotions
+// that apply on that day. Do not use the current `active` flag here: P2 turns
+// it off after a campaign ends, while the URL relation still belongs to the
+// historical period captured by this snapshot.
 export function selectPromotionsForDailySnapshot(
   promotions: ApiPromotion[],
   date: string,
 ): ApiPromotion[] {
   return promotions.filter((promotion) => {
     if (isBundlePromotion(promotion)) return false;
-    if (promotion.has_related) return promotion.active && Boolean(promotion.url);
-    if (promotion.is_unlimited) return true;
-    return (!promotion.start_date || promotion.start_date <= date)
-      && (!promotion.end_date || promotion.end_date >= date);
+    if (promotion.has_related) return Boolean(promotion.url) && appliesOnDate(promotion, date);
+    return appliesOnDate(promotion, date);
   });
 }
 
