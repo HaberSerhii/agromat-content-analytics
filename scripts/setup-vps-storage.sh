@@ -8,6 +8,7 @@ APP_DIR="${APP_DIR:-$HOME/Agromat-Analytics}"
 APP_PORT="${APP_PORT:-3000}"
 APP_USER="${APP_USER:-$(id -un)}"
 SNAPSHOT_DIR="${PRODUCT_SNAPSHOTS_DIR:-/var/lib/agromat-analytics/product-snapshots}"
+PROMOTIONS_SNAPSHOT_DIR_VALUE="${PROMOTIONS_SNAPSHOT_DIR:-$(dirname "$SNAPSHOT_DIR")/promotion-snapshots}"
 SYNC_LOG="${SYNC_LOG:-/var/log/agromat-products-sync.log}"
 SIMPLE_PRICE_LOG="${SIMPLE_PRICE_LOG:-/var/log/agromat-simple-price.log}"
 AGROMAT_PRICE_SYNC_LOG="${AGROMAT_PRICE_SYNC_LOG:-/var/log/agromat-price-sync.log}"
@@ -75,7 +76,7 @@ run_root systemctl enable redis-server >/dev/null 2>&1 || true
 run_root systemctl restart redis-server
 
 echo "==> Creating persistent snapshot directory"
-run_root mkdir -p "$SNAPSHOT_DIR"
+run_root mkdir -p "$SNAPSHOT_DIR" "$PROMOTIONS_SNAPSHOT_DIR_VALUE"
 run_root chown -R "$APP_USER":"$APP_USER" "$(dirname "$SNAPSHOT_DIR")"
 run_root touch "$SYNC_LOG"
 run_root chown "$APP_USER":"$APP_USER" "$SYNC_LOG"
@@ -87,6 +88,7 @@ run_root chown "$APP_USER":"$APP_USER" "$AGROMAT_PRICE_SYNC_LOG"
 echo "==> Updating $APP_DIR/.env"
 set_env "REDIS_URL" "$REDIS_URL_VALUE" "$APP_DIR/.env"
 set_env "PRODUCT_SNAPSHOTS_DIR" "$SNAPSHOT_DIR" "$APP_DIR/.env"
+set_env "PROMOTIONS_SNAPSHOT_DIR" "$PROMOTIONS_SNAPSHOT_DIR_VALUE" "$APP_DIR/.env"
 if [ -z "$(get_env_value "CRON_SECRET" "$APP_DIR/.env")" ]; then
   set_env "CRON_SECRET" "$(random_secret)" "$APP_DIR/.env"
 fi
@@ -117,6 +119,7 @@ redis-cli -h 127.0.0.1 ping
 
 echo "Done."
 echo "Snapshot dir: $SNAPSHOT_DIR"
+echo "Promotion snapshots: $PROMOTIONS_SNAPSHOT_DIR_VALUE"
 echo "Sync log:     $SYNC_LOG"
 echo "Cron:         $CRON_LINE"
 echo "Agromat price sync log:  $AGROMAT_PRICE_SYNC_LOG"
