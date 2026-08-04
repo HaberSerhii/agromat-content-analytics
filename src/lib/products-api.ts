@@ -53,6 +53,7 @@ export interface ApiProduct {
   attributes: ApiAttribute[];
   has_reviews: boolean;
   reviews: ApiReview[];
+  is_on_sale: boolean;
   deleted: boolean;
   created_at: string;
   updated_at: string;

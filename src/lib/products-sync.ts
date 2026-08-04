@@ -84,6 +84,7 @@ function toLite(
     currency: api.prices?.currency ?? "UAH",
     statusId: newStatusId,
     statusName: api.stock?.status?.name ?? "",
+    isOnSale: api.is_on_sale === true,
     stockQty: api.stock?.quantity ?? null,
     imagesCount: api.images?.length ?? 0,
     reviewsCount: api.reviews?.length ?? 0,

@@ -48,6 +48,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       currency: api.prices?.currency ?? "UAH",
       statusId: api.stock?.status?.id ?? 0,
       statusName: api.stock?.status?.name ?? "",
+      isOnSale: api.is_on_sale === true,
       stockQty: api.stock?.quantity ?? null,
       imagesCount: api.images?.length ?? 0,
       reviewsCount: api.reviews?.length ?? 0,

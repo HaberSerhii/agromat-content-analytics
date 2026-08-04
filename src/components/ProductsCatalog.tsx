@@ -265,6 +265,7 @@ async function downloadProductsXlsx(items: ProductListItem[], filename: string) 
     "Валюта": p.currency,
     "Залишок": p.stockQty ?? "",
     "Статус": p.deleted ? `Архів · ${p.statusName}` : p.statusName,
+    "Розпродаж": p.isOnSale ? "Так" : "Ні",
     "Архів": p.deleted ? "так" : "ні",
     "Кіл-ть фото": p.imagesCount,
     "Кіл-ть відгуків": p.reviewsCount,
@@ -3860,6 +3861,7 @@ export function ProductsCatalog() {
   const [missingAttrIds, setMissingAttrIds] = useState<number[]>([]);
   const [hasReviews, setHasReviews] = useState<"" | "true" | "false">("");
   const [hasSku, setHasSku] = useState<"" | "true" | "false">("");
+  const [onSale, setOnSale] = useState<"" | "true" | "false">("");
   const [sortBy, setSortBy] = useState("firstSeenAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -3935,7 +3937,7 @@ export function ProductsCatalog() {
   }, [persistBulkSets, savedBulkSets]);
 
   // Reset to page 1 when any filter changes
-  useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, firstSeenFrom, firstSeenTo, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, sortBy, sortDir, limit, asOf]);
+  useEffect(() => { setPage(1); }, [tab, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, firstSeenFrom, firstSeenTo, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, onSale, sortBy, sortDir, limit, asOf]);
 
   const buildQuery = useCallback((): string => {
     const p = new URLSearchParams();
@@ -3966,6 +3968,7 @@ export function ProductsCatalog() {
     }
     if (hasReviews) p.set("has_reviews", hasReviews);
     if (hasSku) p.set("has_sku", hasSku);
+    if (onSale) p.set("on_sale", onSale);
     if (catalogStatsFrom) p.set("stats_from", catalogStatsFrom);
     if (catalogStatsTo) p.set("stats_to", catalogStatsTo);
     p.set("sort_by", sortBy);
@@ -3978,7 +3981,7 @@ export function ProductsCatalog() {
     if (tab === "noAttr") p.set("missing_required_attrs", "true");
     if (tab === "noRev") p.set("has_reviews", "false");
     return p.toString();
-  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, firstSeenFrom, firstSeenTo, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, catalogStatsFrom, catalogStatsTo, sortBy, sortDir, tab, asOf]);
+  }, [page, limit, searchDebounced, categoryId, brandId, statusIds, minPrice, maxPrice, minStock, maxStock, firstSeenFrom, firstSeenTo, bulk, hasImages, hasAttrs, missingAttrIds, hasReviews, hasSku, onSale, catalogStatsFrom, catalogStatsTo, sortBy, sortDir, tab, asOf]);
 
   const loadList = useCallback(() => {
     setLoading(true); setError("");
@@ -4015,7 +4018,7 @@ export function ProductsCatalog() {
     setMinStock(null); setMaxStock(null);
     setFirstSeenFrom(""); setFirstSeenTo("");
     setBulk(null);
-    setHasImages(""); setHasAttrs(""); setMissingAttrIds([]); setHasReviews(""); setHasSku("");
+    setHasImages(""); setHasAttrs(""); setMissingAttrIds([]); setHasReviews(""); setHasSku(""); setOnSale("");
     setSortBy("firstSeenAt"); setSortDir("desc"); setTab("all");
   };
 
@@ -4139,7 +4142,7 @@ export function ProductsCatalog() {
     setSearch(""); setBrandId(""); setMinPrice(null); setMaxPrice(null);
     setFirstSeenFrom(""); setFirstSeenTo("");
     setCategoryId(catId);
-    setHasImages(""); setHasAttrs(""); setMissingAttrIds([]); setHasReviews(""); setHasSku("");
+    setHasImages(""); setHasAttrs(""); setMissingAttrIds([]); setHasReviews(""); setHasSku(""); setOnSale("");
     setStatusIds([]);  // start from blank so preset-specific status can be set
     setTab("all");
     switch (preset) {
@@ -4589,7 +4592,12 @@ export function ProductsCatalog() {
             <option value="true">З артикулом</option>
             <option value="false">Без артикулу</option>
           </select>
-          {(search || categoryId !== "" || brandId !== "" || !isDefaultStatusFilter || minPrice != null || maxPrice != null || minStock != null || maxStock != null || firstSeenFrom || firstSeenTo || hasImages || hasAttrs || missingAttrIds.length > 0 || hasReviews || hasSku || tab !== "all") && (
+          <select value={onSale} onChange={(e) => setOnSale(e.target.value as typeof onSale)} style={selStyle}>
+            <option value="">Розпродаж: всі</option>
+            <option value="true">Розпродаж: Так</option>
+            <option value="false">Розпродаж: Ні</option>
+          </select>
+          {(search || categoryId !== "" || brandId !== "" || !isDefaultStatusFilter || minPrice != null || maxPrice != null || minStock != null || maxStock != null || firstSeenFrom || firstSeenTo || hasImages || hasAttrs || missingAttrIds.length > 0 || hasReviews || hasSku || onSale || tab !== "all") && (
             <button onClick={resetFilters} className="text-xs px-2 py-1 rounded-lg cursor-pointer border-0"
               style={{ background: "#d1343811", color: "#d13438" }}>✕ Скинути</button>
           )}
@@ -4654,6 +4662,7 @@ export function ProductsCatalog() {
                       ["Ціна", "price"],
                       ["Залишок", "stockQty"],
                       ["Статус", null],
+                      ["Розпродаж", null],
                       ...(tab === "changed7" ? [["Було → стало", null]] as [string, string | null][] : []),
                       ["Фото", "imagesCount"],
                       ["Відгук.", "reviewsCount"],
@@ -4778,6 +4787,17 @@ export function ProductsCatalog() {
                             style={{ color: p.deleted ? "#a19f9d" : statusColor(p.statusId) }}
                           >● {p.deleted ? `Архів · ${p.statusName}` : p.statusName}</button>
                         </td>
+                        <td className="px-2 py-1.5 text-center whitespace-nowrap">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOnSale(p.isOnSale ? "true" : "false");
+                            }}
+                            className="cursor-pointer border-0 bg-transparent text-xs font-semibold hover:underline"
+                            style={{ color: p.isOnSale ? "#d97706" : "var(--text-dim)" }}
+                            title={`Клік: показати товари — розпродаж ${p.isOnSale ? "Так" : "Ні"}`}
+                          >{p.isOnSale ? "Так" : "Ні"}</button>
+                        </td>
                         {tab === "changed7" && (
                           <td className="px-2 py-1.5 whitespace-nowrap text-[11px]">
                             {p.statusHistory[0] ? (
@@ -4840,7 +4860,7 @@ export function ProductsCatalog() {
                     );
                   })}
                   {data.items.length === 0 && (
-                    <tr><td colSpan={tab === "changed7" ? 16 : 15} className="text-center text-xs py-6" style={{ color: "var(--text-dim)" }}>
+                    <tr><td colSpan={tab === "changed7" ? 17 : 16} className="text-center text-xs py-6" style={{ color: "var(--text-dim)" }}>
                       {data.stats.totalAll === 0
                         ? "Немає даних. Запустіть Sync щоб завантажити каталог."
                         : "Нічого не знайдено за фільтрами"}

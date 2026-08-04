@@ -118,6 +118,7 @@ async function productsResponse(q: URLSearchParams) {
   const missingRequiredAttrIds = new Set(parseIntList(q.get("missing_required_attr_ids")));
   const hasReviews = parseBool(q.get("has_reviews"));
   const hasSku = parseBool(q.get("has_sku"));
+  const onSale = parseBool(q.get("on_sale"));
   const deletedOnly = parseBool(q.get("deleted"));
   const onlyNewDays = parseInt(q.get("only_new_days") || "0", 10);
   const onlyStatusChangedDays = parseInt(q.get("only_status_changed_days") || "0", 10);
@@ -239,6 +240,7 @@ async function productsResponse(q: URLSearchParams) {
     if (hasReviews === false && p.reviewsCount > 0) return false;
     if (hasSku === true && (!p.sku || !p.sku.trim())) return false;
     if (hasSku === false && p.sku && p.sku.trim()) return false;
+    if (onSale != null && (p.isOnSale === true) !== onSale) return false;
     if (deletedOnly === true && !p.deleted) return false;
     if (deletedOnly === false && p.deleted) return false;
     if (newCutoff && p.firstSeenAt < newCutoff) return false;

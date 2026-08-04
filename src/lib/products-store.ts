@@ -37,6 +37,7 @@ export interface ProductLite {
   currency: string;
   statusId: number;
   statusName: string;
+  isOnSale: boolean;
   stockQty: number | null;
   imagesCount: number;
   reviewsCount: number;
