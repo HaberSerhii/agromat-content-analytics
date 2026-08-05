@@ -221,6 +221,7 @@ async function main() {
         "exact",
         `${response.url || target.url} ${parsed.title || ""}`,
       );
+      const verifiedBrand = parsed.foundBrand || (confidence === "exact" ? target.brand : null);
       const price = priceForSnapshot(parsed.price, parsed.status);
       if (parsed.status === "parse_error") {
         errors++;
@@ -238,7 +239,7 @@ async function main() {
         found_url: response.url || target.url,
         snapshot_date: snapshotDate,
         confidence: parsed.status === "parse_error" ? "none" : confidence,
-        found_brand: parsed.foundBrand,
+        found_brand: verifiedBrand,
         url_approved: false,
       });
     } catch (error) {
