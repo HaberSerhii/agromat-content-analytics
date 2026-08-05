@@ -75,9 +75,16 @@ function parseNumber(raw) {
 }
 
 function parseProduct(html) {
-  const foundBrand = html.match(/"brand"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/i)?.[1]
+  const rawFoundBrand = html.match(/"brand"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/i)?.[1]
     || html.match(/itemprop=["']brand["'][^>]*(?:content=["']([^"']+)|>\s*([^<]+))/i)?.slice(1).find(Boolean)
     || null;
+  const foundBrand = rawFoundBrand?.trim() || null;
+  const title = html.match(/property=["']og:title["'][^>]*content=["']([^"']+)/i)?.[1]
+    || html.match(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1]
+    || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    || html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim()
+    || null;
+  const unavailable = /немає в наявності|нет в наличии|out-of-stock|outofstock/i.test(html);
   const pricePatterns = [
     /itemprop=["']price["'][^>]*content=["']([\d.,]+)["']/i,
     /content=["']([\d.,]+)["'][^>]*itemprop=["']price["']/i,
@@ -86,11 +93,11 @@ function parseProduct(html) {
   for (const pattern of pricePatterns) {
     const price = parseNumber(html.match(pattern)?.[1]);
     if (price != null) {
-      const unavailable = /немає в наявності|нет в наличии|out-of-stock|outofstock/i.test(html);
-      return { price, status: unavailable ? "Немає в наявності" : "Є в наявності", foundBrand };
+      return { price, status: unavailable ? "Немає в наявності" : "Є в наявності", foundBrand, title };
     }
   }
-  return { price: null, status: "parse_error", foundBrand };
+  if (unavailable) return { price: null, status: "Немає в наявності", foundBrand, title };
+  return { price: null, status: "parse_error", foundBrand, title };
 }
 
 async function fetchTargets(db, competitorId) {
@@ -208,9 +215,14 @@ async function main() {
       });
       if (!response.ok) throw new Error(`http_${response.status}`);
       const parsed = parseProduct(await response.text());
-      const confidence = matchConfidence(target.brand, parsed.foundBrand, "exact", response.url || target.url);
+      const confidence = matchConfidence(
+        target.brand,
+        parsed.foundBrand,
+        "exact",
+        `${response.url || target.url} ${parsed.title || ""}`,
+      );
       const price = priceForSnapshot(parsed.price, parsed.status);
-      if (parsed.price == null) {
+      if (parsed.status === "parse_error") {
         errors++;
       } else if (price != null && confidence === "exact") {
         found++;
@@ -225,7 +237,7 @@ async function main() {
         status: parsed.status,
         found_url: response.url || target.url,
         snapshot_date: snapshotDate,
-        confidence: parsed.price == null ? "none" : confidence,
+        confidence: parsed.status === "parse_error" ? "none" : confidence,
         found_brand: parsed.foundBrand,
         url_approved: false,
       });
