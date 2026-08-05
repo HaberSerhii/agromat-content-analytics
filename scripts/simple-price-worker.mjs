@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { matchConfidence, priceForSnapshot } from "./lib/competitor-price-quality.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -202,22 +203,22 @@ async function fetchHtml(url) {
   return { status: resp.status, url: resp.url, html };
 }
 
-async function fetchActiveProductIds(db) {
-  const activeIds = new Set();
+async function fetchActiveProducts(db) {
+  const activeProducts = new Map();
   let from = 0;
   for (let i = 0; i < 100; i++) {
     const { data, error } = await db
       .from("products")
-      .select("id")
+      .select("id, brand")
       .eq("is_active", true)
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`products: ${error.message}`);
     const rows = data || [];
-    for (const r of rows) activeIds.add(r.id);
+    for (const r of rows) activeProducts.set(r.id, r);
     if (rows.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
   }
-  return activeIds;
+  return activeProducts;
 }
 
 async function fetchTargets(db, competitorId) {
@@ -225,7 +226,7 @@ async function fetchTargets(db, competitorId) {
     return [{ product_id: singleProductId, url: singleUrl }];
   }
 
-  const activeIds = await fetchActiveProductIds(db);
+  const activeProducts = await fetchActiveProducts(db);
   const out = [];
   let from = 0;
   for (let i = 0; i < 50; i++) {
@@ -238,7 +239,8 @@ async function fetchTargets(db, competitorId) {
     if (error) throw new Error(`url_overrides: ${error.message}`);
     const rows = data || [];
     for (const r of rows) {
-      if (activeIds.has(r.product_id)) out.push({ product_id: r.product_id, url: r.url });
+      const product = activeProducts.get(r.product_id);
+      if (product) out.push({ product_id: r.product_id, url: r.url, brand: product.brand || null });
     }
     if (rows.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
@@ -378,9 +380,8 @@ async function main() {
   }
 
   await writeJob({ label: `${LABEL}: читаю URL-и з БД` });
-  const [targets, latestSuccessful, previousSuccessful] = await Promise.all([
+  const [targets, previousSuccessful] = await Promise.all([
     fetchTargets(db, competitor.id),
-    fetchSuccessfulSnapshot(db, competitor.id),
     fetchSuccessfulSnapshot(db, competitor.id, snapshotDate),
   ]);
   await writeJob({
@@ -408,28 +409,25 @@ async function main() {
       const fetched = await fetchHtml(target.url);
       const parsed = fetched.status >= 200 && fetched.status < 300 ? parseProduct(fetched.html) : null;
       if (parsed?.price) {
-        found++;
+        const confidence = matchConfidence(target.brand, parsed.foundBrand, "exact", fetched.url || target.url);
+        const price = priceForSnapshot(parsed.price, parsed.status);
+        if (price != null && confidence === "exact") found++;
         const previousPrice = previousSuccessful.get(target.product_id)?.price;
-        if (previousPrice != null && Number(previousPrice) !== Number(parsed.price)) priceChanges++;
+        if (price != null && previousPrice != null && Number(previousPrice) !== price) priceChanges++;
         rows.push({
           product_id: target.product_id,
           competitor_id: competitor.id,
-          price: parsed.price,
+          price,
           status: parsed.status,
           found_url: fetched.url || target.url,
           snapshot_date: snapshotDate,
-          confidence: "exact",
+          confidence,
           found_brand: parsed.foundBrand,
           url_approved: false,
         });
       } else {
         errors++;
-        const previous = latestSuccessful.get(target.product_id);
-        rows.push(previous ? {
-          ...previous,
-          competitor_id: competitor.id,
-          snapshot_date: snapshotDate,
-        } : {
+        rows.push({
           product_id: target.product_id,
           competitor_id: competitor.id,
           price: null,
@@ -445,12 +443,7 @@ async function main() {
       if (waitMs > 0) await sleep(waitMs);
     } catch (e) {
       errors++;
-      const previous = latestSuccessful.get(target.product_id);
-      rows.push(previous ? {
-        ...previous,
-        competitor_id: competitor.id,
-        snapshot_date: snapshotDate,
-      } : {
+      rows.push({
         product_id: target.product_id,
         competitor_id: competitor.id,
         price: null,

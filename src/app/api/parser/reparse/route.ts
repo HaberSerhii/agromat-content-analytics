@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
+import {
+  competitorBrandAppearsInText,
+  competitorBrandsMatch,
+  evaluateCompetitorPrice,
+} from "@/lib/competitor-price-quality";
 
 export const dynamic = "force-dynamic";
 // Reparse can hit Cloudflare-protected sites; allow up to 30s before timeout.
@@ -102,13 +107,19 @@ async function reparseSimple(body: ReparseBody, adapter: string) {
   }
 
   const db = getSupabase();
-  const { data: override, error: urlErr } = await db
-    .from("url_overrides")
-    .select("url")
-    .eq("product_id", body.product_id)
-    .eq("competitor_id", body.competitor_id)
-    .maybeSingle();
+  const [{ data: override, error: urlErr }, { data: product, error: productErr }] = await Promise.all([
+    db.from("url_overrides")
+      .select("url")
+      .eq("product_id", body.product_id)
+      .eq("competitor_id", body.competitor_id)
+      .maybeSingle(),
+    db.from("products")
+      .select("brand")
+      .eq("id", body.product_id)
+      .maybeSingle(),
+  ]);
   if (urlErr) return NextResponse.json({ ok: false, error: urlErr.message }, { status: 500 });
+  if (productErr) return NextResponse.json({ ok: false, error: productErr.message }, { status: 500 });
   if (!override?.url) return NextResponse.json({ ok: false, error: "url_not_found" }, { status: 404 });
 
   const resp = await fetch(override.url, {
@@ -122,16 +133,33 @@ async function reparseSimple(body: ReparseBody, adapter: string) {
   const html = await resp.text();
   const parsed = resp.ok ? parseSimplePrice(adapter, html) : null;
   const snapshotDate = body.snapshot_date || new Date().toISOString().slice(0, 10);
+  const expectedBrand = (product?.brand as string | null | undefined) ?? null;
+  const foundBrand = parsed?.foundBrand
+    || (competitorBrandAppearsInText(expectedBrand, resp.url || override.url) ? expectedBrand : null);
+  const confidence = !parsed?.price
+    ? "none"
+    : expectedBrand && !foundBrand
+      ? "partial"
+      : expectedBrand && !competitorBrandsMatch(expectedBrand, foundBrand)
+        ? "rejected"
+        : "exact";
+  const evaluated = evaluateCompetitorPrice({
+    observedPrice: parsed?.price ?? null,
+    status: parsed?.status ?? (resp.ok ? "parse_error" : `http_${resp.status}`),
+    confidence,
+    expectedBrand,
+    foundBrand,
+  });
 
   const row = {
     product_id: body.product_id,
     competitor_id: body.competitor_id,
-    price: parsed?.price ?? null,
+    price: evaluated.price,
     status: parsed?.status ?? (resp.ok ? "parse_error" : `http_${resp.status}`),
     found_url: resp.url || override.url,
     snapshot_date: snapshotDate,
-    confidence: parsed?.price ? "exact" : "none",
-    found_brand: parsed?.foundBrand ?? null,
+    confidence,
+    found_brand: foundBrand,
     url_approved: false,
   };
 
@@ -141,7 +169,11 @@ async function reparseSimple(body: ReparseBody, adapter: string) {
   return NextResponse.json({
     ok: true,
     price: row.price,
+    observed_price: parsed?.price ?? null,
     status: row.status,
+    confidence,
+    found_brand: row.found_brand,
+    review_reason: evaluated.reviewReason,
     found_url: row.found_url,
   });
 }

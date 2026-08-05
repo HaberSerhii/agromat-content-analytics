@@ -2650,7 +2650,15 @@ function TimelineRow({ event }: { event: TimelineEventResp }) {
 // price_snapshots). "↻" button per cell hits /api/parser/reparse which
 // forwards to the legacy Flask scraper (Agromat_Parcer).
 interface PricesCompetitor { id: number; name: string; adapter_name: string }
-interface PricesCell { price: number | null; status: string | null; url: string | null }
+interface PricesCell {
+  price: number | null;
+  observedPrice: number | null;
+  status: string | null;
+  url: string | null;
+  confidence: string | null;
+  foundBrand: string | null;
+  reviewReason: "out_of_stock" | "partial_match" | "brand_missing" | "brand_mismatch" | "availability_unknown" | "parse_error" | null;
+}
 interface PricesRow {
   productId: number;
   code: number | null;
@@ -2825,8 +2833,12 @@ function CompetitorPricesView({
                     ...r.byCompetitor,
                     [competitorId]: {
                       price: typeof json.price === "number" ? json.price : null,
+                      observedPrice: typeof json.observed_price === "number" ? json.observed_price : null,
                       status: json.status ?? r.byCompetitor[competitorId]?.status ?? null,
                       url: r.byCompetitor[competitorId]?.url ?? null,
+                      confidence: json.confidence ?? null,
+                      foundBrand: json.found_brand ?? null,
+                      reviewReason: json.review_reason ?? null,
                     },
                   },
                 }
@@ -3172,6 +3184,14 @@ function CompetitorCellView({ cell, ourPrice, busy, onReparse }: {
   onReparse: () => void;
 }) {
   const has = cell && cell.price != null;
+  const reviewMeta = cell?.reviewReason ? ({
+    out_of_stock: { label: "Немає в наявності", color: "#a19f9d" },
+    partial_match: { label: "Сумнівний матч", color: "#b45309" },
+    brand_missing: { label: "Бренд не знайдено", color: "#b45309" },
+    brand_mismatch: { label: "Інший бренд", color: "#d13438" },
+    availability_unknown: { label: "Наявність не підтверджена", color: "#b45309" },
+    parse_error: { label: "Помилка парсингу", color: "#d13438" },
+  } as const)[cell.reviewReason] : null;
   let priceColor = "var(--text-mid)";
   let diffLabel: string | null = null;
   if (has && ourPrice != null && ourPrice > 0) {
@@ -3198,6 +3218,18 @@ function CompetitorCellView({ cell, ourPrice, busy, onReparse }: {
             : <span style={{ color: priceColor, fontWeight: 600 }}>{fmtPrice(cell!.price, "UAH")}</span>}
           {diffLabel && <span className="text-[10px]" style={{ color: priceColor }}>{diffLabel}</span>}
         </>
+      ) : reviewMeta ? (
+        <span
+          className="text-[10px] font-semibold"
+          style={{ color: reviewMeta.color }}
+          title={[
+            cell?.status,
+            cell?.foundBrand ? `Бренд конкурента: ${cell.foundBrand}` : null,
+            cell?.observedPrice != null ? `Зчитана, але виключена ціна: ${fmtPrice(cell.observedPrice, "UAH")}` : null,
+          ].filter(Boolean).join(" · ")}
+        >
+          {reviewMeta.label}
+        </span>
       ) : <span style={{ color: "var(--text-dim)" }}>—</span>}
       <button onClick={onReparse} disabled={busy}
         className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border-0 disabled:opacity-60"

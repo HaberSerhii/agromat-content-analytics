@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { chromium } from "playwright";
+import { matchConfidence, priceForSnapshot } from "./lib/competitor-price-quality.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -322,18 +323,18 @@ async function fetchTargets(db, competitorId) {
     return [{ product_id: singleProductId, url: normalizeSantechsharaUrl(singleUrl) }];
   }
 
-  const activeIds = new Set();
+  const activeProducts = new Map();
   let activeFrom = 0;
   const activePageSize = 1000;
   for (let i = 0; i < 100; i++) {
     const { data, error } = await db
       .from("products")
-      .select("id")
+      .select("id, brand")
       .eq("is_active", true)
       .range(activeFrom, activeFrom + activePageSize - 1);
     if (error) throw new Error(`products: ${error.message}`);
     const rows = data || [];
-    for (const r of rows) activeIds.add(r.id);
+    for (const r of rows) activeProducts.set(r.id, r);
     if (rows.length < activePageSize) break;
     activeFrom += activePageSize;
   }
@@ -351,7 +352,12 @@ async function fetchTargets(db, competitorId) {
     if (error) throw new Error(`url_overrides: ${error.message}`);
     const rows = data || [];
     for (const r of rows) {
-      if (activeIds.has(r.product_id)) out.push({ product_id: r.product_id, url: normalizeSantechsharaUrl(r.url) });
+      const product = activeProducts.get(r.product_id);
+      if (product) out.push({
+        product_id: r.product_id,
+        url: normalizeSantechsharaUrl(r.url),
+        brand: product.brand || null,
+      });
     }
     if (rows.length < pageSize) break;
     from += pageSize;
@@ -530,18 +536,22 @@ async function main() {
           }
         }
         if (parsed.price) {
-          found++;
+          const confidence = matchConfidence(target.brand, parsed.foundBrand, "exact", page.url() || target.url);
+          const price = priceForSnapshot(parsed.price, parsed.status);
+          if (price != null && confidence === "exact") found++;
           const previousPrice = previousPrices.get(target.product_id);
-          if (previousPrice == null) newFinds++;
-          else if (previousPrice !== parsed.price) priceChanges++;
+          if (price != null && confidence === "exact") {
+            if (previousPrice == null) newFinds++;
+            else if (previousPrice !== price) priceChanges++;
+          }
           rows.push({
             product_id: target.product_id,
             competitor_id: competitor.id,
-            price: parsed.price,
+            price,
             status: parsed.status,
             found_url: page.url() || target.url,
             snapshot_date: snapshotDate,
-            confidence: "exact",
+            confidence,
             found_brand: parsed.foundBrand,
             url_approved: false,
           });

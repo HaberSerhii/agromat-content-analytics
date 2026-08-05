@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  competitorBrandAppearsInText,
+  evaluateCompetitorPrice,
+  type CompetitorPriceReviewReason,
+} from "@/lib/competitor-price-quality";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +49,9 @@ interface SnapshotRow {
   price: number | null;
   status: string | null;
   found_url: string | null;
+  confidence: string | null;
+  found_brand: string | null;
+  url_approved: boolean | null;
 }
 
 interface ProductRow {
@@ -61,8 +69,12 @@ interface ProductRow {
 
 interface CompetitorCell {
   price: number | null;
+  observedPrice: number | null;
   status: string | null;
   url: string | null;
+  confidence: string | null;
+  foundBrand: string | null;
+  reviewReason: CompetitorPriceReviewReason;
 }
 
 interface PricesRow {
@@ -214,7 +226,7 @@ async function fetchAllSnapshotsForDate(
   for (let i = 0; i < 50; i++) {
     const { data, error } = await db
       .from("price_snapshots")
-      .select("product_id, competitor_id, price, status, found_url")
+      .select("product_id, competitor_id, price, status, found_url, confidence, found_brand, url_approved")
       .eq("snapshot_date", snapshotDate)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);
@@ -231,7 +243,14 @@ async function fetchAllSnapshotsForDate(
   // Partial/test refreshes must not make every untouched competitor price
   // disappear. Fill missing cells from each competitor's immediately previous
   // snapshot date instead of scanning its entire history.
+  const competitorsWithCurrentRows = new Set(
+    [...latestByProductCompetitor.values()].map((row) => row.competitor_id),
+  );
   await Promise.all(competitorIds.map(async (competitorId) => {
+    // A completed/current run is authoritative, including products it marks
+    // unavailable or fails to verify. Never fill its missing items with stale
+    // prices. The previous date is only a cross-competitor date fallback.
+    if (competitorsWithCurrentRows.has(competitorId)) return;
     const { data: dateRows, error: dateError } = await db
       .from("price_snapshots")
       .select("snapshot_date")
@@ -247,7 +266,7 @@ async function fetchAllSnapshotsForDate(
     for (let i = 0; i < 50; i++) {
       const { data, error } = await db
         .from("price_snapshots")
-        .select("product_id, competitor_id, price, status, found_url")
+        .select("product_id, competitor_id, price, status, found_url, confidence, found_brand, url_approved")
         .eq("competitor_id", competitorId)
         .eq("snapshot_date", previousDate)
         .not("price", "is", null)
@@ -484,27 +503,54 @@ async function pricesResponse(q: URLSearchParams) {
   }
 
   // 5) Index snapshots by product → competitor for O(1) cell lookup.
-  const cellByProduct = new Map<number, Map<number, CompetitorCell>>();
+  const snapshotByProduct = new Map<number, Map<number, SnapshotRow>>();
   for (const s of snapshots) {
-    let bucket = cellByProduct.get(s.product_id);
+    let bucket = snapshotByProduct.get(s.product_id);
     if (!bucket) {
       bucket = new Map();
-      cellByProduct.set(s.product_id, bucket);
+      snapshotByProduct.set(s.product_id, bucket);
     }
-    bucket.set(s.competitor_id, {
-      price: s.price,
-      status: s.status,
-      url: s.found_url,
-    });
+    bucket.set(s.competitor_id, s);
   }
 
   // 6) Build response rows. Sort by name for predictable order.
   const rows: PricesRow[] = products
     .map((p) => {
-      const cells = cellByProduct.get(p.id) || new Map();
+      const snapshotsForProduct = snapshotByProduct.get(p.id) || new Map<number, SnapshotRow>();
       const byCompetitor: Record<number, CompetitorCell> = {};
       for (const c of competitors) {
-        byCompetitor[c.id] = cells.get(c.id) ?? { price: null, status: null, url: null };
+        const snapshot = snapshotsForProduct.get(c.id);
+        if (!snapshot) {
+          byCompetitor[c.id] = {
+            price: null,
+            observedPrice: null,
+            status: null,
+            url: null,
+            confidence: null,
+            foundBrand: null,
+            reviewReason: null,
+          };
+          continue;
+        }
+        const observedPrice = snapshot.price == null ? null : Number(snapshot.price);
+        const foundBrand = snapshot.found_brand
+          || (competitorBrandAppearsInText(p.brand, snapshot.found_url) ? p.brand : null);
+        const evaluated = evaluateCompetitorPrice({
+          observedPrice,
+          status: snapshot.status,
+          confidence: snapshot.confidence,
+          expectedBrand: p.brand,
+          foundBrand,
+        });
+        byCompetitor[c.id] = {
+          price: evaluated.price,
+          observedPrice,
+          status: snapshot.status,
+          url: snapshot.found_url,
+          confidence: snapshot.confidence,
+          foundBrand,
+          reviewReason: evaluated.reviewReason,
+        };
       }
       return {
         productId: p.id,

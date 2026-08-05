@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { matchConfidence, priceForSnapshot } from "./lib/competitor-price-quality.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -74,6 +75,9 @@ function parseNumber(raw) {
 }
 
 function parseProduct(html) {
+  const foundBrand = html.match(/"brand"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/i)?.[1]
+    || html.match(/itemprop=["']brand["'][^>]*(?:content=["']([^"']+)|>\s*([^<]+))/i)?.slice(1).find(Boolean)
+    || null;
   const pricePatterns = [
     /itemprop=["']price["'][^>]*content=["']([\d.,]+)["']/i,
     /content=["']([\d.,]+)["'][^>]*itemprop=["']price["']/i,
@@ -83,18 +87,18 @@ function parseProduct(html) {
     const price = parseNumber(html.match(pattern)?.[1]);
     if (price != null) {
       const unavailable = /немає в наявності|нет в наличии|out-of-stock|outofstock/i.test(html);
-      return { price, status: unavailable ? "Немає в наявності" : "Є в наявності" };
+      return { price, status: unavailable ? "Немає в наявності" : "Є в наявності", foundBrand };
     }
   }
-  return { price: null, status: "parse_error" };
+  return { price: null, status: "parse_error", foundBrand };
 }
 
 async function fetchTargets(db, competitorId) {
-  const activeIds = new Set();
+  const activeProducts = new Map();
   for (let from = 0; from < 100000; from += 1000) {
-    const { data, error } = await db.from("products").select("id").eq("is_active", true).range(from, from + 999);
+    const { data, error } = await db.from("products").select("id, brand").eq("is_active", true).range(from, from + 999);
     if (error) throw new Error(`products: ${error.message}`);
-    for (const row of data || []) activeIds.add(row.id);
+    for (const row of data || []) activeProducts.set(row.id, row);
     if ((data || []).length < 1000) break;
   }
 
@@ -108,7 +112,8 @@ async function fetchTargets(db, competitorId) {
       .range(from, from + 999);
     if (error) throw new Error(`url_overrides: ${error.message}`);
     for (const row of data || []) {
-      if (activeIds.has(row.product_id)) targets.push(row);
+      const product = activeProducts.get(row.product_id);
+      if (product) targets.push({ ...row, brand: product.brand || null });
     }
     if ((data || []).length < 1000) break;
   }
@@ -203,23 +208,25 @@ async function main() {
       });
       if (!response.ok) throw new Error(`http_${response.status}`);
       const parsed = parseProduct(await response.text());
+      const confidence = matchConfidence(target.brand, parsed.foundBrand, "exact", response.url || target.url);
+      const price = priceForSnapshot(parsed.price, parsed.status);
       if (parsed.price == null) {
         errors++;
-      } else {
+      } else if (price != null && confidence === "exact") {
         found++;
         const previousPrice = previousPrices.get(target.product_id);
         if (previousPrice == null) newFinds++;
-        else if (previousPrice !== parsed.price) priceChanges++;
+        else if (previousPrice !== price) priceChanges++;
       }
       rows.push({
         product_id: target.product_id,
         competitor_id: competitor.id,
-        price: parsed.price,
+        price,
         status: parsed.status,
         found_url: response.url || target.url,
         snapshot_date: snapshotDate,
-        confidence: parsed.price == null ? "none" : "exact",
-        found_brand: null,
+        confidence: parsed.price == null ? "none" : confidence,
+        found_brand: parsed.foundBrand,
         url_approved: false,
       });
     } catch (error) {
