@@ -208,8 +208,14 @@ async function compare(db) {
       const brandMismatch = confidence === "rejected"
         || Boolean(product.brand && foundBrand && !brandsMatch(product.brand, foundBrand));
       const brandMissingOrUnverified = Boolean(product.brand) && !foundBrand && confidence !== "exact";
+      const currentOutOfStock = isOutOfStock(after.status);
       const clearedOutOfStock = beforeObservedPrice != null && afterPrice == null && isOutOfStock(after.status);
       const priceChanged = beforePrice != null && afterPrice != null && Math.abs(beforePrice - afterPrice) > 0.005;
+      const quarantinedPartialPrice = numberOrNull(after.price) != null
+        && !currentOutOfStock
+        && confidence === "partial"
+        && !brandMismatch
+        && !brandMissingOrUnverified;
       const current = groups.get(brand) || {
         competitor: competitor.competitor_name,
         adapter: competitor.adapter_name,
@@ -218,17 +224,21 @@ async function compare(db) {
         actual_price_updated: 0,
         numeric_price_changed: 0,
         price_cleared_out_of_stock: 0,
+        current_out_of_stock: 0,
         brand_mismatch: 0,
         brand_missing_or_unverified: 0,
+        quarantined_partial_price: 0,
         parse_or_availability_error: 0,
       };
       current.processed += 1;
       if (afterPrice != null) current.actual_price_updated += 1;
       if (priceChanged) current.numeric_price_changed += 1;
       if (clearedOutOfStock) current.price_cleared_out_of_stock += 1;
+      if (currentOutOfStock) current.current_out_of_stock += 1;
       if (brandMismatch) current.brand_mismatch += 1;
       if (brandMissingOrUnverified) current.brand_missing_or_unverified += 1;
-      if (afterPrice == null && !clearedOutOfStock && !brandMismatch && !brandMissingOrUnverified) {
+      if (quarantinedPartialPrice) current.quarantined_partial_price += 1;
+      if (afterPrice == null && !currentOutOfStock && !brandMismatch && !brandMissingOrUnverified && !quarantinedPartialPrice) {
         current.parse_or_availability_error += 1;
       }
       groups.set(brand, current);
@@ -245,8 +255,10 @@ async function compare(db) {
       actual_price_updated: 0,
       numeric_price_changed: 0,
       price_cleared_out_of_stock: 0,
+      current_out_of_stock: 0,
       brand_mismatch: 0,
       brand_missing_or_unverified: 0,
+      quarantined_partial_price: 0,
       parse_or_availability_error: 0,
     };
     for (const key of Object.keys(total)) {
@@ -257,7 +269,7 @@ async function compare(db) {
   const brandTotals = [...brandTotalsMap.values()].sort((a, b) => a.brand.localeCompare(b.brand, "uk"));
 
   const report = {
-    version: 1,
+    version: 2,
     baseline_file: path.resolve(baselineFile),
     baseline_cutoff: baseline.cutoff,
     compared_at: comparedAt,
@@ -265,8 +277,11 @@ async function compare(db) {
       actual_price_updated: "Run wrote an explicitly in-stock, exact-brand row with a positive price.",
       numeric_price_changed: "The valid numeric price differs from the baseline.",
       price_cleared_out_of_stock: "The baseline had an observed price and the run wrote an out-of-stock row without an effective price.",
+      current_out_of_stock: "The run observed the competitor product as explicitly out of stock. This can overlap with brand mismatch.",
       brand_mismatch: "The run rejected the row because the found brand does not match the Agromat brand.",
       brand_missing_or_unverified: "The competitor page did not expose enough brand evidence to approve the price.",
+      quarantined_partial_price: "The run found an in-stock numeric price, but held it from comparison because the match or price-change confidence is partial.",
+      parse_or_availability_error: "The run wrote neither a safe price nor an explicit out-of-stock, brand, or partial-match result.",
     },
     brand_totals: brandTotals,
     competitor_brand_rows: reportRows,
@@ -279,13 +294,14 @@ async function compare(db) {
   const detailCsvPath = path.join(OUTPUT_DIR, `${stem}-by-competitor-brand.csv`);
   const brandHeaders = [
     "brand", "processed", "actual_price_updated", "numeric_price_changed",
-    "price_cleared_out_of_stock", "brand_mismatch", "brand_missing_or_unverified",
-    "parse_or_availability_error",
+    "price_cleared_out_of_stock", "current_out_of_stock", "brand_mismatch",
+    "brand_missing_or_unverified", "quarantined_partial_price", "parse_or_availability_error",
   ];
   const detailHeaders = [
     "competitor", "adapter", "brand", "processed", "actual_price_updated",
-    "numeric_price_changed", "price_cleared_out_of_stock", "brand_mismatch",
-    "brand_missing_or_unverified", "parse_or_availability_error",
+    "numeric_price_changed", "price_cleared_out_of_stock", "current_out_of_stock",
+    "brand_mismatch", "brand_missing_or_unverified", "quarantined_partial_price",
+    "parse_or_availability_error",
   ];
   const brandCsv = [
     brandHeaders.join(","),
