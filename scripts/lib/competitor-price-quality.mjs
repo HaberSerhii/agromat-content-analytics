@@ -32,6 +32,10 @@ export function isInStockStatus(status) {
   return !OUT_OF_STOCK_RE.test(value) && IN_STOCK_RE.test(value);
 }
 
+export function isOutOfStockStatus(status) {
+  return OUT_OF_STOCK_RE.test(String(status || ""));
+}
+
 export function priceForSnapshot(price, status) {
   return isInStockStatus(status) && Number(price) > 0 ? Number(price) : null;
 }
@@ -42,4 +46,20 @@ export function matchConfidence(expectedBrand, foundBrand, current = "exact", so
   if (!foundBrand) return "partial";
   if (!brandsMatch(expectedBrand, foundBrand)) return "rejected";
   return current;
+}
+
+export function snapshotQualityIssue(previousRows, currentRows) {
+  if (currentRows.length < 100) return null;
+  const currentOut = currentRows.filter((row) => isOutOfStockStatus(row.status)).length;
+  const currentRate = currentOut / currentRows.length;
+  if (currentRate >= 0.8) {
+    return `out_of_stock spike: ${currentOut}/${currentRows.length} (${Math.round(currentRate * 100)}%)`;
+  }
+  if (previousRows.length < 100) return null;
+  const previousOut = previousRows.filter((row) => isOutOfStockStatus(row.status)).length;
+  const previousRate = previousOut / previousRows.length;
+  const allowedRate = Math.max(previousRate + 0.15, previousRate * 1.8);
+  return currentRate > allowedRate
+    ? `out_of_stock spike: ${Math.round(previousRate * 100)}% -> ${Math.round(currentRate * 100)}%`
+    : null;
 }

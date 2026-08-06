@@ -4,7 +4,13 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { matchConfidence, priceForSnapshot } from "./lib/competitor-price-quality.mjs";
+import {
+  isOutOfStockStatus,
+  matchConfidence,
+  priceForSnapshot,
+  snapshotQualityIssue,
+} from "./lib/competitor-price-quality.mjs";
+import { parseLeoceramika, parsePlitka } from "./lib/simple-product-parser.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -82,108 +88,6 @@ async function writeJob(patch) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function decodeHtml(s) {
-  return String(s || "")
-    .replace(/&quot;/g, '"')
-    .replace(/&#34;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#160;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
-}
-
-function stripTags(s) {
-  return decodeHtml(String(s || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim());
-}
-
-function normalizePrice(value) {
-  if (value == null) return null;
-  const text = stripTags(String(value));
-  const raw = text.match(/\d[\d\s.,]{0,14}/)?.[0] || "";
-  const cleaned = raw.replace(/\s/g, "").replace(",", ".");
-  const n = Number.parseFloat(cleaned);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.round(n * 100) / 100;
-}
-
-function normalizeStatus(value) {
-  const s = String(value || "").toLowerCase();
-  if (/outofstock|немає|нет\s+в\s+наличии|відсут|закінчив/.test(s)) return "Немає в наявності";
-  if (/preorder|очіку|ожида|під\s*замов|под\s*заказ/.test(s)) return "Під замовлення";
-  if (/instock|наяв|налич|купити|купить|в\s+корзин/.test(s)) return "Є в наявності";
-  return "unknown";
-}
-
-function collectJsonLd(html) {
-  const out = [];
-  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    const raw = decodeHtml(m[1]).trim();
-    if (!raw) continue;
-    try {
-      const parsed = JSON.parse(raw);
-      out.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-    } catch {
-      // ignore malformed analytics/LD chunks
-    }
-  }
-  return out;
-}
-
-function flattenLd(item) {
-  const out = [];
-  const visit = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) {
-      for (const x of node) visit(x);
-      return;
-    }
-    out.push(node);
-    if (Array.isArray(node["@graph"])) visit(node["@graph"]);
-    if (Array.isArray(node.offers)) visit(node.offers);
-  };
-  visit(item);
-  return out;
-}
-
-function parseFromJsonLd(html) {
-  for (const item of collectJsonLd(html)) {
-    for (const node of flattenLd(item)) {
-      const type = Array.isArray(node["@type"]) ? node["@type"].join(" ") : String(node["@type"] || "");
-      const offer = node.offers && !Array.isArray(node.offers) ? node.offers : node;
-      const price = normalizePrice(offer.price ?? offer.lowPrice ?? offer.highPrice);
-      if (!price) continue;
-      const availability = String(offer.availability || node.availability || "");
-      const foundBrand = typeof node.brand === "object" ? node.brand?.name : node.brand;
-      return {
-        price,
-        status: normalizeStatus(availability || type),
-        foundBrand: foundBrand || null,
-      };
-    }
-  }
-  return null;
-}
-
-function parsePlitka(html) {
-  const jsonLd = parseFromJsonLd(html);
-  if (jsonLd) return jsonLd;
-
-  const m = html.match(/class=["'][^"']*(?:now-price|one-prod-list-price)[^"']*["'][^>]*>([\s\S]{0,180}?)<\/[^>]+>/i);
-  const price = normalizePrice(m?.[1]);
-  return price ? { price, status: normalizeStatus(html), foundBrand: null } : null;
-}
-
-function parseLeoceramika(html) {
-  const meta = html.match(/<meta[^>]+itemprop=["']price["'][^>]+content=["']([^"']+)["'][^>]*>/i);
-  const sitePrice = html.match(/id=["']site_price["'][^>]*>([\s\S]{0,80}?)<\/span>/i);
-  const jsonLd = parseFromJsonLd(html);
-  const price = normalizePrice(meta?.[1]) || normalizePrice(sitePrice?.[1]) || jsonLd?.price || null;
-  return price ? { price, status: jsonLd?.status || normalizeStatus(html), foundBrand: jsonLd?.foundBrand || null } : null;
 }
 
 function parseProduct(html) {
@@ -278,7 +182,7 @@ async function fetchLatestPublishedDate(db, competitorId, beforeDate = null) {
   return snapshotRows?.[0]?.snapshot_date || null;
 }
 
-async function fetchSuccessfulSnapshot(db, competitorId, beforeDate = null) {
+async function fetchPublishedSnapshot(db, competitorId, beforeDate = null) {
   const out = new Map();
   const date = await fetchLatestPublishedDate(db, competitorId, beforeDate);
   if (!date) return out;
@@ -290,7 +194,6 @@ async function fetchSuccessfulSnapshot(db, competitorId, beforeDate = null) {
       .select("product_id,price,status,found_url,confidence,found_brand,url_approved,snapshot_date")
       .eq("competitor_id", competitorId)
       .eq("snapshot_date", date)
-      .not("price", "is", null)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`snapshot ${date}: ${error.message}`);
@@ -380,10 +283,14 @@ async function main() {
   }
 
   await writeJob({ label: `${LABEL}: читаю URL-и з БД` });
-  const [targets, previousSuccessful] = await Promise.all([
+  const [targets, previousRows, qualityBaselineRows] = await Promise.all([
     fetchTargets(db, competitor.id),
-    fetchSuccessfulSnapshot(db, competitor.id, snapshotDate),
+    fetchPublishedSnapshot(db, competitor.id, snapshotDate),
+    fetchPublishedSnapshot(db, competitor.id),
   ]);
+  const previousSuccessful = new Map(
+    [...previousRows].filter(([, row]) => row.price != null),
+  );
   await writeJob({
     status: "running",
     total: targets.length,
@@ -408,7 +315,7 @@ async function main() {
     try {
       const fetched = await fetchHtml(target.url);
       const parsed = fetched.status >= 200 && fetched.status < 300 ? parseProduct(fetched.html) : null;
-      if (parsed?.price) {
+      if (parsed?.price || isOutOfStockStatus(parsed?.status)) {
         const confidence = matchConfidence(target.brand, parsed.foundBrand, "exact", fetched.url || target.url);
         const price = priceForSnapshot(parsed.price, parsed.status);
         if (price != null && confidence === "exact") found++;
@@ -458,9 +365,25 @@ async function main() {
   }
 
   await writeJob({ label: `${LABEL}: зберігаю знімок ${snapshotDate}` });
-  const result = { total: targets.length, found, new_finds: 0, price_changes: priceChanges, errors, blocked: 0 };
+  const qualityIssue = snapshotQualityIssue([...qualityBaselineRows.values()], rows);
+  const outOfStock = rows.filter((row) => isOutOfStockStatus(row.status)).length;
+  const authoritativeRows = rows.filter((row) => (
+    row.price != null || isOutOfStockStatus(row.status) || row.confidence === "rejected"
+  ));
+  const result = {
+    total: targets.length,
+    found,
+    new_finds: 0,
+    price_changes: priceChanges,
+    errors,
+    blocked: qualityIssue ? 1 : 0,
+    out_of_stock: outOfStock,
+    preserved_previous: rows.length - authoritativeRows.length,
+    quality: qualityIssue ? "blocked" : "passed",
+  };
+  if (qualityIssue) throw new Error(`quality_guard:${qualityIssue}`);
   if (!dryRun) {
-    await appendSnapshotRows(db, rows);
+    await appendSnapshotRows(db, authoritativeRows);
     if (!singleProductId && limit <= 0) await publishSnapshot(db, competitor.id, result);
   }
   await writeJob({

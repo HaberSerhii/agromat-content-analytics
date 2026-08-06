@@ -47,7 +47,27 @@ function normalizeStatus(value: unknown): string {
   return "unknown";
 }
 
-function parseJsonLd(html: string): { price: number; status: string; foundBrand: string | null } | null {
+interface SimpleParseResult {
+  price: number | null;
+  status: string;
+  foundBrand: string | null;
+}
+
+function tagAttribute(tag: string, name: string): string | null {
+  return tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, "i"))?.[1] || null;
+}
+
+function parseScopedAvailability(html: string): string {
+  const schemaTag = html.match(/<(?:meta|link)\b[^>]*\bitemprop=["']availability["'][^>]*>/i)?.[0];
+  if (schemaTag) {
+    const status = normalizeStatus(tagAttribute(schemaTag, "content") || tagAttribute(schemaTag, "href"));
+    if (status !== "unknown") return status;
+  }
+  const productStatus = html.match(/<[^>]+class=["'][^"']*\bisCount\b[^"']*["'][^>]*>([\s\S]{0,120}?)<\/[^>]+>/i);
+  return normalizeStatus(productStatus?.[1]);
+}
+
+function parseJsonLd(html: string): SimpleParseResult | null {
   const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html))) {
@@ -62,11 +82,12 @@ function parseJsonLd(html: string): { price: number; status: string; foundBrand:
         if (Array.isArray(node.offers)) stack.push(...node.offers);
         const offer = node.offers && !Array.isArray(node.offers) ? node.offers as Record<string, unknown> : node;
         const price = normalizePrice(offer.price ?? offer.lowPrice ?? offer.highPrice);
-        if (!price) continue;
+        const availability = String(offer.availability ?? node.availability ?? "");
+        if (!price && !availability) continue;
         const brand = node.brand as { name?: string } | string | undefined;
         return {
           price,
-          status: normalizeStatus(offer.availability ?? node.availability),
+          status: normalizeStatus(availability),
           foundBrand: typeof brand === "string" ? brand : brand?.name ?? null,
         };
       }
@@ -77,20 +98,24 @@ function parseJsonLd(html: string): { price: number; status: string; foundBrand:
   return null;
 }
 
-function parseSimplePrice(adapter: string, html: string): { price: number; status: string; foundBrand: string | null } | null {
+function parseSimplePrice(adapter: string, html: string): SimpleParseResult | null {
   if (adapter === "plitka") {
     const jsonLd = parseJsonLd(html);
-    if (jsonLd) return jsonLd;
+    if (jsonLd?.price || jsonLd?.status === "Немає в наявності") return jsonLd;
     const m = html.match(/class=["'][^"']*(?:now-price|one-prod-list-price)[^"']*["'][^>]*>([\s\S]{0,180}?)<\/[^>]+>/i);
     const price = normalizePrice(m?.[1]);
-    return price ? { price, status: normalizeStatus(html), foundBrand: null } : null;
+    return price ? { price, status: "unknown", foundBrand: null } : null;
   }
   if (adapter === "leoceramika") {
     const jsonLd = parseJsonLd(html);
     const meta = html.match(/<meta[^>]+itemprop=["']price["'][^>]+content=["']([^"']+)["'][^>]*>/i);
     const sitePrice = html.match(/id=["']site_price["'][^>]*>([\s\S]{0,80}?)<\/span>/i);
     const price = normalizePrice(meta?.[1]) || normalizePrice(sitePrice?.[1]) || jsonLd?.price || null;
-    return price ? { price, status: jsonLd?.status || normalizeStatus(html), foundBrand: jsonLd?.foundBrand || null } : null;
+    const scopedStatus = parseScopedAvailability(html);
+    const status = scopedStatus !== "unknown" ? scopedStatus : jsonLd?.status || "unknown";
+    return price || status === "Немає в наявності"
+      ? { price, status, foundBrand: jsonLd?.foundBrand || null }
+      : null;
   }
   return null;
 }
@@ -150,6 +175,26 @@ async function reparseSimple(body: ReparseBody, adapter: string) {
     expectedBrand,
     foundBrand,
   });
+
+  if (evaluated.reviewReason === "parse_error" || evaluated.reviewReason === "availability_unknown") {
+    await db.from("parse_errors").insert({
+      product_id: body.product_id,
+      competitor_id: body.competitor_id,
+      reason: evaluated.reviewReason,
+      snapshot_date: snapshotDate,
+    });
+    return NextResponse.json({
+      ok: true,
+      price: null,
+      observed_price: parsed?.price ?? null,
+      status: parsed?.status ?? (resp.ok ? "parse_error" : `http_${resp.status}`),
+      confidence,
+      found_brand: foundBrand,
+      review_reason: evaluated.reviewReason,
+      found_url: resp.url || override.url,
+      preserved_previous: true,
+    });
+  }
 
   const row = {
     product_id: body.product_id,
