@@ -14,6 +14,17 @@ const BRAND_ALIASES = new Map([
   ["groheag", "grohe"],
   ["hansgrohegroup", "hansgrohe"],
   ["ampm", "ampm"],
+  ["villeroybosch", "villeroyboch"],
+  ["villeroyanboch", "villeroyboch"],
+  ["vileroybosch", "villeroyboch"],
+]);
+
+const BRAND_NOISE_TOKENS = new Set([
+  "ag", "co", "gmbh", "inc", "kg", "llc", "ltd", "sa", "se", "sl", "sp",
+  "company", "group", "international", "sales", "armaturen", "rubinetteria",
+  "germany", "italy", "poland", "switzerland",
+  "германия", "италия", "польша", "швейцария",
+  "німеччина", "італія", "польща", "швейцарія",
 ]);
 
 export function normalizeCompetitorBrand(value: string | null | undefined): string {
@@ -27,17 +38,24 @@ export function competitorBrandsMatch(
 ): boolean {
   const a = normalizeCompetitorBrand(expected);
   const b = normalizeCompetitorBrand(found);
-  return Boolean(a && b && (a === b || (a.length > 3 && (a.includes(b) || b.includes(a)))));
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const expectedTokens = competitorBrandTokens(expected);
+  const foundTokens = competitorBrandTokens(found);
+  return expectedTokens.some((token) => foundTokens.includes(token));
+}
+
+function competitorBrandTokens(value: string | null | undefined): string[] {
+  return String(value || "").toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i)
+    .map(normalizeCompetitorBrand)
+    .filter((token) => token.length >= 3 && !BRAND_NOISE_TOKENS.has(token));
 }
 
 export function competitorBrandAppearsInText(
   expected: string | null | undefined,
   text: string | null | undefined,
 ): boolean {
-  const ignored = new Set(["ag", "gmbh", "ltd", "llc", "sl", "sa", "inc", "company", "group"]);
-  const tokens = String(expected || "").toLowerCase().split(/[^a-zа-яіїєґ0-9]+/i)
-    .map(normalizeCompetitorBrand)
-    .filter((token) => token.length >= 3 && !ignored.has(token));
+  const tokens = competitorBrandTokens(expected);
   const normalizedText = normalizeCompetitorBrand(text);
   return tokens.length > 0 && tokens.some((token) => normalizedText.includes(token));
 }

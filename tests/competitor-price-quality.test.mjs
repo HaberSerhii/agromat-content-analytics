@@ -35,3 +35,16 @@ test("missing or conflicting brands quarantine a match", () => {
   assert.equal(matchConfidence("Valeso", null, "exact", "https://shop.test/wezer-7850-08"), "partial");
   assert.equal(brandsMatch("Valeso", "Wezer"), false);
 });
+
+test("legal company suffixes do not create false brand mismatches", () => {
+  assert.equal(brandsMatch("Geberit International Sales AG", "Geberit"), true);
+  assert.equal(brandsMatch("Hansgrohe SE", "Hansgrohe"), true);
+  assert.equal(brandsMatch("Kludi Armaturen Sp. z o.o.", "Kludi"), true);
+  assert.equal(brandsMatch("Rubinetteria Paffoni S.p.A.", "Paffoni"), true);
+  assert.equal(brandsMatch("Villeroy & Boch", "Villeroy Boch"), true);
+});
+
+test("Grohe and Hansgrohe remain distinct brands", () => {
+  assert.equal(brandsMatch("Grohe AG", "Hansgrohe"), false);
+  assert.equal(brandsMatch("Hansgrohe SE", "Grohe"), false);
+});
