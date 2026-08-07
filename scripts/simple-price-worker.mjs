@@ -10,7 +10,11 @@ import {
   priceForSnapshot,
   snapshotQualityIssue,
 } from "./lib/competitor-price-quality.mjs";
-import { parseLeoceramika, parsePlitka } from "./lib/simple-product-parser.mjs";
+import {
+  PRICE_UNAVAILABLE_STATUS,
+  parseLeoceramika,
+  parsePlitka,
+} from "./lib/simple-product-parser.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -302,6 +306,7 @@ async function main() {
   let found = 0;
   let errors = 0;
   let priceChanges = 0;
+  let priceUnavailable = 0;
   const rows = [];
 
   for (let i = 0; i < targets.length; i++) {
@@ -315,9 +320,11 @@ async function main() {
     try {
       const fetched = await fetchHtml(target.url);
       const parsed = fetched.status >= 200 && fetched.status < 300 ? parseProduct(fetched.html) : null;
-      if (parsed?.price || isOutOfStockStatus(parsed?.status)) {
+      const isAuthoritativeNoPrice = parsed?.status === PRICE_UNAVAILABLE_STATUS;
+      if (parsed?.price || isOutOfStockStatus(parsed?.status) || isAuthoritativeNoPrice) {
         const confidence = matchConfidence(target.brand, parsed.foundBrand, "exact", fetched.url || target.url);
         const price = priceForSnapshot(parsed.price, parsed.status);
+        if (isAuthoritativeNoPrice) priceUnavailable++;
         if (price != null && confidence === "exact") found++;
         const previousPrice = previousSuccessful.get(target.product_id)?.price;
         if (price != null && previousPrice != null && Number(previousPrice) !== price) priceChanges++;
@@ -368,7 +375,8 @@ async function main() {
   const qualityIssue = snapshotQualityIssue([...qualityBaselineRows.values()], rows);
   const outOfStock = rows.filter((row) => isOutOfStockStatus(row.status)).length;
   const authoritativeRows = rows.filter((row) => (
-    row.price != null || isOutOfStockStatus(row.status) || row.confidence === "rejected"
+    row.price != null || isOutOfStockStatus(row.status)
+    || row.status === PRICE_UNAVAILABLE_STATUS || row.confidence === "rejected"
   ));
   const result = {
     total: targets.length,
@@ -378,6 +386,7 @@ async function main() {
     errors,
     blocked: qualityIssue ? 1 : 0,
     out_of_stock: outOfStock,
+    price_unavailable: priceUnavailable,
     preserved_previous: rows.length - authoritativeRows.length,
     quality: qualityIssue ? "blocked" : "passed",
   };

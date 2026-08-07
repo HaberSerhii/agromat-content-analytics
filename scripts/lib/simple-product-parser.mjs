@@ -97,13 +97,55 @@ function parseFromJsonLd(html) {
   return null;
 }
 
+export const PRICE_UNAVAILABLE_STATUS = "Ціна відсутня";
+
+function plitkaMainOffer(html) {
+  const marker = html.search(/class=["'][^"']*\bprod-new-right\b[^"']*["']/i);
+  if (marker < 0) return null;
+  const start = html.lastIndexOf("<", marker);
+  let end = html.length;
+  for (const boundary of [
+    /class=["'][^"']*\bour-serv-tablet\b/i,
+    /id=["'](?:similar|recommended|viewed)[^"']*["']/i,
+  ]) {
+    const relative = html.slice(marker + 1).search(boundary);
+    if (relative >= 0) end = Math.min(end, marker + 1 + relative);
+  }
+  return html.slice(Math.max(0, start), Math.min(end, start + 80_000));
+}
+
 export function parsePlitka(html) {
   const jsonLd = parseFromJsonLd(html);
-  if (jsonLd?.price || jsonLd?.status === "Немає в наявності") return jsonLd;
+  const main = plitkaMainOffer(html);
 
-  const m = html.match(/class=["'][^"']*(?:now-price|one-prod-list-price)[^"']*["'][^>]*>([\s\S]{0,180}?)<\/[^>]+>/i);
-  const price = normalizePrice(m?.[1]);
-  return price ? { price, status: "unknown", foundBrand: null } : null;
+  // Older layouts without the current product container retain the legacy
+  // JSON-LD fallback.  On the current layout JSON-LD can contain a stale price,
+  // so only visible main-offer elements are authoritative.
+  if (!main) {
+    if (jsonLd?.price || jsonLd?.status === "Немає в наявності") return jsonLd;
+    const legacy = html.match(/class=["'][^"']*(?:now-price|one-prod-list-price)[^"']*["'][^>]*>([\s\S]{0,180}?)<\/[^>]+>/i);
+    const price = normalizePrice(legacy?.[1]);
+    return price ? { price, status: "unknown", foundBrand: null } : null;
+  }
+
+  const availability = main.match(/class=["'][^"']*\bdetail-avail\b[^"']*["'][^>]*>([\s\S]{0,500}?)<\/div>/i);
+  const scopedStatus = normalizeStatus(availability?.[1]);
+  const sale = main.match(/id=["']textdec_flash["'][^>]*>([\s\S]{0,500}?)<\/(?:span|div)>/i);
+  const regular = main.match(/id=["']old-price-product["'][^>]*>([\s\S]{0,500}?)<\/(?:span|div)>/i);
+  const price = normalizePrice(sale?.[1]) || normalizePrice(regular?.[1]);
+  const foundBrand = jsonLd?.foundBrand || null;
+
+  if (scopedStatus === "Немає в наявності") {
+    return { price, status: scopedStatus, foundBrand };
+  }
+  if (!price) {
+    return { price: null, status: PRICE_UNAVAILABLE_STATUS, foundBrand };
+  }
+  return {
+    price,
+    status: scopedStatus !== "unknown" ? scopedStatus : jsonLd?.status || "unknown",
+    foundBrand,
+  };
 }
 
 export function parseLeoceramika(html) {
