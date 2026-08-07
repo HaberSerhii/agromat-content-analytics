@@ -40,6 +40,7 @@ function numberOrNull(value) {
 
 function isOutOfStock(status) {
   const value = String(status || "");
+  if (/ціна\s+(?:відсутня|не\s+вказана)|цена\s+(?:отсутствует|не\s+указана)/i.test(value)) return false;
   return /out\s*of\s*stock|outofstock|немає|нет\s+в\s+наличии|відсут|закінчив/i.test(value);
 }
 

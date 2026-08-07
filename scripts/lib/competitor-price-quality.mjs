@@ -1,5 +1,6 @@
 const IN_STOCK_RE = /instock|in\s*stock|є\s+в\s+наявності|в\s+наявності|в\s+наличии|наявний|доступний/i;
 const OUT_OF_STOCK_RE = /out\s*of\s*stock|outofstock|немає|нет\s+в\s+наличии|відсут|закінчив/i;
+const PRICE_UNAVAILABLE_RE = /ціна\s+(?:відсутня|не\s+вказана)|цена\s+(?:отсутствует|не\s+указана)/i;
 
 const BRAND_ALIASES = new Map([
   ["groheag", "grohe"],
@@ -47,11 +48,12 @@ export function brandAppearsInText(expected, text) {
 
 export function isInStockStatus(status) {
   const value = String(status || "");
-  return !OUT_OF_STOCK_RE.test(value) && IN_STOCK_RE.test(value);
+  return !PRICE_UNAVAILABLE_RE.test(value) && !OUT_OF_STOCK_RE.test(value) && IN_STOCK_RE.test(value);
 }
 
 export function isOutOfStockStatus(status) {
-  return OUT_OF_STOCK_RE.test(String(status || ""));
+  const value = String(status || "");
+  return !PRICE_UNAVAILABLE_RE.test(value) && OUT_OF_STOCK_RE.test(value);
 }
 
 export function priceForSnapshot(price, status) {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   brandsMatch,
+  isOutOfStockStatus,
   matchConfidence,
   priceForSnapshot,
   snapshotQualityIssue,
@@ -11,6 +12,11 @@ import {
 test("out-of-stock offers produce a blank current price", () => {
   assert.equal(priceForSnapshot(2094.75, "Немає в наявності"), null);
   assert.equal(priceForSnapshot(2094.75, "OutOfStock"), null);
+});
+
+test("a missing public price is not classified as out of stock", () => {
+  assert.equal(isOutOfStockStatus("Ціна відсутня"), false);
+  assert.equal(isOutOfStockStatus("Немає в наявності"), true);
 });
 
 test("snapshot quality guard blocks mass out-of-stock spikes", () => {
