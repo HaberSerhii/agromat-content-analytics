@@ -217,7 +217,7 @@ function DailySalesChart({
     ? `${linePath} L${points.at(-1)?.x},${top + plotHeight} L${points[0].x},${top + plotHeight} Z`
     : "";
   const selectedIndex = daily.length
-    ? Math.min(hoveredIndex ?? daily.length - 1, daily.length - 1)
+    ? hoveredIndex == null ? -1 : Math.min(hoveredIndex, daily.length - 1)
     : -1;
   const selectedDay = selectedIndex >= 0 ? daily[selectedIndex] : null;
   const selectedPoint = selectedIndex >= 0 ? points[selectedIndex] : null;
@@ -247,7 +247,7 @@ function DailySalesChart({
             onChange={setMeasure}
             options={[
               { value: "revenue", label: "грн" },
-              { value: "qty", label: "штуки" },
+              { value: "qty", label: "Товари, шт." },
             ]}
           />
           <ChartToggle
@@ -262,16 +262,7 @@ function DailySalesChart({
         </div>
       </div>
 
-      <div className="mt-2 flex min-h-8 items-end justify-between gap-3">
-        <div className="text-[11px] font-semibold" style={{ color: "var(--text-dim)" }}>
-          {selectedDay ? fmtChartDate(selectedDay.date) : "Немає даних"}
-        </div>
-        <div className="text-lg font-black tabular-nums" style={{ color }}>
-          {selectedDay ? formatValue(selectedDay[segment][measure]) : "—"}
-        </div>
-      </div>
-
-      <div className="w-full overflow-hidden">
+      <div className="relative mt-2 w-full">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           className="block h-[172px] w-full sm:h-[190px]"
@@ -310,23 +301,6 @@ function DailySalesChart({
               {daily[index] ? fmtShortDate(daily[index].date) : ""}
             </text>
           ))}
-          <rect
-            x={left}
-            y={top}
-            width={plotWidth}
-            height={plotHeight}
-            fill="transparent"
-            onPointerMove={(event) => {
-              if (!daily.length) return;
-              const svg = event.currentTarget.ownerSVGElement;
-              if (!svg) return;
-              const bounds = svg.getBoundingClientRect();
-              const viewX = ((event.clientX - bounds.left) / bounds.width) * width;
-              const ratio = Math.max(0, Math.min(1, (viewX - left) / plotWidth));
-              setHoveredIndex(Math.round(ratio * Math.max(0, daily.length - 1)));
-            }}
-            onPointerLeave={() => setHoveredIndex(null)}
-          />
           {areaPath && <path d={areaPath} fill="url(#promotion-sales-area)" pointerEvents="none" />}
           {linePath && <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />}
           {selectedPoint && (
@@ -342,6 +316,7 @@ function DailySalesChart({
               cy={point.y}
               r="8"
               fill="transparent"
+              pointerEvents="none"
               tabIndex={0}
               aria-label={`${fmtChartDate(daily[index].date)}: ${formatValue(point.value)}`}
               onFocus={() => setHoveredIndex(index)}
@@ -353,7 +328,46 @@ function DailySalesChart({
               У вибраному зрізі продажів немає
             </text>
           )}
+          <rect
+            x={left}
+            y={top}
+            width={plotWidth}
+            height={plotHeight}
+            fill="transparent"
+            onPointerMove={(event) => {
+              if (!daily.length) return;
+              const svg = event.currentTarget.ownerSVGElement;
+              if (!svg) return;
+              const bounds = svg.getBoundingClientRect();
+              const viewX = ((event.clientX - bounds.left) / bounds.width) * width;
+              const ratio = Math.max(0, Math.min(1, (viewX - left) / plotWidth));
+              const nextIndex = Math.round(ratio * Math.max(0, daily.length - 1));
+              setHoveredIndex((current) => current === nextIndex ? current : nextIndex);
+            }}
+            onPointerLeave={() => setHoveredIndex(null)}
+          />
         </svg>
+        {selectedDay && selectedPoint && (
+          <div
+            className="pointer-events-none absolute z-10 min-w-[132px] rounded-lg border px-3 py-2 shadow-lg"
+            style={{
+              left: `${(selectedPoint.x / width) * 100}%`,
+              top: `${(selectedPoint.y / height) * 100}%`,
+              background: "var(--bg-card)",
+              borderColor: `${color}66`,
+              transform: `translate(${selectedPoint.x > width - 190 ? "calc(-100% - 10px)" : "10px"}, ${selectedPoint.y < 70 ? "10px" : "calc(-100% - 10px)"})`,
+            }}
+            role="status"
+            aria-live="polite"
+          >
+            <div className="text-[10px] font-semibold" style={{ color: "var(--text-dim)" }}>
+              {fmtChartDate(selectedDay.date)}
+            </div>
+            <div className="mt-0.5 whitespace-nowrap text-sm font-black tabular-nums" style={{ color }}>
+              {formatValue(selectedDay[segment][measure])}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
