@@ -163,7 +163,9 @@ async function downloadPromotionCompetitorReport(
   const date = new Date().toISOString().slice(0, 10);
   triggerDownload(
     await response.blob(),
-    `promo-competitor-prices-${date}.${format}`,
+    format === "pdf"
+      ? `price-monitoring-promotions-${date}.pdf`
+      : `promo-competitor-prices-${date}.xlsx`,
   );
 }
 
