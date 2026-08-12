@@ -17,6 +17,22 @@ export type PromotionSalesBucket = {
   revenue: number;
 };
 
+export type PromotionSalesDailySummary = {
+  date: string;
+  total: {
+    revenue: number;
+    qty: number;
+  };
+  tile: {
+    revenue: number;
+    qty: number;
+  };
+  plumbing: {
+    revenue: number;
+    qty: number;
+  };
+};
+
 export type PromotionSalesProductSummary = {
   code: string;
   name: string;
@@ -71,6 +87,7 @@ export type PromotionSalesDataset = {
       }>;
     };
     publicPromotionGroups: PromotionSalesPublicGroup[];
+    daily: PromotionSalesDailySummary[];
     promotions: PromotionSalesPromotionSummary[];
     brands: PromotionSalesBucket[];
     categories: PromotionSalesBucket[];

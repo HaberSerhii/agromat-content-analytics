@@ -3,6 +3,7 @@ import { getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_PLAN_SEGMENTS } f
 import { readAllLite } from "@/lib/products-store";
 import type {
   PromotionSalesDataset,
+  PromotionSalesDailySummary,
   PromotionSalesPromotionInput,
   PromotionSalesProductSummary,
   PromotionSalesPublicGroup,
@@ -1059,6 +1060,26 @@ function addPromotionSalesRevenue(
   map.set(label || "Без даних", (map.get(label || "Без даних") || 0) + revenue);
 }
 
+function promotionSalesDateRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(`${from}T12:00:00Z`);
+  const last = new Date(`${to}T12:00:00Z`);
+  while (cursor <= last) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function emptyPromotionSalesDay(date: string): PromotionSalesDailySummary {
+  return {
+    date,
+    total: { revenue: 0, qty: 0 },
+    tile: { revenue: 0, qty: 0 },
+    plumbing: { revenue: 0, qty: 0 },
+  };
+}
+
 function isWithinPromotionRange(
   date: string,
   promotion: PromotionSalesPromotionInput,
@@ -1081,6 +1102,26 @@ function isCompletedPromotionSale(
   return shippedDate >= createdDate
     && isWithinPromotionRange(createdDate, promotion, rangeFrom, rangeTo)
     && isWithinPromotionRange(shippedDate, promotion, rangeFrom, rangeTo);
+}
+
+function isPromotionSaleForStatus(
+  status: PromotionSalesStatus,
+  createdDate: string,
+  shippedDate: string | null,
+  promotion: PromotionSalesPromotionInput,
+  rangeFrom: string,
+  rangeTo: string,
+): boolean {
+  if (status === "Повністю відвантажений") {
+    return Boolean(shippedDate && isCompletedPromotionSale(
+      createdDate,
+      shippedDate,
+      promotion,
+      rangeFrom,
+      rangeTo,
+    ));
+  }
+  return isWithinPromotionRange(createdDate, promotion, rangeFrom, rangeTo);
 }
 
 export async function readPromotionSalesDataset(input: {
@@ -1126,11 +1167,15 @@ export async function readPromotionSalesDataset(input: {
   const brands = new Map<string, number>();
   const categories = new Map<string, number>();
   const products = new Map<string, PromotionSalesProductSummary & { docRefs: Set<string> }>();
+  const daily = new Map<string, PromotionSalesDailySummary>(
+    promotionSalesDateRange(rangeFrom, rangeTo)
+      .map((date) => [date, emptyPromotionSalesDay(date)]),
+  );
   const states = new Map<PromotionSalesStatus, { docs: number; revenue: number }>(
     PROMOTION_SALES_STATUSES.map((status) => [status, { docs: 0, revenue: 0 }]),
   );
-  let shippedDocs = 0;
-  let shippedRevenue = 0;
+  let salesDocs = 0;
+  let salesRevenue = 0;
 
   const planMonth = rangeFrom.slice(0, 7) === rangeTo.slice(0, 7)
     ? rangeTo.slice(0, 7)
@@ -1144,6 +1189,8 @@ export async function readPromotionSalesDataset(input: {
     const createdDate = normalizeShippedDate(row.createdDate);
     const shippedDate = row.shippedDate;
     if (!createdDate) continue;
+    const saleDate = status === "Повністю відвантажений" ? shippedDate : createdDate;
+    if (!saleDate) continue;
     const promotionDocsSeen = new Set<number>();
     let selectedRowRevenue = 0;
     let hasSelectedProduct = false;
@@ -1156,65 +1203,78 @@ export async function readPromotionSalesDataset(input: {
       const selectedMemberships = memberships.filter((promotion) =>
         selectedPromotionIds.has(promotion.idinc));
 
-      if (status === "Повністю відвантажений" && shippedDate) {
-        for (const membership of memberships) {
-          if (!isCompletedPromotionSale(
-            createdDate,
-            shippedDate,
-            membership,
-            rangeFrom,
-            rangeTo,
-          )) continue;
-          const promotion = promotionSummaries.get(membership.idinc);
-          if (!promotion) continue;
-          promotion.revenue += itemRevenue;
-          if (!promotionDocsSeen.has(membership.idinc)) {
-            promotion.docs += 1;
-            promotionDocsSeen.add(membership.idinc);
-          }
+      for (const membership of memberships) {
+        if (!isPromotionSaleForStatus(
+          status,
+          createdDate,
+          shippedDate,
+          membership,
+          rangeFrom,
+          rangeTo,
+        )) continue;
+        const promotion = promotionSummaries.get(membership.idinc);
+        if (!promotion) continue;
+        promotion.revenue += itemRevenue;
+        if (!promotionDocsSeen.has(membership.idinc)) {
+          promotion.docs += 1;
+          promotionDocsSeen.add(membership.idinc);
         }
       }
 
       const matchesSelectedPromotion = selectedMemberships.some((membership) => (
-        status === "Повністю відвантажений" && shippedDate
-          ? isCompletedPromotionSale(createdDate, shippedDate, membership, rangeFrom, rangeTo)
-          : status === "відвантаження дозволено"
-            && isWithinPromotionRange(createdDate, membership, rangeFrom, rangeTo)
+        isPromotionSaleForStatus(
+          status,
+          createdDate,
+          shippedDate,
+          membership,
+          rangeFrom,
+          rangeTo,
+        )
       ));
       if (!matchesSelectedPromotion) continue;
 
       hasSelectedProduct = true;
       selectedRowRevenue += itemRevenue;
-      if (status === "Повністю відвантажений") {
-        addPromotionSalesRevenue(brands, item.brand, itemRevenue);
-        addPromotionSalesRevenue(categories, item.category, itemRevenue);
-        const productKey = `${item.code}\u0000${item.brand}\u0000${item.category}`;
-        const product = products.get(productKey) ?? {
-          code: item.code,
-          name: item.name,
-          url: item.url,
-          brand: item.brand,
-          category: item.category,
-          docs: 0,
-          qty: 0,
-          revenue: 0,
-          docRefs: new Set<string>(),
-        };
-        product.qty += item.qty;
-        product.revenue += itemRevenue;
-        product.docRefs.add(row.docsRef || row.number);
-        product.docs = product.docRefs.size;
-        products.set(productKey, product);
-        if (createdDate.slice(0, 7) === planMonth && shippedDate?.slice(0, 7) === planMonth) {
-          planRevenue += itemRevenue;
-          const segment = businessSegmentFromText(`${item.category} ${item.name}`)
-            ?? normalizeSalesPlanSegment(row.planGroup);
-          if (segment === "Плитка" || segment === "Сантехніка") {
-            planSegmentRevenue.set(
-              segment,
-              (planSegmentRevenue.get(segment) ?? 0) + itemRevenue,
-            );
-          }
+      const saleDay = daily.get(saleDate);
+      const itemSegment = businessSegmentFromText(`${item.category} ${item.name}`)
+        ?? normalizeSalesPlanSegment(row.planGroup);
+      if (saleDay) {
+        saleDay.total.revenue += itemRevenue;
+        saleDay.total.qty += item.qty;
+        if (itemSegment === "Плитка") {
+          saleDay.tile.revenue += itemRevenue;
+          saleDay.tile.qty += item.qty;
+        } else if (itemSegment === "Сантехніка") {
+          saleDay.plumbing.revenue += itemRevenue;
+          saleDay.plumbing.qty += item.qty;
+        }
+      }
+      addPromotionSalesRevenue(brands, item.brand, itemRevenue);
+      addPromotionSalesRevenue(categories, item.category, itemRevenue);
+      const productKey = `${item.code}\u0000${item.brand}\u0000${item.category}`;
+      const product = products.get(productKey) ?? {
+        code: item.code,
+        name: item.name,
+        url: item.url,
+        brand: item.brand,
+        category: item.category,
+        docs: 0,
+        qty: 0,
+        revenue: 0,
+        docRefs: new Set<string>(),
+      };
+      product.qty += item.qty;
+      product.revenue += itemRevenue;
+      product.docRefs.add(row.docsRef || row.number);
+      product.docs = product.docRefs.size;
+      products.set(productKey, product);
+      if (createdDate.slice(0, 7) === planMonth && saleDate.slice(0, 7) === planMonth) {
+        planRevenue += itemRevenue;
+        if (itemSegment === "Плитка" || itemSegment === "Сантехніка") {
+          planSegmentRevenue.set(
+            itemSegment,
+            (planSegmentRevenue.get(itemSegment) ?? 0) + itemRevenue,
+          );
         }
       }
     }
@@ -1225,10 +1285,8 @@ export async function readPromotionSalesDataset(input: {
       state.docs += 1;
       state.revenue += selectedRowRevenue;
     }
-    if (status === "Повністю відвантажений") {
-      shippedDocs += 1;
-      shippedRevenue += selectedRowRevenue;
-    }
+    salesDocs += 1;
+    salesRevenue += selectedRowRevenue;
   }
 
   const monthlyPlanConfig = getMonthlySalesPlan(planMonth);
@@ -1249,8 +1307,8 @@ export async function readPromotionSalesDataset(input: {
     summary: {
       activePromotions: input.promotions.length,
       productCount: selectedCodes.size,
-      docs: shippedDocs,
-      revenue: shippedRevenue,
+      docs: salesDocs,
+      revenue: salesRevenue,
       plan: {
         month: planMonth,
         plan: monthlyPlan,
@@ -1268,6 +1326,7 @@ export async function readPromotionSalesDataset(input: {
         }),
       },
       publicPromotionGroups: input.publicPromotionGroups,
+      daily: [...daily.values()],
       promotions: [...promotionSummaries.values()].sort((a, b) => b.revenue - a.revenue),
       brands: finishRevenueBuckets(brands),
       categories: finishRevenueBuckets(categories),

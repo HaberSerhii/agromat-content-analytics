@@ -92,6 +92,7 @@ interface PricesRow {
 }
 
 type ParserSegment = "all" | "sanitary" | "tile";
+type IdentifierField = "any" | "code";
 
 function parserPricesCache(): Map<string, CacheEntry> {
   if (!global._parserPricesCache) global._parserPricesCache = new Map();
@@ -190,6 +191,10 @@ function parseIntList(v: string | null): number[] {
 
 function parseParserSegment(v: string | null): ParserSegment {
   return v === "sanitary" || v === "tile" ? v : "all";
+}
+
+function parseIdentifierField(v: string | null): IdentifierField {
+  return v === "code" ? "code" : "any";
 }
 
 function matchesParserSegment(category: string | null, segment: ParserSegment): boolean {
@@ -308,11 +313,17 @@ async function fetchProductsByIds(
 }
 
 async function fetchProductsByIdentifiers(
-  db: SupabaseClient, ids: number[], search: string, segment: ParserSegment,
+  db: SupabaseClient,
+  ids: number[],
+  search: string,
+  segment: ParserSegment,
+  identifierField: IdentifierField = "any",
 ): Promise<ProductRow[]> {
   if (ids.length === 0) return [];
   const byId = new Map<number, ProductRow>();
-  const fields = ["id", "code", "goods_ref"] as const;
+  const fields = identifierField === "code"
+    ? (["code"] as const)
+    : (["id", "code", "goods_ref"] as const);
 
   for (let i = 0; i < ids.length; i += IDENTIFIER_CHUNK) {
     const chunk = ids.slice(i, i + IDENTIFIER_CHUNK);
@@ -392,14 +403,15 @@ async function countPriceChanges(
   return changed;
 }
 
-async function pricesResponse(q: URLSearchParams) {
+async function pricesResponse(q: URLSearchParams, maxLimit = 200) {
   const search = (q.get("search") || "").trim().toLowerCase();
   const page = Math.max(parseIntOr(q.get("page"), 1), 1);
-  const limit = Math.min(Math.max(parseIntOr(q.get("limit"), 50), 1), 200);
+  const limit = Math.min(Math.max(parseIntOr(q.get("limit"), 50), 1), maxLimit);
   const snapshotDate = q.get("snapshot_date") || null;
   const idsIn = parseIntList(q.get("ids_in"));
   const idsInSet = new Set(idsIn);
   const segment = parseParserSegment(q.get("segment"));
+  const identifierField = parseIdentifierField(q.get("identifier_field"));
 
   const db = getSupabase();
 
@@ -485,7 +497,7 @@ async function pricesResponse(q: URLSearchParams) {
   let products: ProductRow[];
   try {
     products = idsInSet.size
-      ? await fetchProductsByIdentifiers(db, idsIn, search, segment)
+      ? await fetchProductsByIdentifiers(db, idsIn, search, segment, identifierField)
       : await fetchProductsByIds(db, productIdList, search, segment);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
@@ -495,9 +507,13 @@ async function pricesResponse(q: URLSearchParams) {
   if (idsInSet.size) {
     const present = new Set<number>();
     for (const p of products) {
-      if (idsInSet.has(p.id)) present.add(p.id);
-      if (p.code != null && idsInSet.has(p.code)) present.add(p.code);
-      if (p.goods_ref != null && idsInSet.has(p.goods_ref)) present.add(p.goods_ref);
+      if (identifierField === "code") {
+        if (p.code != null && idsInSet.has(p.code)) present.add(p.code);
+      } else {
+        if (idsInSet.has(p.id)) present.add(p.id);
+        if (p.code != null && idsInSet.has(p.code)) present.add(p.code);
+        if (p.goods_ref != null && idsInSet.has(p.goods_ref)) present.add(p.goods_ref);
+      }
     }
     notFoundIds = idsIn.filter((id) => !present.has(id));
   }
@@ -632,6 +648,24 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
+  if (Array.isArray(body?.ids)) {
+    const ids = [...new Set(body.ids
+      .map((value: unknown) => Number(value))
+      .filter((value: number) => Number.isSafeInteger(value) && value > 0))];
+    if (ids.length === 0) {
+      return NextResponse.json({ error: "Не передано жодного коду товару" }, { status: 400 });
+    }
+    if (ids.length > 10_000) {
+      return NextResponse.json({ error: "Забагато кодів товарів (максимум 10 000)" }, { status: 400 });
+    }
+    const q = new URLSearchParams({
+      ids_in: ids.join(","),
+      identifier_field: body.identifierField === "code" ? "code" : "any",
+      limit: String(ids.length),
+      page: "1",
+    });
+    return pricesResponse(q, 10_000);
+  }
   const queryString = typeof body?.queryString === "string" ? body.queryString : "";
   return cachedPricesResponse(new URLSearchParams(queryString));
 }

@@ -81,6 +81,11 @@ function uniqueIds(values: (string | number | null)[]): (string | number)[] {
   return [...new Set(values.filter((value): value is string | number => value != null && value !== "" && value !== 0))];
 }
 
+function sameStringValues(left: SetFilter, right: string[]): boolean {
+  if (left === null || left.size !== right.length) return false;
+  return right.every((value) => left.has(value));
+}
+
 function downloadIdsCsv(ids: (string | number)[], filename: string) {
   triggerDownload(
     new Blob([`﻿${ids.join("\n")}`], { type: "text/csv;charset=utf-8;" }),
@@ -136,6 +141,29 @@ async function downloadPromotionsXlsx(rows: PromotionCatalogRow[], filename: str
   triggerDownload(
     new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
     filename,
+  );
+}
+
+async function downloadPromotionCompetitorReport(
+  codes: number[],
+  format: "pdf" | "xlsx",
+  selectionLabel: string,
+) {
+  const response = await fetch("/api/promotions/competitor-report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codes, format, selectionLabel }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    const message = payload.error || "Не вдалося сформувати звіт парсера цін";
+    window.alert(message);
+    throw new Error(message);
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  triggerDownload(
+    await response.blob(),
+    `promo-competitor-prices-${date}.${format}`,
   );
 }
 
@@ -500,6 +528,25 @@ export function PromotionsDashboard() {
     })),
   ], [data]);
 
+  const publicPromotionGroups = useMemo(() => {
+    const availableIdincs = new Set((data?.promotions ?? []).map((promotion) => promotion.idinc));
+    return (data?.historicalLinkedPromotions ?? [])
+      .filter((promotion) => promotion.active)
+      .map((promotion) => ({
+        idinc: promotion.idinc,
+        name: promotion.name,
+        url: promotion.url,
+        promotionIdincs: (promotion.relatedPromotionIdincs.length > 0
+          ? promotion.relatedPromotionIdincs
+          : [promotion.idinc])
+          .filter((idinc) => availableIdincs.has(idinc))
+          .map(String)
+          .sort((a, b) => Number(a) - Number(b)),
+      }))
+      .filter((group) => group.promotionIdincs.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, "uk"));
+  }, [data]);
+
   const baseFiltered = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     return (data?.items ?? []).filter((item) => {
@@ -626,6 +673,26 @@ export function PromotionsDashboard() {
   };
   const goodsRefs = () => uniqueIds(filtered.map((item) => item.goodsRef));
   const productCodes = () => uniqueIds(filtered.map((item) => item.code));
+  const competitorReportCodes = () => productCodes()
+    .map((code) => Number(code))
+    .filter((code) => Number.isSafeInteger(code) && code > 0);
+  const competitorReportLabel = () => {
+    const publicGroup = publicPromotionGroups.find((group) =>
+      sameStringValues(selectedPromotions, group.promotionIdincs),
+    );
+    if (publicGroup) return publicGroup.name;
+    if (selectedPromotions !== null && selectedPromotions.size > 0) {
+      const names = (data?.promotions ?? [])
+        .filter((promotion) => selectedPromotions.has(String(promotion.idinc)))
+        .map((promotion) => promotion.name);
+      if (names.length > 0) return names.slice(0, 3).join("; ") + (names.length > 3 ? ` та ще ${names.length - 3}` : "");
+    }
+    if (historicalLinkId) {
+      const historical = data?.historicalLinkedPromotions.find((promotion) => String(promotion.idinc) === historicalLinkId);
+      if (historical) return historical.name;
+    }
+    return `Поточна вибірка каталогу акцій (${filtered.length} позицій)`;
+  };
 
   const clearFilters = () => {
     setSearch("");
@@ -781,6 +848,42 @@ export function PromotionsDashboard() {
             {(data?.baselineReconstructed || data?.targetReconstructed) && (
               <div className="mt-2 text-right text-[10px]" style={{ color: "#8a6500" }}>
                 Архівний період відновлено з даних P2; каталог товарів показано у поточному стані.
+              </div>
+            )}
+
+            {publicPromotionGroups.length > 0 && (
+              <div className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+                <div className="mb-2 text-[10px] font-bold uppercase" style={{ color: "var(--text-dim)" }}>
+                  Акції на сайті
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {publicPromotionGroups.map((group) => {
+                    const active = sameStringValues(selectedPromotions, group.promotionIdincs);
+                    return (
+                      <button
+                        key={`${group.idinc}-${group.url}`}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => {
+                          setSelectedPromotions(active ? null : new Set(group.promotionIdincs));
+                          setSelectedLinks(null);
+                          setHistoricalLinkId("");
+                          setKpiFilter("all");
+                        }}
+                        className="rounded-lg border px-3 py-1.5 text-left text-xs font-semibold"
+                        style={{
+                          borderColor: active ? "#118dff" : "var(--border)",
+                          background: active ? "#118dff" : "var(--bg-input)",
+                          color: active ? "#fff" : "var(--text-mid)",
+                        }}
+                        title={`Обрати ${group.promotionIdincs.length} пов’язаних акцій P2`}
+                      >
+                        {group.name}
+                        <span className="ml-1 opacity-70">· {group.promotionIdincs.length} P2</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -1092,6 +1195,34 @@ export function PromotionsDashboard() {
                 successLabel="✓ Завантажено"
                 onClick={() => withExportBusy(() => downloadPromotionsXlsx(filtered, `promotions-full-${exportDate()}.xlsx`))}
                 title="Excel з усіма товарами, цінами, акціями та URL поточної вибірки"
+              />
+
+              <span className="w-full text-[10px] font-bold uppercase tracking-wider sm:ml-3 sm:w-auto" style={{ color: "#1e3a8a" }}>Парсер цін:</span>
+              <ExportPill
+                label="↓ Скачать PDF отчет (парсера цен)"
+                color="#9f1239"
+                bg="rgba(244,63,94,0.13)"
+                busy={exportBusy}
+                successLabel="✓ Завантажено"
+                onClick={() => withExportBusy(() => downloadPromotionCompetitorReport(
+                  competitorReportCodes(),
+                  "pdf",
+                  competitorReportLabel(),
+                ))}
+                title="PDF зіставлення поточної вибірки акцій з цінами конкурентів за code"
+              />
+              <ExportPill
+                label="↓ Скачать Excel отчет (Парсера цен)"
+                color="#166534"
+                bg="rgba(34,197,94,0.14)"
+                busy={exportBusy}
+                successLabel="✓ Завантажено"
+                onClick={() => withExportBusy(() => downloadPromotionCompetitorReport(
+                  competitorReportCodes(),
+                  "xlsx",
+                  competitorReportLabel(),
+                ))}
+                title="Excel у форматі аналізу цін конкурентів для поточної вибірки акцій"
               />
             </div>
           </div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   PromotionSalesBucket,
+  PromotionSalesDailySummary,
   PromotionSalesDataset,
   PromotionSalesProductSummary,
   PromotionSalesPromotionSummary,
@@ -11,6 +12,10 @@ import type {
 
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
 const pctFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 1 });
+const compactFmt = new Intl.NumberFormat("uk-UA", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 const STATUS_OPTIONS: Array<{ value: PromotionSalesStatus; label: string }> = [
   { value: "Повністю відвантажений", label: "Повністю відвантажено" },
   { value: "відвантаження дозволено", label: "Відвантаження дозволено" },
@@ -26,6 +31,16 @@ function fmtPct(value: number | null): string {
 
 function fmtDate(value: string | null): string {
   if (!value) return "безстроково";
+  const [year, month, day] = value.split("-");
+  return `${day}.${month}.${year}`;
+}
+
+function fmtShortDate(value: string): string {
+  const [, month, day] = value.split("-");
+  return `${day}.${month}`;
+}
+
+function fmtChartDate(value: string): string {
   const [year, month, day] = value.split("-");
   return `${day}.${month}.${year}`;
 }
@@ -130,6 +145,217 @@ function KpiCard({
       <div className="mt-1 text-2xl font-black tabular-nums" style={{ color }}>{value}</div>
       <div className="mt-1 text-[11px]" style={{ color: "var(--text-dim)" }}>{hint}</div>
     </div>
+  );
+}
+
+type DailyChartMeasure = "revenue" | "qty";
+type DailyChartSegment = "total" | "tile" | "plumbing";
+
+function ChartToggle<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.value)}
+            className="h-7 rounded-md px-2.5 text-[11px] font-bold transition-colors"
+            style={{
+              background: active ? "var(--bg-card)" : "transparent",
+              color: active ? "#118dff" : "var(--text-dim)",
+              boxShadow: active ? "var(--shadow-sm)" : "none",
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DailySalesChart({
+  daily,
+  selectedPromotionCount,
+}: {
+  daily: PromotionSalesDailySummary[];
+  selectedPromotionCount: number;
+}) {
+  const [measure, setMeasure] = useState<DailyChartMeasure>("revenue");
+  const [segment, setSegment] = useState<DailyChartSegment>("total");
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const color = segment === "tile" ? "#f59e0b" : segment === "plumbing" ? "#22c55e" : "#118dff";
+  const values = daily.map((day) => day[segment][measure]);
+  const width = 1000;
+  const height = 190;
+  const left = 62;
+  const right = 18;
+  const top = 14;
+  const bottom = 36;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maxValue = Math.max(0, ...values);
+  const scaleMax = maxValue > 0 ? maxValue * 1.08 : 1;
+  const xFor = (index: number) => daily.length <= 1
+    ? left + plotWidth / 2
+    : left + (index / (daily.length - 1)) * plotWidth;
+  const yFor = (value: number) => top + plotHeight - (value / scaleMax) * plotHeight;
+  const points = values.map((value, index) => ({ x: xFor(index), y: yFor(value), value }));
+  const linePath = points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
+  const areaPath = points.length
+    ? `${linePath} L${points.at(-1)?.x},${top + plotHeight} L${points[0].x},${top + plotHeight} Z`
+    : "";
+  const selectedIndex = daily.length
+    ? Math.min(hoveredIndex ?? daily.length - 1, daily.length - 1)
+    : -1;
+  const selectedDay = selectedIndex >= 0 ? daily[selectedIndex] : null;
+  const selectedPoint = selectedIndex >= 0 ? points[selectedIndex] : null;
+  const labelCount = Math.min(6, daily.length);
+  const xLabelIndexes = [...new Set(Array.from({ length: labelCount }, (_, index) => (
+    labelCount <= 1 ? 0 : Math.round((index / (labelCount - 1)) * (daily.length - 1))
+  )))];
+  const formatValue = (value: number, compact = false) => {
+    const formatted = (compact ? compactFmt : numberFmt).format(value);
+    return measure === "revenue" ? `${formatted} грн` : `${formatted} шт.`;
+  };
+
+  return (
+    <section className="rounded-xl border p-3 sm:p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Динаміка продажів за днями</div>
+          <div className="mt-0.5 text-[11px]" style={{ color: "var(--text-dim)" }}>
+            {selectedPromotionCount > 0
+              ? `${selectedPromotionCount} обраних акцій · за датою продажу`
+              : "Усі акційні пропозиції · за датою продажу"}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <ChartToggle
+            value={measure}
+            onChange={setMeasure}
+            options={[
+              { value: "revenue", label: "грн" },
+              { value: "qty", label: "штуки" },
+            ]}
+          />
+          <ChartToggle
+            value={segment}
+            onChange={setSegment}
+            options={[
+              { value: "total", label: "Всі" },
+              { value: "tile", label: "Плитка" },
+              { value: "plumbing", label: "Сантехніка" },
+            ]}
+          />
+        </div>
+      </div>
+
+      <div className="mt-2 flex min-h-8 items-end justify-between gap-3">
+        <div className="text-[11px] font-semibold" style={{ color: "var(--text-dim)" }}>
+          {selectedDay ? fmtChartDate(selectedDay.date) : "Немає даних"}
+        </div>
+        <div className="text-lg font-black tabular-nums" style={{ color }}>
+          {selectedDay ? formatValue(selectedDay[segment][measure]) : "—"}
+        </div>
+      </div>
+
+      <div className="w-full overflow-hidden">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="block h-[172px] w-full sm:h-[190px]"
+          role="img"
+          aria-label={`Графік продажів за днями: ${measure === "revenue" ? "у гривнях" : "у штуках"}`}
+        >
+          <title>Динаміка продажів акційних товарів за датою продажу</title>
+          <defs>
+            <linearGradient id="promotion-sales-area" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.24" />
+              <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+          {Array.from({ length: 5 }, (_, index) => {
+            const ratio = index / 4;
+            const y = top + ratio * plotHeight;
+            const value = scaleMax * (1 - ratio);
+            return (
+              <g key={index}>
+                <line x1={left} x2={width - right} y1={y} y2={y} stroke="var(--border)" strokeWidth="1" />
+                <text x={left - 9} y={y + 4} textAnchor="end" fontSize="10" fill="var(--text-dim)">
+                  {formatValue(value, true).replace(" грн", "").replace(" шт.", "")}
+                </text>
+              </g>
+            );
+          })}
+          {xLabelIndexes.map((index) => (
+            <text
+              key={daily[index]?.date}
+              x={xFor(index)}
+              y={height - 10}
+              textAnchor={index === 0 ? "start" : index === daily.length - 1 ? "end" : "middle"}
+              fontSize="10"
+              fill="var(--text-dim)"
+            >
+              {daily[index] ? fmtShortDate(daily[index].date) : ""}
+            </text>
+          ))}
+          <rect
+            x={left}
+            y={top}
+            width={plotWidth}
+            height={plotHeight}
+            fill="transparent"
+            onPointerMove={(event) => {
+              if (!daily.length) return;
+              const svg = event.currentTarget.ownerSVGElement;
+              if (!svg) return;
+              const bounds = svg.getBoundingClientRect();
+              const viewX = ((event.clientX - bounds.left) / bounds.width) * width;
+              const ratio = Math.max(0, Math.min(1, (viewX - left) / plotWidth));
+              setHoveredIndex(Math.round(ratio * Math.max(0, daily.length - 1)));
+            }}
+            onPointerLeave={() => setHoveredIndex(null)}
+          />
+          {areaPath && <path d={areaPath} fill="url(#promotion-sales-area)" pointerEvents="none" />}
+          {linePath && <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />}
+          {selectedPoint && (
+            <g pointerEvents="none">
+              <line x1={selectedPoint.x} x2={selectedPoint.x} y1={top} y2={top + plotHeight} stroke={color} strokeOpacity="0.35" strokeDasharray="4 4" />
+              <circle cx={selectedPoint.x} cy={selectedPoint.y} r="5" fill="var(--bg-card)" stroke={color} strokeWidth="3" />
+            </g>
+          )}
+          {points.map((point, index) => (
+            <circle
+              key={daily[index].date}
+              cx={point.x}
+              cy={point.y}
+              r="8"
+              fill="transparent"
+              tabIndex={0}
+              aria-label={`${fmtChartDate(daily[index].date)}: ${formatValue(point.value)}`}
+              onFocus={() => setHoveredIndex(index)}
+              onBlur={() => setHoveredIndex(null)}
+            />
+          ))}
+          {maxValue === 0 && (
+            <text x={left + plotWidth / 2} y={top + plotHeight / 2} textAnchor="middle" fontSize="12" fill="var(--text-dim)">
+              У вибраному зрізі продажів немає
+            </text>
+          )}
+        </svg>
+      </div>
+    </section>
   );
 }
 
@@ -402,6 +628,82 @@ function ProductSalesDetails({
   );
 }
 
+function SelectedPromotionProducts({
+  promotions,
+  products,
+}: {
+  promotions: PromotionSalesPromotionSummary[];
+  products: PromotionSalesProductSummary[];
+}) {
+  const totalRevenue = products.reduce((sum, product) => sum + product.revenue, 0);
+  const totalQty = products.reduce((sum, product) => sum + product.qty, 0);
+  return (
+    <section className="rounded-xl border p-4" style={{ borderColor: "#118dff66", background: "var(--bg-card)" }}>
+      <div className="mb-3">
+        <div className="text-[10px] font-bold uppercase" style={{ color: "#118dff" }}>
+          Продані товари в обраній акції
+        </div>
+        <div className="mt-1 truncate text-sm font-black" style={{ color: "var(--text)" }} title={promotions.map((promotion) => promotion.name).join("; ")}>
+          {promotions.map((promotion) => `${promotion.idinc} · ${promotion.name}`).join("; ")}
+        </div>
+        <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>
+          {numberFmt.format(products.length)} товарів · {numberFmt.format(totalQty)} шт. · {fmtMoney(totalRevenue)}
+        </div>
+      </div>
+      <div className="max-h-[460px] overflow-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
+        <div
+          className="sticky top-0 z-10 hidden grid-cols-[90px_minmax(260px,1fr)_210px_80px_80px_145px] gap-3 border-b px-3 py-2 text-[10px] font-bold uppercase md:grid"
+          style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text-dim)" }}
+        >
+          <span>Код товару</span>
+          <span>Товар</span>
+          <span>Бренд · категорія</span>
+          <span className="text-right">Документи</span>
+          <span className="text-right">Штуки</span>
+          <span className="text-right">Продажі</span>
+        </div>
+        {products.map((product) => (
+          <a
+            key={`${product.code}-${product.brand}-${product.category}`}
+            href={product.url}
+            target="_blank"
+            rel="noreferrer"
+            className="grid gap-1 border-b px-3 py-2.5 no-underline last:border-b-0 md:grid-cols-[90px_minmax(260px,1fr)_210px_80px_80px_145px] md:items-center md:gap-3"
+            style={{ borderColor: "var(--border)", color: "inherit" }}
+            title="Відкрити товар на сайті"
+          >
+            <span className="text-[11px] font-bold tabular-nums" style={{ color: "#118dff" }}>{product.code}</span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-semibold" style={{ color: "var(--text)" }}>{product.name}</span>
+              <span className="text-[10px] md:hidden" style={{ color: "var(--text-dim)" }}>
+                {product.brand} · {product.category}
+              </span>
+            </span>
+            <span className="hidden min-w-0 md:block">
+              <span className="block truncate text-xs font-semibold" style={{ color: "var(--text-mid)" }}>{product.brand}</span>
+              <span className="block truncate text-[10px]" style={{ color: "var(--text-dim)" }}>{product.category}</span>
+            </span>
+            <span className="text-xs tabular-nums md:text-right" style={{ color: "var(--text-dim)" }}>
+              {numberFmt.format(product.docs)} док.
+            </span>
+            <span className="text-xs font-bold tabular-nums md:text-right" style={{ color: "var(--text-mid)" }}>
+              {numberFmt.format(product.qty)} шт.
+            </span>
+            <span className="text-xs font-black tabular-nums md:text-right" style={{ color: "#22c55e" }}>
+              {fmtMoney(product.revenue)} ↗
+            </span>
+          </a>
+        ))}
+        {!products.length && (
+          <div className="px-4 py-8 text-center text-xs" style={{ color: "var(--text-dim)" }}>
+            У вибраному періоді продажів товарів цієї акції немає
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function PromotionSalesDashboard() {
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [dateFrom, setDateFrom] = useState(initialRange.from);
@@ -587,7 +889,7 @@ export function PromotionSalesDashboard() {
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "#22c55e44", background: "#22c55e0d", color: "#15803d" }}>
-            Продажі та план: тільки повністю відвантажені
+            Продажі та план: повністю відвантажені + відвантаження дозволено
           </span>
           {refreshing && <span className="text-xs" style={{ color: "#118dff" }}>Оновлення…</span>}
           {error && <span className="text-xs" style={{ color: "#b91c1c" }}>{error}</span>}
@@ -634,6 +936,11 @@ export function PromotionSalesDashboard() {
         )}
       </section>
 
+      <DailySalesChart
+        daily={data.summary.daily ?? []}
+        selectedPromotionCount={selectedPromotions.length}
+      />
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Акцій у діапазоні"
@@ -648,9 +955,9 @@ export function PromotionSalesDashboard() {
           color="#22c55e"
         />
         <KpiCard
-          label="Повністю відвантажених документів"
+          label="Документів у продажах"
           value={numberFmt.format(data.summary.docs)}
-          hint="дата створення і повного відвантаження — у періоді акції"
+          hint="повністю відвантажені та з дозволеним відвантаженням"
           color="#8b5cf6"
         />
         <KpiCard
@@ -697,6 +1004,13 @@ export function PromotionSalesDashboard() {
         onClear={() => setSelectedPromotionIdincs([])}
       />
 
+      {selectedPromotions.length > 0 && (
+        <SelectedPromotionProducts
+          promotions={selectedPromotions}
+          products={data.summary.products}
+        />
+      )}
+
       <MoneyRanking
         title="Бренди"
         items={data.summary.brands}
@@ -732,14 +1046,13 @@ export function PromotionSalesDashboard() {
                   </div>
                   <div className="mt-1 text-[11px]" style={{ color: "var(--text-dim)" }}>
                     {numberFmt.format(state.docs)} документів
-                    {state.state === "відвантаження дозволено" ? " · не входять у продажі" : ""}
                   </div>
                 </div>
               );
             })}
           </div>
           <div className="mt-4 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: "#118dff33", background: "#118dff0a", color: "var(--text-dim)" }}>
-            У продажі потрапляють лише повністю відвантажені акційні товари, у яких і дата створення документа, і дата повного відвантаження входять у строк акції та календарний діапазон. «Відвантаження дозволено» показується окремо й не входить у продажі або план.
+            У продажі та план входять повністю відвантажені документи й документи зі статусом «Відвантаження дозволено». Для повністю відвантажених перевіряються дата створення та дата повного відвантаження; для дозволених — дата створення. Усі дати мають входити у строк акції та вибраний календарний діапазон.
           </div>
         </section>
       </div>
