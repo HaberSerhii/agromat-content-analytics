@@ -1071,6 +1071,26 @@ function promotionSalesDateRange(from: string, to: string): string[] {
   return dates;
 }
 
+function previousKyivDate(): string {
+  const { year, month, day } = getKyivParts();
+  return new Date(Date.UTC(year, month - 1, day - 1, 12))
+    .toISOString()
+    .slice(0, 10);
+}
+
+function promotionSalesDataThrough(rows: SalesRow[]): string | null {
+  let latest: string | null = null;
+  for (const row of rows) {
+    const dates = [normalizeShippedDate(row.createdDate), row.shippedDate];
+    for (const date of dates) {
+      if (date && (!latest || date > latest)) latest = date;
+    }
+  }
+  if (!latest) return null;
+  const completedDay = previousKyivDate();
+  return latest < completedDay ? latest : completedDay;
+}
+
 function emptyPromotionSalesDay(date: string): PromotionSalesDailySummary {
   return {
     date,
@@ -1136,6 +1156,8 @@ export async function readPromotionSalesDataset(input: {
   const to = normalizeDateFilter(input.to) || input.to;
   const rangeFrom = from <= to ? from : to;
   const rangeTo = from <= to ? to : from;
+  const dataThrough = promotionSalesDataThrough(rows);
+  const dailyRangeTo = dataThrough && dataThrough < rangeTo ? dataThrough : rangeTo;
   const requestedPromotionIds = new Set(input.selectedPromotionIdincs ?? []);
   const selectedPromotions = requestedPromotionIds.size
     ? input.promotions.filter((promotion) => requestedPromotionIds.has(promotion.idinc))
@@ -1168,7 +1190,7 @@ export async function readPromotionSalesDataset(input: {
   const categories = new Map<string, number>();
   const products = new Map<string, PromotionSalesProductSummary & { docRefs: Set<string> }>();
   const daily = new Map<string, PromotionSalesDailySummary>(
-    promotionSalesDateRange(rangeFrom, rangeTo)
+    (dailyRangeTo >= rangeFrom ? promotionSalesDateRange(rangeFrom, dailyRangeTo) : [])
       .map((date) => [date, emptyPromotionSalesDay(date)]),
   );
   const states = new Map<PromotionSalesStatus, { docs: number; revenue: number }>(
@@ -1305,6 +1327,7 @@ export async function readPromotionSalesDataset(input: {
         : selectedPromotions.map((promotion) => promotion.idinc),
     },
     summary: {
+      dataThrough,
       activePromotions: input.promotions.length,
       productCount: selectedCodes.size,
       docs: salesDocs,

@@ -188,9 +188,13 @@ function ChartToggle<T extends string>({
 function DailySalesChart({
   daily,
   selectedPromotionCount,
+  activeDate,
+  onSelectDate,
 }: {
   daily: PromotionSalesDailySummary[];
   selectedPromotionCount: number;
+  activeDate: string | null;
+  onSelectDate: (date: string) => void;
 }) {
   const [measure, setMeasure] = useState<DailyChartMeasure>("revenue");
   const [segment, setSegment] = useState<DailyChartSegment>("total");
@@ -216,15 +220,23 @@ function DailySalesChart({
   const areaPath = points.length
     ? `${linePath} L${points.at(-1)?.x},${top + plotHeight} L${points[0].x},${top + plotHeight} Z`
     : "";
+  const activeIndex = activeDate ? daily.findIndex((day) => day.date === activeDate) : -1;
   const selectedIndex = daily.length
-    ? hoveredIndex == null ? -1 : Math.min(hoveredIndex, daily.length - 1)
+    ? hoveredIndex == null ? activeIndex : Math.min(hoveredIndex, daily.length - 1)
     : -1;
   const selectedDay = selectedIndex >= 0 ? daily[selectedIndex] : null;
   const selectedPoint = selectedIndex >= 0 ? points[selectedIndex] : null;
-  const labelCount = Math.min(6, daily.length);
-  const xLabelIndexes = [...new Set(Array.from({ length: labelCount }, (_, index) => (
-    labelCount <= 1 ? 0 : Math.round((index / (labelCount - 1)) * (daily.length - 1))
-  )))];
+  const xLabelIndexes = Array.from(
+    { length: Math.ceil(daily.length / 7) },
+    (_, index) => index * 7,
+  );
+  const indexFromClientX = (clientX: number, svg: SVGSVGElement | null) => {
+    if (!daily.length || !svg) return null;
+    const bounds = svg.getBoundingClientRect();
+    const viewX = ((clientX - bounds.left) / bounds.width) * width;
+    const ratio = Math.max(0, Math.min(1, (viewX - left) / plotWidth));
+    return Math.round(ratio * Math.max(0, daily.length - 1));
+  };
   const formatValue = (value: number, compact = false) => {
     const formatted = (compact ? compactFmt : numberFmt).format(value);
     return measure === "revenue" ? `${formatted} грн` : `${formatted} шт.`;
@@ -303,26 +315,27 @@ function DailySalesChart({
           ))}
           {areaPath && <path d={areaPath} fill="url(#promotion-sales-area)" pointerEvents="none" />}
           {linePath && <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />}
+          {points.map((point, index) => {
+            const active = daily[index].date === activeDate;
+            return (
+              <circle
+                key={`point-${daily[index].date}`}
+                cx={point.x}
+                cy={point.y}
+                r={active ? 4.5 : 2.5}
+                fill={active ? "var(--bg-card)" : color}
+                stroke={color}
+                strokeWidth={active ? 3 : 1.5}
+                pointerEvents="none"
+              />
+            );
+          })}
           {selectedPoint && (
             <g pointerEvents="none">
               <line x1={selectedPoint.x} x2={selectedPoint.x} y1={top} y2={top + plotHeight} stroke={color} strokeOpacity="0.35" strokeDasharray="4 4" />
               <circle cx={selectedPoint.x} cy={selectedPoint.y} r="5" fill="var(--bg-card)" stroke={color} strokeWidth="3" />
             </g>
           )}
-          {points.map((point, index) => (
-            <circle
-              key={daily[index].date}
-              cx={point.x}
-              cy={point.y}
-              r="8"
-              fill="transparent"
-              pointerEvents="none"
-              tabIndex={0}
-              aria-label={`${fmtChartDate(daily[index].date)}: ${formatValue(point.value)}`}
-              onFocus={() => setHoveredIndex(index)}
-              onBlur={() => setHoveredIndex(null)}
-            />
-          ))}
           {maxValue === 0 && (
             <text x={left + plotWidth / 2} y={top + plotHeight / 2} textAnchor="middle" fontSize="12" fill="var(--text-dim)">
               У вибраному зрізі продажів немає
@@ -334,17 +347,19 @@ function DailySalesChart({
             width={plotWidth}
             height={plotHeight}
             fill="transparent"
+            style={{ cursor: daily.length ? "pointer" : "default" }}
             onPointerMove={(event) => {
-              if (!daily.length) return;
-              const svg = event.currentTarget.ownerSVGElement;
-              if (!svg) return;
-              const bounds = svg.getBoundingClientRect();
-              const viewX = ((event.clientX - bounds.left) / bounds.width) * width;
-              const ratio = Math.max(0, Math.min(1, (viewX - left) / plotWidth));
-              const nextIndex = Math.round(ratio * Math.max(0, daily.length - 1));
+              const nextIndex = indexFromClientX(event.clientX, event.currentTarget.ownerSVGElement);
+              if (nextIndex == null) return;
               setHoveredIndex((current) => current === nextIndex ? current : nextIndex);
             }}
             onPointerLeave={() => setHoveredIndex(null)}
+            onClick={(event) => {
+              const nextIndex = indexFromClientX(event.clientX, event.currentTarget.ownerSVGElement);
+              if (nextIndex != null && daily[nextIndex]) {
+                onSelectDate(daily[nextIndex].date);
+              }
+            }}
           />
         </svg>
         {selectedDay && selectedPoint && (
@@ -365,6 +380,9 @@ function DailySalesChart({
             </div>
             <div className="mt-0.5 whitespace-nowrap text-sm font-black tabular-nums" style={{ color }}>
               {formatValue(selectedDay[segment][measure])}
+            </div>
+            <div className="mt-1 text-[9px]" style={{ color: "var(--text-dim)" }}>
+              Натисніть, щоб відкрити аналіз дня
             </div>
           </div>
         )}
@@ -645,9 +663,11 @@ function ProductSalesDetails({
 function SelectedPromotionProducts({
   promotions,
   products,
+  selectedDate,
 }: {
   promotions: PromotionSalesPromotionSummary[];
   products: PromotionSalesProductSummary[];
+  selectedDate?: string | null;
 }) {
   const totalRevenue = products.reduce((sum, product) => sum + product.revenue, 0);
   const totalQty = products.reduce((sum, product) => sum + product.qty, 0);
@@ -655,10 +675,12 @@ function SelectedPromotionProducts({
     <section className="rounded-xl border p-4" style={{ borderColor: "#118dff66", background: "var(--bg-card)" }}>
       <div className="mb-3">
         <div className="text-[10px] font-bold uppercase" style={{ color: "#118dff" }}>
-          Продані товари в обраній акції
+          {selectedDate ? "Продані товари за вибраний день" : "Продані товари в обраній акції"}
         </div>
         <div className="mt-1 truncate text-sm font-black" style={{ color: "var(--text)" }} title={promotions.map((promotion) => promotion.name).join("; ")}>
-          {promotions.map((promotion) => `${promotion.idinc} · ${promotion.name}`).join("; ")}
+          {selectedDate
+            ? `${fmtChartDate(selectedDate)}${promotions.length ? ` · ${promotions.map((promotion) => `${promotion.idinc} · ${promotion.name}`).join("; ")}` : " · усі акції"}`
+            : promotions.map((promotion) => `${promotion.idinc} · ${promotion.name}`).join("; ")}
         </div>
         <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>
           {numberFmt.format(products.length)} товарів · {numberFmt.format(totalQty)} шт. · {fmtMoney(totalRevenue)}
@@ -710,7 +732,9 @@ function SelectedPromotionProducts({
         ))}
         {!products.length && (
           <div className="px-4 py-8 text-center text-xs" style={{ color: "var(--text-dim)" }}>
-            У вибраному періоді продажів товарів цієї акції немає
+            {selectedDate
+              ? "Цього дня продажів акційних товарів немає"
+              : "У вибраному періоді продажів товарів цієї акції немає"}
           </div>
         )}
       </div>
@@ -728,6 +752,10 @@ export function PromotionSalesDashboard() {
     label: string;
   } | null>(null);
   const [data, setData] = useState<PromotionSalesDataset | null>(null);
+  const [selectedChartDate, setSelectedChartDate] = useState<string | null>(null);
+  const [dayData, setDayData] = useState<PromotionSalesDataset | null>(null);
+  const [dayLoading, setDayLoading] = useState(false);
+  const [dayError, setDayError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -772,6 +800,49 @@ export function PromotionSalesDashboard() {
     };
   }, [dateFrom, dateTo, selectedPromotionIdincs]);
 
+  useEffect(() => {
+    setSelectedChartDate(null);
+    setDayData(null);
+    setDayError("");
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => {
+    if (!selectedChartDate) {
+      setDayData(null);
+      setDayLoading(false);
+      setDayError("");
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    setDayLoading(true);
+    setDayData(null);
+    setDayError("");
+    const params = new URLSearchParams({ from: selectedChartDate, to: selectedChartDate });
+    selectedPromotionIdincs.forEach((idinc) => params.append("promotion_idinc", String(idinc)));
+    fetch(`/api/promotions/sales?${params.toString()}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити аналіз дня");
+        return payload as PromotionSalesDataset;
+      })
+      .then((payload) => {
+        if (!alive) return;
+        setDayData(payload);
+      })
+      .catch((reason: unknown) => {
+        if (!alive || (reason instanceof DOMException && reason.name === "AbortError")) return;
+        setDayError(reason instanceof Error ? reason.message : "Не вдалося завантажити аналіз дня");
+      })
+      .finally(() => {
+        if (alive) setDayLoading(false);
+      });
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [selectedChartDate, selectedPromotionIdincs]);
+
   const changeFrom = (value: string) => {
     setDateFrom(value);
     if (value > dateTo) setDateTo(value);
@@ -790,6 +861,12 @@ export function PromotionSalesDashboard() {
         ? current.filter((item) => item !== idinc)
         : [...current, idinc]
     ));
+  };
+  const selectChartDate = (date: string) => {
+    setSelectedChartDate((current) => current === date ? null : date);
+    setDayData(null);
+    setDayError("");
+    setSelectedBucket(null);
   };
 
   if (loading && !data) {
@@ -810,9 +887,10 @@ export function PromotionSalesDashboard() {
   }
 
   const selectedPromotions = data.summary.promotions.filter((promotion) =>
-    data.filter.selectedPromotionIdincs.includes(promotion.idinc));
+    selectedPromotionIdincs.includes(promotion.idinc));
+  const analysisData = selectedChartDate ? dayData : data;
   const selectedProducts = selectedBucket
-    ? data.summary.products.filter((product) => (
+    ? (analysisData?.summary.products ?? []).filter((product) => (
       selectedBucket.type === "brand"
         ? product.brand === selectedBucket.label
         : product.category === selectedBucket.label
@@ -953,24 +1031,57 @@ export function PromotionSalesDashboard() {
       <DailySalesChart
         daily={data.summary.daily ?? []}
         selectedPromotionCount={selectedPromotions.length}
+        activeDate={selectedChartDate}
+        onSelectDate={selectChartDate}
       />
+
+      {selectedChartDate && (
+        <section
+          className="flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3"
+          style={{ borderColor: "#118dff66", background: "#118dff0d" }}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-bold uppercase" style={{ color: "#118dff" }}>Аналіз за вибраний день</div>
+            <div className="mt-0.5 text-sm font-black" style={{ color: "var(--text)" }}>{fmtChartDate(selectedChartDate)}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: dayError ? "#b91c1c" : "var(--text-dim)" }}>
+              {dayLoading ? "Оновлюємо акції, бренди, категорії та товари…" : dayError || "Усі блоки нижче відфільтровано за цим днем"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => selectChartDate(selectedChartDate)}
+            className="rounded-lg border px-3 py-2 text-xs font-bold"
+            style={{ borderColor: "#118dff55", background: "var(--bg-card)", color: "#118dff" }}
+          >
+            Скинути день
+          </button>
+        </section>
+      )}
+
+      {!analysisData && (
+        <div className="rounded-xl border px-6 py-12 text-center text-sm font-semibold" style={{ borderColor: "var(--border)", color: dayError ? "#b91c1c" : "var(--text-dim)" }}>
+          {dayError || "Завантажуємо аналітику за вибраний день…"}
+        </div>
+      )}
+
+      {analysisData && (<>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Акцій у діапазоні"
-          value={numberFmt.format(data.summary.activePromotions)}
-          hint={`${numberFmt.format(data.summary.productCount)} унікальних акційних товарів`}
+          value={numberFmt.format(analysisData.summary.activePromotions)}
+          hint={`${numberFmt.format(analysisData.summary.productCount)} унікальних акційних товарів`}
           color="#118dff"
         />
         <KpiCard
           label="Продажі акційних товарів"
-          value={fmtMoney(data.summary.revenue)}
-          hint={selectedPromotions.length ? `${selectedPromotions.length} обраних акцій` : "усі акції у вибраному діапазоні"}
+          value={fmtMoney(analysisData.summary.revenue)}
+          hint={selectedChartDate ? `за ${fmtChartDate(selectedChartDate)}` : selectedPromotions.length ? `${selectedPromotions.length} обраних акцій` : "усі акції у вибраному діапазоні"}
           color="#22c55e"
         />
         <KpiCard
           label="Документів у продажах"
-          value={numberFmt.format(data.summary.docs)}
+          value={numberFmt.format(analysisData.summary.docs)}
           hint="повністю відвантажені та з дозволеним відвантаженням"
           color="#8b5cf6"
         />
@@ -1012,22 +1123,23 @@ export function PromotionSalesDashboard() {
       </section>
 
       <PromotionList
-        items={data.summary.promotions}
-        selectedIdincs={data.filter.selectedPromotionIdincs}
+        items={analysisData.summary.promotions}
+        selectedIdincs={selectedPromotionIdincs}
         onToggle={togglePromotion}
         onClear={() => setSelectedPromotionIdincs([])}
       />
 
-      {selectedPromotions.length > 0 && (
+      {(selectedChartDate || selectedPromotions.length > 0) && (
         <SelectedPromotionProducts
           promotions={selectedPromotions}
-          products={data.summary.products}
+          products={analysisData.summary.products}
+          selectedDate={selectedChartDate}
         />
       )}
 
       <MoneyRanking
         title="Бренди"
-        items={data.summary.brands}
+        items={analysisData.summary.brands}
         color="#22c55e"
         expandable
         selectedLabel={selectedBucket?.type === "brand" ? selectedBucket.label : null}
@@ -1039,7 +1151,7 @@ export function PromotionSalesDashboard() {
       <div className="grid gap-4 xl:grid-cols-2">
         <MoneyRanking
           title="Категорії"
-          items={data.summary.categories}
+          items={analysisData.summary.categories}
           color="#f59e0b"
           expandable
           selectedLabel={selectedBucket?.type === "category" ? selectedBucket.label : null}
@@ -1050,7 +1162,7 @@ export function PromotionSalesDashboard() {
         <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
           <div className="mb-3 text-sm font-bold" style={{ color: "var(--text)" }}>Статуси документів</div>
           <div className="space-y-3">
-            {data.summary.states.map((state) => {
+            {analysisData.summary.states.map((state) => {
               const option = STATUS_OPTIONS.find((item) => item.value === state.state);
               return (
                 <div key={state.state} className="rounded-lg border p-3" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
@@ -1079,6 +1191,7 @@ export function PromotionSalesDashboard() {
           onClose={() => setSelectedBucket(null)}
         />
       )}
+      </>)}
     </div>
   );
 }

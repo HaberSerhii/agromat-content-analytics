@@ -70,6 +70,7 @@ export type PromotionSalesDataset = {
     selectedPromotionIdincs: number[];
   };
   summary: {
+    dataThrough: string | null;
     activePromotions: number;
     productCount: number;
     docs: number;
