@@ -100,6 +100,8 @@ export type SalesManagerSummary = SalesDocumentStatusSummary & {
   forecastCompletionPct: number | null;
   orderedDocs: number;
   completedDocs: number;
+  completedUnits: number;
+  unitsPerCheck: number | null;
   orderCompletionPct: number | null;
   orderedRevenue: number;
   completedRevenue: number;
@@ -825,6 +827,7 @@ function buildDataset(
     {
       orderedDocs: number;
       completedDocs: number;
+      completedUnits: number;
       orderedRevenue: number;
       completedRevenue: number;
       states: Map<string, { state: string; docs: number; revenue: number }>;
@@ -876,6 +879,7 @@ function buildDataset(
           const manager = managers.get(seller) || {
             orderedDocs: 0,
             completedDocs: 0,
+            completedUnits: 0,
             orderedRevenue: 0,
             completedRevenue: 0,
             states: new Map<string, { state: string; docs: number; revenue: number }>(),
@@ -885,6 +889,7 @@ function buildDataset(
           manager.orderedRevenue += row.docsSum;
           if (isShipped(row)) {
             manager.completedDocs += 1;
+            manager.completedUnits += row.items.reduce((total, item) => total + item.qty, 0);
             manager.completedRevenue += row.docsSum;
           }
           addState(manager.states, row.state, row.docsSum);
@@ -1010,6 +1015,7 @@ function buildDataset(
     const manager = managers.get(seller) || {
       orderedDocs: 0,
       completedDocs: 0,
+      completedUnits: 0,
       orderedRevenue: 0,
       completedRevenue: 0,
       states: new Map<string, { state: string; docs: number; revenue: number }>(),
@@ -1030,6 +1036,8 @@ function buildDataset(
       forecastCompletionPct: managerPlan && forecastRevenue ? (forecastRevenue / managerPlan) * 100 : null,
       orderedDocs: manager.orderedDocs,
       completedDocs: manager.completedDocs,
+      completedUnits: manager.completedUnits,
+      unitsPerCheck: manager.completedDocs ? manager.completedUnits / manager.completedDocs : null,
       orderCompletionPct: manager.orderedDocs ? (manager.completedDocs / manager.orderedDocs) * 100 : null,
       orderedRevenue: manager.orderedRevenue,
       completedRevenue: manager.completedRevenue,

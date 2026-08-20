@@ -121,6 +121,8 @@ type SalesDataset = {
       forecastCompletionPct: number | null;
       orderedDocs: number;
       completedDocs: number;
+      completedUnits: number;
+      unitsPerCheck: number | null;
       orderCompletionPct: number | null;
       orderedRevenue: number;
       completedRevenue: number;
@@ -520,7 +522,7 @@ function ManagerPlanOverview({
           <div className="text-xs text-slate-300">{selectedSeller || "Усі менеджери"}</div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1180px] border-collapse text-xs">
+          <table className="w-full min-w-[1280px] border-collapse text-xs">
             <thead className="text-slate-200" style={{ background: "#3b5364" }}>
               <tr>
                 <th className="px-3 py-3 text-left min-w-[270px]">Продавець</th>
@@ -532,6 +534,7 @@ function ManagerPlanOverview({
                 <th className="px-3 py-3 text-right">% ТО виконаних<br />замовлень</th>
                 <th className="px-3 py-3 text-right">Середня сума<br />замовлення</th>
                 <th className="px-3 py-3 text-right">Середній<br />чек</th>
+                <th className="px-3 py-3 text-right">К-сть од.<br />у чеку</th>
                 <th className="px-3 py-3 text-right">% виконаного<br />сер. чеку</th>
               </tr>
             </thead>
@@ -552,6 +555,7 @@ function ManagerPlanOverview({
                   <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#639780" }}>{fmtPct(manager.revenueCompletionPct)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#267083" }}>{fmtNum(manager.averageOrderRevenue || 0)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#168695" }}>{fmtNum(manager.averageCompletedRevenue || 0)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#168695" }}>{fmtDecimal(manager.unitsPerCheck)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#1ba2b5" }}>{fmtPct(manager.averageRevenueCompletionPct)}</td>
                 </tr>
               ))}
