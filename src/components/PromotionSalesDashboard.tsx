@@ -230,13 +230,8 @@ function DailySalesChart({
     { length: Math.ceil(daily.length / 7) },
     (_, index) => index * 7,
   );
-  const indexFromClientX = (clientX: number, svg: SVGSVGElement | null) => {
-    if (!daily.length || !svg) return null;
-    const bounds = svg.getBoundingClientRect();
-    const viewX = ((clientX - bounds.left) / bounds.width) * width;
-    const ratio = Math.max(0, Math.min(1, (viewX - left) / plotWidth));
-    return Math.round(ratio * Math.max(0, daily.length - 1));
-  };
+  const pointSpacing = daily.length > 1 ? plotWidth / (daily.length - 1) : plotWidth;
+  const pointHitRadius = Math.max(6, Math.min(12, pointSpacing * 0.4));
   const formatValue = (value: number, compact = false) => {
     const formatted = (compact ? compactFmt : numberFmt).format(value);
     return measure === "revenue" ? `${formatted} грн` : `${formatted} шт.`;
@@ -341,26 +336,30 @@ function DailySalesChart({
               У вибраному зрізі продажів немає
             </text>
           )}
-          <rect
-            x={left}
-            y={top}
-            width={plotWidth}
-            height={plotHeight}
-            fill="transparent"
-            style={{ cursor: daily.length ? "pointer" : "default" }}
-            onPointerMove={(event) => {
-              const nextIndex = indexFromClientX(event.clientX, event.currentTarget.ownerSVGElement);
-              if (nextIndex == null) return;
-              setHoveredIndex((current) => current === nextIndex ? current : nextIndex);
-            }}
-            onPointerLeave={() => setHoveredIndex(null)}
-            onClick={(event) => {
-              const nextIndex = indexFromClientX(event.clientX, event.currentTarget.ownerSVGElement);
-              if (nextIndex != null && daily[nextIndex]) {
-                onSelectDate(daily[nextIndex].date);
-              }
-            }}
-          />
+          {points.map((point, index) => (
+            <circle
+              key={`hit-area-${daily[index].date}`}
+              cx={point.x}
+              cy={point.y}
+              r={pointHitRadius}
+              fill="transparent"
+              role="button"
+              tabIndex={0}
+              aria-label={`${fmtChartDate(daily[index].date)}: ${formatValue(point.value)}`}
+              style={{ cursor: "pointer" }}
+              onPointerEnter={() => setHoveredIndex(index)}
+              onPointerLeave={() => setHoveredIndex((current) => current === index ? null : current)}
+              onFocus={() => setHoveredIndex(index)}
+              onBlur={() => setHoveredIndex((current) => current === index ? null : current)}
+              onClick={() => onSelectDate(daily[index].date)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectDate(daily[index].date);
+                }
+              }}
+            />
+          ))}
         </svg>
         {selectedDay && selectedPoint && (
           <div
