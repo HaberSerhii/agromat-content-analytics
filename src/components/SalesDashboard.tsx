@@ -827,7 +827,7 @@ function previousMonthRange() {
 }
 
 export function SalesDashboard() {
-  const initialRange = useMemo(() => yearToDateRange(), []);
+  const initialRange = useMemo(() => currentMonthRange(), []);
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
   const [productSet, setProductSet] = useState<{ ids: number[]; rawText: string } | null>(null);
