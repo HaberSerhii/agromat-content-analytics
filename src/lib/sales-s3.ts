@@ -465,6 +465,10 @@ function isCanceled(state: string) {
   return state.toLocaleLowerCase("uk").includes("скас");
 }
 
+function isFakeOrder(row: ParsedSalesRow) {
+  return row.cancelReason.toLocaleLowerCase("uk").includes("фейков");
+}
+
 function isShipmentAllowed(state: string) {
   return state.toLocaleLowerCase("uk") === "відвантаження дозволено";
 }
@@ -874,7 +878,7 @@ function buildDataset(
           }
         }
 
-        if (statusDate?.slice(0, 7) === planMonth) {
+        if (statusDate?.slice(0, 7) === planMonth && !isFakeOrder(row)) {
           const seller = managerLabel(row.seller);
           const manager = managers.get(seller) || {
             orderedDocs: 0,
@@ -938,13 +942,15 @@ function buildDataset(
     addBucket(allMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
-    let managerMonthRevenue = managerPlanRevenueByMonth.get(shippedMonth);
-    if (!managerMonthRevenue) {
-      managerMonthRevenue = new Map<string, number>();
-      managerPlanRevenueByMonth.set(shippedMonth, managerMonthRevenue);
+    if (!isFakeOrder(row)) {
+      let managerMonthRevenue = managerPlanRevenueByMonth.get(shippedMonth);
+      if (!managerMonthRevenue) {
+        managerMonthRevenue = new Map<string, number>();
+        managerPlanRevenueByMonth.set(shippedMonth, managerMonthRevenue);
+      }
+      const shippedSeller = managerLabel(row.seller);
+      managerMonthRevenue.set(shippedSeller, (managerMonthRevenue.get(shippedSeller) || 0) + netRevenue);
     }
-    const shippedSeller = managerLabel(row.seller);
-    managerMonthRevenue.set(shippedSeller, (managerMonthRevenue.get(shippedSeller) || 0) + netRevenue);
     for (const code of goodsCodes) {
       const n = parseInt(code, 10);
       if (productCodeSet.has(n)) matchedProductCodes.add(n);
