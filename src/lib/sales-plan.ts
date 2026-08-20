@@ -1,5 +1,7 @@
 export const SALES_PLAN_SEGMENTS = ["Плитка", "Сантехніка", "Інше"] as const;
 
+export const SALES_DASHBOARD_MANAGER_IDS = new Set(["58255", "58242", "4964", "6693"]);
+
 export type SalesPlanSegment = (typeof SALES_PLAN_SEGMENTS)[number];
 
 export type MonthlySalesPlan = {

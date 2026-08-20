@@ -1,5 +1,5 @@
 import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
+import { getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
 import { readAllLite } from "@/lib/products-store";
 import type {
   PromotionSalesDataset,
@@ -90,6 +90,25 @@ export type SalesDocumentStatusSummary = {
   cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
 };
 
+export type SalesManagerSummary = SalesDocumentStatusSummary & {
+  seller: string;
+  plan: number | null;
+  planSource: "configured" | "equal-share" | "missing";
+  planRevenue: number;
+  planCompletionPct: number | null;
+  forecastRevenue: number | null;
+  forecastCompletionPct: number | null;
+  orderedDocs: number;
+  completedDocs: number;
+  orderCompletionPct: number | null;
+  orderedRevenue: number;
+  completedRevenue: number;
+  revenueCompletionPct: number | null;
+  averageOrderRevenue: number | null;
+  averageCompletedRevenue: number | null;
+  averageRevenueCompletionPct: number | null;
+};
+
 export type SalesDataset = {
   source: {
     bucket: string;
@@ -136,6 +155,7 @@ export type SalesDataset = {
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
     cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
     documentStatusesBySegment: Array<SalesDocumentStatusSummary & { segment: "Плитка" | "Сантехніка" }>;
+    managers: SalesManagerSummary[];
   };
 };
 
@@ -451,6 +471,15 @@ function isShipped(row: SalesRow) {
   return Boolean(row.shippedDate) && row.state.toLocaleLowerCase("uk").includes("повністю відвантаж");
 }
 
+function managerLabel(value: string) {
+  return value.trim() || "Без менеджера";
+}
+
+function isDashboardManager(value: string) {
+  const sellerId = value.match(/\((\d+)\)\s*$/)?.[1];
+  return Boolean(sellerId && SALES_DASHBOARD_MANAGER_IDS.has(sellerId));
+}
+
 function getNetRevenue(row: SalesRow) {
   return row.docsSum - row.returnSum;
 }
@@ -762,6 +791,7 @@ function buildDataset(
   const filter = getEffectiveFilter(dateFilter);
   const productCodeSet = new Set(filter.productCodes);
   const statusSet = new Set(filter.statuses);
+  const planMonth = getPlanMonthForFilter(filter);
   const matchedProductCodes = new Set<number>();
   const filteredRows: ParsedSalesRow[] = [];
   const byDate = new Map<string, SalesDateSummary>();
@@ -786,6 +816,18 @@ function buildDataset(
     ["Плитка", { states: new Map(), cancelReasons: new Map() }],
     ["Сантехніка", { states: new Map(), cancelReasons: new Map() }],
   ]);
+  const managers = new Map<
+    string,
+    {
+      orderedDocs: number;
+      completedDocs: number;
+      orderedRevenue: number;
+      completedRevenue: number;
+      states: Map<string, { state: string; docs: number; revenue: number }>;
+      cancelReasons: Map<string, { reason: string; docs: number; revenue: number }>;
+    }
+  >();
+  const managerPlanRevenueByMonth = new Map<string, Map<string, number>>();
   const planMonths = new Map<string, SalesMonthSummary>();
   const planReturnedRevenueByMonth = new Map<string, number>();
   const planSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
@@ -823,6 +865,27 @@ function buildDataset(
               addCancelReason(segmentSummary.cancelReasons, row.cancelReason, row.docsSum);
             }
           }
+        }
+
+        if (statusDate?.slice(0, 7) === planMonth) {
+          const seller = managerLabel(row.seller);
+          const manager = managers.get(seller) || {
+            orderedDocs: 0,
+            completedDocs: 0,
+            orderedRevenue: 0,
+            completedRevenue: 0,
+            states: new Map<string, { state: string; docs: number; revenue: number }>(),
+            cancelReasons: new Map<string, { reason: string; docs: number; revenue: number }>(),
+          };
+          manager.orderedDocs += 1;
+          manager.orderedRevenue += row.docsSum;
+          if (isShipped(row)) {
+            manager.completedDocs += 1;
+            manager.completedRevenue += row.docsSum;
+          }
+          addState(manager.states, row.state, row.docsSum);
+          if (isCanceled(row.state)) addCancelReason(manager.cancelReasons, row.cancelReason, row.docsSum);
+          managers.set(seller, manager);
         }
       }
     }
@@ -866,6 +929,13 @@ function buildDataset(
     addBucket(allMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
+    let managerMonthRevenue = managerPlanRevenueByMonth.get(shippedMonth);
+    if (!managerMonthRevenue) {
+      managerMonthRevenue = new Map<string, number>();
+      managerPlanRevenueByMonth.set(shippedMonth, managerMonthRevenue);
+    }
+    const shippedSeller = managerLabel(row.seller);
+    managerMonthRevenue.set(shippedSeller, (managerMonthRevenue.get(shippedSeller) || 0) + netRevenue);
     for (const code of goodsCodes) {
       const n = parseInt(code, 10);
       if (productCodeSet.has(n)) matchedProductCodes.add(n);
@@ -917,13 +987,58 @@ function buildDataset(
         .sort((a, b) => b.revenue - a.revenue)];
     }),
   );
-  const planMonth = getPlanMonthForFilter(filter);
   const hasProductFilter = productCodeSet.size > 0;
   const planMonthList = hasProductFilter
     ? [...planMonths.values()].sort((a, b) => a.month.localeCompare(b.month))
     : allMonthList;
   const planReturnedRevenue = hasProductFilter ? planReturnedRevenueByMonth : allReturnedRevenueByMonth;
   const planMonthSegments = finishBuckets((hasProductFilter ? planSegmentsByMonth : allSegmentsByMonth).get(planMonth) || new Map<string, MutableBucket>());
+  const monthlyPlan = getMonthlySalesPlan(planMonth);
+  const managerMonthRevenue = managerPlanRevenueByMonth.get(planMonth) || new Map<string, number>();
+  const activeManagerNames = [...new Set([...managers.keys(), ...managerMonthRevenue.keys()])]
+    .filter(isDashboardManager)
+    .sort((a, b) => a.localeCompare(b, "uk"));
+  const equalManagerPlan = monthlyPlan?.total && activeManagerNames.length
+    ? monthlyPlan.total / activeManagerNames.length
+    : null;
+  const elapsedDays = elapsedDaysForMonth(planMonth);
+  const totalDays = daysInMonth(planMonth);
+  const managerList: SalesManagerSummary[] = activeManagerNames.map((seller) => {
+    const manager = managers.get(seller) || {
+      orderedDocs: 0,
+      completedDocs: 0,
+      orderedRevenue: 0,
+      completedRevenue: 0,
+      states: new Map<string, { state: string; docs: number; revenue: number }>(),
+      cancelReasons: new Map<string, { reason: string; docs: number; revenue: number }>(),
+    };
+    const planRevenue = managerMonthRevenue.get(seller) || 0;
+    const forecastRevenue = planRevenue > 0 ? (planRevenue / elapsedDays) * totalDays : null;
+    const averageOrderRevenue = manager.orderedDocs ? manager.orderedRevenue / manager.orderedDocs : null;
+    const averageCompletedRevenue = manager.completedDocs ? manager.completedRevenue / manager.completedDocs : null;
+    return {
+      seller,
+      plan: equalManagerPlan,
+      planSource: equalManagerPlan ? "equal-share" as const : "missing" as const,
+      planRevenue,
+      planCompletionPct: equalManagerPlan ? (planRevenue / equalManagerPlan) * 100 : null,
+      forecastRevenue,
+      forecastCompletionPct: equalManagerPlan && forecastRevenue ? (forecastRevenue / equalManagerPlan) * 100 : null,
+      orderedDocs: manager.orderedDocs,
+      completedDocs: manager.completedDocs,
+      orderCompletionPct: manager.orderedDocs ? (manager.completedDocs / manager.orderedDocs) * 100 : null,
+      orderedRevenue: manager.orderedRevenue,
+      completedRevenue: manager.completedRevenue,
+      revenueCompletionPct: manager.orderedRevenue ? (manager.completedRevenue / manager.orderedRevenue) * 100 : null,
+      averageOrderRevenue,
+      averageCompletedRevenue,
+      averageRevenueCompletionPct: averageOrderRevenue && averageCompletedRevenue
+        ? (averageCompletedRevenue / averageOrderRevenue) * 100
+        : null,
+      states: [...manager.states.values()].sort((a, b) => b.docs - a.docs),
+      cancelReasons: [...manager.cancelReasons.values()].sort((a, b) => b.docs - a.docs),
+    };
+  }).sort((a, b) => b.planRevenue - a.planRevenue);
 
   return {
     source,
@@ -969,6 +1084,7 @@ function buildDataset(
         states: [...summary.states.values()].sort((a, b) => b.docs - a.docs),
         cancelReasons: [...summary.cancelReasons.values()].sort((a, b) => b.docs - a.docs),
       })),
+      managers: managerList,
     },
   };
 }

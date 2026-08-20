@@ -111,6 +111,47 @@ type SalesDataset = {
       states: Array<{ state: string; docs: number; revenue: number }>;
       cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
     }>;
+    managers: Array<{
+      seller: string;
+      plan: number | null;
+      planSource: "configured" | "equal-share" | "missing";
+      planRevenue: number;
+      planCompletionPct: number | null;
+      forecastRevenue: number | null;
+      forecastCompletionPct: number | null;
+      orderedDocs: number;
+      completedDocs: number;
+      orderCompletionPct: number | null;
+      orderedRevenue: number;
+      completedRevenue: number;
+      revenueCompletionPct: number | null;
+      averageOrderRevenue: number | null;
+      averageCompletedRevenue: number | null;
+      averageRevenueCompletionPct: number | null;
+      states: Array<{ state: string; docs: number; revenue: number }>;
+      cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+    }>;
+  };
+};
+
+type SalesManagerSummary = SalesDataset["summary"]["managers"][number];
+
+type SalesWebMetricsDataset = {
+  filter: { from: string; to: string; country: "Ukraine" };
+  definition: { visits: string; averageCartItems: string };
+  dataThrough: string | null;
+  months: Array<{
+    month: string;
+    visits: number;
+    carts: number;
+    cartItems: number;
+    avgCartItems: number | null;
+  }>;
+  totals: {
+    visits: number;
+    carts: number;
+    cartItems: number;
+    avgCartItems: number | null;
   };
 };
 
@@ -119,6 +160,7 @@ const SALES_SETS_KEY = "agromat.analytics.salesSets.v1";
 
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
 const pctFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 1 });
+const decimalFmt = new Intl.NumberFormat("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STATUS_FILTERS = [
   { label: "Повністю відвантажений", value: "Повністю відвантажений" },
   { label: "Скасована", value: "Скасована" },
@@ -136,6 +178,21 @@ function fmtNum(value: number) {
 
 function fmtPct(value: number | null) {
   return value == null ? "—" : `${pctFmt.format(value)}%`;
+}
+
+function fmtDecimal(value: number | null) {
+  return value == null ? "—" : decimalFmt.format(value);
+}
+
+function fmtMonth(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return value;
+  const label = new Intl.DateTimeFormat("uk-UA", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, 1, 12)));
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function fmtIsoDateShort(value: string) {
@@ -280,14 +337,244 @@ function CategoryRankingList({
   );
 }
 
+function SalesByDateDisclosure({
+  days,
+}: {
+  days: SalesDataset["summary"]["byDate"];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const sortedDays = useMemo(() => {
+    const allDays = [...days].sort((a, b) => b.date.localeCompare(a.date));
+    const latestMonth = allDays[0]?.date.slice(0, 7);
+    return latestMonth ? allDays.filter((day) => day.date.startsWith(latestMonth)) : [];
+  }, [days]);
+  const latestDay = sortedDays[0];
+  const previousDays = sortedDays.slice(1);
+  const firstMonthDay = sortedDays[sortedDays.length - 1];
+
+  return (
+    <section className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+      <button
+        type="button"
+        onClick={() => previousDays.length && setExpanded((current) => !current)}
+        aria-expanded={expanded}
+        className="w-full border-0 bg-transparent p-4 text-left"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-bold" style={{ color: "var(--text)" }}>
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md text-sm" style={{ background: "var(--bg-input)", color: "#118dff" }} aria-hidden="true">
+                {expanded ? "−" : "+"}
+              </span>
+              Продажі по датах відвантаження
+            </div>
+            <div className="mt-1 pl-8 text-xs" style={{ color: "var(--text-dim)" }}>
+              Останній день показано одразу · ще {fmtNum(previousDays.length)} {previousDays.length === 1 ? "день" : "днів"} у списку
+            </div>
+          </div>
+          <div className="text-xs" style={{ color: "var(--text-dim)" }}>
+            Місяць: {firstMonthDay ? fmtIsoDateShort(firstMonthDay.date) : "—"} — {latestDay ? fmtIsoDateShort(latestDay.date) : "—"}
+          </div>
+        </div>
+        {latestDay ? (
+          <div className="mt-4 grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(150px,1fr)_1fr_1fr_1.2fr]" style={{ borderColor: "rgba(17,141,255,.28)", background: "rgba(17,141,255,.06)" }}>
+            <div>
+              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Дата відвантаження</div>
+              <div className="mt-1 text-sm font-black" style={{ color: "var(--text)" }}>{fmtIsoDateShort(latestDay.date)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Документи</div>
+              <div className="mt-1 text-sm font-bold tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(latestDay.docs)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Товари</div>
+              <div className="mt-1 text-sm font-bold tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(latestDay.goods)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Сума</div>
+              <div className="mt-1 text-sm font-black tabular-nums" style={{ color: "#075985" }}>{fmtMoney(latestDay.revenue)}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-lg border px-3 py-5 text-center text-xs" style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+            Немає відвантажень під обрані фільтри
+          </div>
+        )}
+      </button>
+      {expanded && previousDays.length > 0 && (
+        <div className="overflow-x-auto border-t" style={{ borderColor: "var(--border)" }}>
+          <table className="w-full text-xs border-collapse">
+            <thead style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>
+              <tr>
+                <th className="text-left px-4 py-2">Інші дати відвантаження</th>
+                <th className="text-right px-4 py-2">Документи</th>
+                <th className="text-right px-4 py-2">Товари</th>
+                <th className="text-right px-4 py-2">Сума</th>
+              </tr>
+            </thead>
+            <tbody>
+              {previousDays.map((day) => (
+                <tr key={day.date} className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="px-4 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text)" }}>{fmtIsoDateShort(day.date)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(day.docs)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(day.goods)}</td>
+                  <td className="px-4 py-2 text-right font-bold tabular-nums" style={{ color: "var(--text)" }}>{fmtMoney(day.revenue)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ManagerPlanOverview({
+  managers,
+  month,
+  selectedSeller,
+  onSelectSeller,
+}: {
+  managers: SalesManagerSummary[];
+  month: string;
+  selectedSeller: string | null;
+  onSelectSeller: (seller: string | null) => void;
+}) {
+  const visibleManagers = selectedSeller
+    ? managers.filter((manager) => manager.seller === selectedSeller)
+    : managers;
+  const hasEqualSharePlan = managers.some((manager) => manager.planSource === "equal-share");
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-base font-black" style={{ color: "var(--text)" }}>Виконання плану по менеджерах</div>
+            <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>Оберіть менеджера — таблиця та статуси нижче відфільтруються автоматично.</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelectSeller(null)}
+            className="h-8 rounded-lg border px-3 text-xs font-bold"
+            style={{ borderColor: selectedSeller ? "var(--border)" : "#118dff", background: selectedSeller ? "var(--bg-input)" : "#118dff", color: selectedSeller ? "var(--text)" : "#fff" }}
+          >
+            Усі менеджери
+          </button>
+        </div>
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+          {managers.map((manager) => {
+            const active = selectedSeller === manager.seller;
+            return (
+              <button
+                key={manager.seller}
+                type="button"
+                onClick={() => onSelectSeller(manager.seller)}
+                aria-pressed={active}
+                className="shrink-0 rounded-lg border px-3 py-2 text-left text-xs font-bold"
+                style={{ borderColor: active ? "#118dff" : "var(--border)", background: active ? "rgba(17,141,255,.10)" : "var(--bg-input)", color: active ? "#075985" : "var(--text)" }}
+              >
+                {manager.seller}
+              </button>
+            );
+          })}
+        </div>
+        {hasEqualSharePlan && (
+          <div className="mt-3 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: "#fde68a", background: "#fffbeb", color: "#92400e" }}>
+            Індивідуальні плани не задані в джерелі: загальний план місяця тимчасово розподілено порівну між активними менеджерами.
+          </div>
+        )}
+      </section>
+
+      <div className={selectedSeller ? "grid gap-3" : "grid gap-3 xl:grid-cols-2"}>
+        {visibleManagers.map((manager) => {
+          const completion = manager.planCompletionPct || 0;
+          return (
+            <button
+              key={manager.seller}
+              type="button"
+              onClick={() => onSelectSeller(manager.seller)}
+              className="rounded-xl border p-4 text-left"
+              style={{ borderColor: selectedSeller === manager.seller ? "#118dff" : "rgba(17,141,255,.28)", background: "linear-gradient(135deg, rgba(17,141,255,.10), rgba(34,197,94,.10))", boxShadow: "var(--shadow-sm)" }}
+            >
+              <div className="text-[11px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>План місяця · {month}</div>
+              <div className="mt-1 truncate text-sm font-black" style={{ color: "var(--text)" }} title={manager.seller}>{manager.seller}</div>
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <div className="text-2xl font-black tabular-nums" style={{ color: "var(--text)" }}>{fmtMoney(manager.planRevenue)}</div>
+                <div className="pb-0.5 text-xs" style={{ color: "var(--text-dim)" }}>{manager.plan ? `з плану ${fmtMoney(manager.plan)}` : "план не заданий"}</div>
+              </div>
+              <div className="mt-3"><ProgressBar value={completion} color={completion >= 100 ? "#22c55e" : "#118dff"} /></div>
+              <div className="mt-3 grid gap-1 text-xs sm:grid-cols-3">
+                <div style={{ color: "var(--text-dim)" }}>Виконання: <b style={{ color: "var(--text)" }}>{fmtPct(manager.planCompletionPct)}</b></div>
+                <div style={{ color: "var(--text-dim)" }}>Прогноз: <b style={{ color: "var(--text)" }}>{manager.forecastRevenue ? fmtMoney(manager.forecastRevenue) : "—"}</b></div>
+                <div style={{ color: "var(--text-dim)" }}>Прогноз плану: <b style={{ color: "var(--text)" }}>{fmtPct(manager.forecastCompletionPct)}</b></div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <section className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "#314858", boxShadow: "var(--shadow-sm)" }}>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-white">
+          <div className="text-sm font-black">Аналіз менеджерів</div>
+          <div className="text-xs text-slate-300">{selectedSeller || "Усі менеджери"}</div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1180px] border-collapse text-xs">
+            <thead className="text-slate-200" style={{ background: "#3b5364" }}>
+              <tr>
+                <th className="px-3 py-3 text-left min-w-[270px]">Продавець</th>
+                <th className="px-3 py-3 text-right">Кількість<br />замовлень</th>
+                <th className="px-3 py-3 text-right">Кількість виконаних<br />замовлень</th>
+                <th className="px-3 py-3 text-right">% виконаних<br />замовлень</th>
+                <th className="px-3 py-3 text-right">Сума<br />замовлень</th>
+                <th className="px-3 py-3 text-right">Сума виконаних<br />замовлень</th>
+                <th className="px-3 py-3 text-right">% ТО виконаних<br />замовлень</th>
+                <th className="px-3 py-3 text-right">Середня сума<br />замовлення</th>
+                <th className="px-3 py-3 text-right">Середній<br />чек</th>
+                <th className="px-3 py-3 text-right">% виконаного<br />сер. чеку</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleManagers.map((manager, index) => (
+                <tr
+                  key={manager.seller}
+                  onClick={() => onSelectSeller(manager.seller)}
+                  className="cursor-pointer border-t text-slate-100"
+                  style={{ borderColor: "rgba(255,255,255,.12)", background: selectedSeller === manager.seller ? "rgba(17,141,255,.18)" : "transparent" }}
+                >
+                  <td className="px-3 py-2.5 font-semibold"><span className="mr-2 text-slate-400">{index + 1}.</span>{manager.seller}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#4058a8" }}>{fmtNum(manager.orderedDocs)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#2386d8" }}>{fmtNum(manager.completedDocs)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#317eb6" }}>{fmtPct(manager.orderCompletionPct)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#398f3e" }}>{fmtNum(manager.orderedRevenue)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#45a24b" }}>{fmtNum(manager.completedRevenue)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#639780" }}>{fmtPct(manager.revenueCompletionPct)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#267083" }}>{fmtNum(manager.averageOrderRevenue || 0)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#168695" }}>{fmtNum(manager.averageCompletedRevenue || 0)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ background: "#1ba2b5" }}>{fmtPct(manager.averageRevenueCompletionPct)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function DocumentStatusOverview({
   states,
   cancelReasons,
   documentStatusesBySegment,
+  title = "Статуси документів",
+  showSegmentFilter = true,
 }: {
   states: SalesDataset["summary"]["states"];
   cancelReasons: SalesDataset["summary"]["cancelReasons"];
   documentStatusesBySegment: SalesDataset["summary"]["documentStatusesBySegment"];
+  title?: string;
+  showSegmentFilter?: boolean;
 }) {
   const [selectedSegment, setSelectedSegment] = useState<"Усі" | "Плитка" | "Сантехніка">("Усі");
   const segmentSummary = selectedSegment === "Усі"
@@ -305,7 +592,7 @@ function DocumentStatusOverview({
     <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Статуси документів</div>
+          <div className="text-sm font-bold" style={{ color: "var(--text)" }}>{title}</div>
           <div
             className="rounded-lg border px-2.5 py-1 text-xs"
             style={{ borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}
@@ -315,7 +602,7 @@ function DocumentStatusOverview({
             <span className="ml-1 opacity-75">({fmtNum(canceledDocuments)} із {fmtNum(totalDocuments)})</span>
           </div>
         </div>
-        <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
+        {showSegmentFilter && <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
           {(["Усі", "Плитка", "Сантехніка"] as const).map((segment) => {
             const active = selectedSegment === segment;
             return (
@@ -334,7 +621,7 @@ function DocumentStatusOverview({
               </button>
             );
           })}
-        </div>
+        </div>}
       </div>
       <div className="overflow-x-auto">
         <div className="min-w-[680px]">
@@ -512,6 +799,14 @@ function toInputDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function yearToDateRange() {
+  const now = new Date();
+  return {
+    from: `${now.getFullYear()}-01-01`,
+    to: toInputDate(now),
+  };
+}
+
 function currentMonthRange() {
   const now = new Date();
   return {
@@ -528,7 +823,7 @@ function previousMonthRange() {
 }
 
 export function SalesDashboard() {
-  const initialRange = useMemo(() => currentMonthRange(), []);
+  const initialRange = useMemo(() => yearToDateRange(), []);
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
   const [productSet, setProductSet] = useState<{ ids: number[]; rawText: string } | null>(null);
@@ -537,10 +832,14 @@ export function SalesDashboard() {
   const [savedSets, setSavedSets] = useState<SavedProductSet[]>([]);
   const [setName, setSetName] = useState("");
   const [data, setData] = useState<SalesDataset | null>(null);
+  const [webMetrics, setWebMetrics] = useState<SalesWebMetricsDataset | null>(null);
+  const [webMetricsError, setWebMetricsError] = useState<string | null>(null);
+  const [webMetricsLoading, setWebMetricsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [selectedManager, setSelectedManager] = useState<string | null>(null);
   const hasLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -611,6 +910,44 @@ export function SalesDashboard() {
       controller.abort();
     };
   }, [dateFrom, dateTo, productSet, selectedStatuses]);
+
+  useEffect(() => {
+    let alive = true;
+    const controller = new AbortController();
+    const fallbackRange = yearToDateRange();
+    const params = new URLSearchParams({
+      from: dateFrom || fallbackRange.from,
+      to: dateTo || fallbackRange.to,
+    });
+    setWebMetricsLoading(true);
+    fetch(`/api/sales/web-metrics?${params.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Не вдалося завантажити вебаналітику");
+        return json as SalesWebMetricsDataset;
+      })
+      .then((json) => {
+        if (!alive) return;
+        setWebMetrics(json);
+        setWebMetricsError(null);
+      })
+      .catch((err) => {
+        if (!alive) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setWebMetrics(null);
+        setWebMetricsError(err instanceof Error ? err.message : "Не вдалося завантажити вебаналітику");
+      })
+      .finally(() => {
+        if (alive) setWebMetricsLoading(false);
+      });
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [dateFrom, dateTo]);
   const maxBrandRevenue = useMemo(
     () => Math.max(1, ...(data?.summary.brands || []).map((item) => item.revenue)),
     [data],
@@ -626,6 +963,13 @@ export function SalesDashboard() {
       setExpandedCategory(null);
     }
   }, [data, expandedCategory]);
+
+  useEffect(() => {
+    if (!selectedManager) return;
+    if (!data?.summary.managers.some((manager) => manager.seller === selectedManager)) {
+      setSelectedManager(null);
+    }
+  }, [data, selectedManager]);
 
   if (loading) {
     return (
@@ -831,40 +1175,64 @@ export function SalesDashboard() {
       </div>
 
       <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Продажі по датах відвантаження</div>
-          <div className="text-xs" style={{ color: "var(--text-dim)" }}>
-            Період: {data.summary.firstShippedDate || "—"} — {data.summary.lastShippedDate || "—"}
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+          <div>
+            <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Помісячна вебаналітика · Україна</div>
+            <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>
+              Відвідування = GA4-сесії; кошик = склад товарів у момент початку оформлення.
+            </div>
           </div>
+          {webMetrics?.dataThrough && (
+            <div className="text-xs" style={{ color: "var(--text-dim)" }}>
+              Дані по {fmtIsoDateShort(webMetrics.dataThrough)}
+            </div>
+          )}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>
-              <tr>
-                <th className="text-left px-3 py-2">Дата відвантаження</th>
-                <th className="text-left px-3 py-2 w-[420px]">Документи</th>
-                <th className="text-left px-3 py-2 w-[420px]">Товари</th>
-                <th className="text-left px-3 py-2 w-[420px]">Сума</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.summary.byDate.map((day) => (
-                <tr key={day.date} className="border-t" style={{ borderColor: "var(--border)" }}>
-                  <td className="px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text)" }}>{fmtIsoDateShort(day.date)}</td>
-                  <td className="px-3 py-2 tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(day.docs)}</td>
-                  <td className="px-3 py-2 tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(day.goods)}</td>
-                  <td className="px-3 py-2 font-bold tabular-nums" style={{ color: "var(--text)" }}>{fmtMoney(day.revenue)}</td>
-                </tr>
-              ))}
-              {!data.summary.byDate.length && (
-                <tr>
-                  <td className="px-3 py-6 text-center" colSpan={4} style={{ color: "var(--text-dim)" }}>Немає відвантажень під обрані фільтри</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        {webMetricsLoading && (
+          <div className="py-6 text-center text-xs" style={{ color: "var(--text-dim)" }}>Завантаження GA4…</div>
+        )}
+        {!webMetricsLoading && webMetricsError && (
+          <div className="rounded-lg border px-3 py-3 text-xs" style={{ borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>
+            Вебаналітика недоступна: {webMetricsError}
+          </div>
+        )}
+        {!webMetricsLoading && webMetrics && (
+          <>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <KpiCard label="Відвідування сайту" value={fmtNum(webMetrics.totals.visits)} hint="сесії з України за обраний період" accent="#7c3aed" />
+              <KpiCard label="Середня кількість товарів у е-кошику" value={fmtDecimal(webMetrics.totals.avgCartItems)} hint={`${fmtNum(webMetrics.totals.carts)} кошиків на етапі checkout`} accent="#f59e0b" />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>
+                  <tr>
+                    <th className="text-left px-3 py-2">Місяць</th>
+                    <th className="text-right px-3 py-2">Відвідування</th>
+                    <th className="text-right px-3 py-2">Кошики</th>
+                    <th className="text-right px-3 py-2">Товарів у кошиках</th>
+                    <th className="text-right px-3 py-2">Середня к-ть товарів</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {webMetrics.months.map((month) => (
+                    <tr key={month.month} className="border-t" style={{ borderColor: "var(--border)" }}>
+                      <td className="px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text)" }}>{fmtMonth(month.month)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(month.visits)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(month.carts)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(month.cartItems)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-bold" style={{ color: "#b45309" }}>{fmtDecimal(month.avgCartItems)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </section>
+
+      <SalesByDateDisclosure
+        days={data.summary.byDate}
+      />
 
       <RankingList title="Бренди" items={data.summary.brands} maxRevenue={maxBrandRevenue} color="#22c55e" />
 
@@ -882,6 +1250,25 @@ export function SalesDashboard() {
           documentStatusesBySegment={data.summary.documentStatusesBySegment || []}
         />
       </section>
+
+      <ManagerPlanOverview
+        managers={data.summary.managers || []}
+        month={plan.month}
+        selectedSeller={selectedManager}
+        onSelectSeller={setSelectedManager}
+      />
+
+      <DocumentStatusOverview
+        states={selectedManager
+          ? data.summary.managers.find((manager) => manager.seller === selectedManager)?.states || []
+          : data.summary.states}
+        cancelReasons={selectedManager
+          ? data.summary.managers.find((manager) => manager.seller === selectedManager)?.cancelReasons || []
+          : data.summary.cancelReasons || []}
+        documentStatusesBySegment={[]}
+        title={`Статуси документів і причини скасування · ${selectedManager || "Усі менеджери"}`}
+        showSegmentFilter={false}
+      />
 
       {showProductSetModal && (
         <ProductSetModal

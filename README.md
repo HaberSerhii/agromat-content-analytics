@@ -364,6 +364,7 @@ curl -s http://127.0.0.1:3000/api/products/snapshots
 | GET/POST| `/api/products/required-attrs`        | GET — повертає поточний конфіг. POST — оновлює (потребує заголовок `x-dashboard-secret`).                         |
 | GET     | `/api/promotions/web-funnel`          | Воронка GA4 для всього сайту або відвідувачів заданого URL за період, каналом і пристроєм.                       |
 | GET     | `/api/promotions/product-metrics`     | TOP товарів за `add_to_cart`, CTR списку `select_item / view_item_list` і `add_to_wishlist`; зв'язок з каталогом за `item_id = goods_ref`. |
+| GET     | `/api/sales/web-metrics`              | Помісячні GA4-сесії з України та середня кількість товарів у кошику на події `begin_checkout`.                         |
 
 ---
 
