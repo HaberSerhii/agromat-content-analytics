@@ -465,8 +465,16 @@ function isCanceled(state: string) {
   return state.toLocaleLowerCase("uk").includes("скас");
 }
 
-function isFakeOrder(row: ParsedSalesRow) {
-  return row.cancelReason.toLocaleLowerCase("uk").includes("фейков");
+const MANAGER_ANALYTICS_EXCLUDED_REASONS = [
+  "створення нового замовлення",
+  "дубль замовлення",
+  "фейкове замовлення",
+  "попередній прорахунок",
+];
+
+function isExcludedManagerOrder(row: ParsedSalesRow) {
+  const reason = row.cancelReason.toLocaleLowerCase("uk").replace(/\s+/g, " ").trim();
+  return MANAGER_ANALYTICS_EXCLUDED_REASONS.some((excludedReason) => reason.includes(excludedReason));
 }
 
 function isShipmentAllowed(state: string) {
@@ -878,7 +886,7 @@ function buildDataset(
           }
         }
 
-        if (statusDate?.slice(0, 7) === planMonth && !isFakeOrder(row)) {
+        if (statusDate?.slice(0, 7) === planMonth && !isExcludedManagerOrder(row)) {
           const seller = managerLabel(row.seller);
           const manager = managers.get(seller) || {
             orderedDocs: 0,
@@ -942,7 +950,7 @@ function buildDataset(
     addBucket(allMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
-    if (!isFakeOrder(row)) {
+    if (!isExcludedManagerOrder(row)) {
       let managerMonthRevenue = managerPlanRevenueByMonth.get(shippedMonth);
       if (!managerMonthRevenue) {
         managerMonthRevenue = new Map<string, number>();
