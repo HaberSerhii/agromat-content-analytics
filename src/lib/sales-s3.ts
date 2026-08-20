@@ -1,5 +1,5 @@
 import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
+import { getMonthlyManagerPlan, getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
 import { readAllLite } from "@/lib/products-store";
 import type {
   PromotionSalesDataset,
@@ -476,8 +476,12 @@ function managerLabel(value: string) {
 }
 
 function isDashboardManager(value: string) {
-  const sellerId = value.match(/\((\d+)\)\s*$/)?.[1];
+  const sellerId = getSellerId(value);
   return Boolean(sellerId && SALES_DASHBOARD_MANAGER_IDS.has(sellerId));
+}
+
+function getSellerId(value: string) {
+  return value.match(/\((\d+)\)\s*$/)?.[1] || null;
 }
 
 function getNetRevenue(row: SalesRow) {
@@ -993,14 +997,13 @@ function buildDataset(
     : allMonthList;
   const planReturnedRevenue = hasProductFilter ? planReturnedRevenueByMonth : allReturnedRevenueByMonth;
   const planMonthSegments = finishBuckets((hasProductFilter ? planSegmentsByMonth : allSegmentsByMonth).get(planMonth) || new Map<string, MutableBucket>());
-  const monthlyPlan = getMonthlySalesPlan(planMonth);
   const managerMonthRevenue = managerPlanRevenueByMonth.get(planMonth) || new Map<string, number>();
   const activeManagerNames = [...new Set([...managers.keys(), ...managerMonthRevenue.keys()])]
-    .filter(isDashboardManager)
+    .filter((seller) => (
+      isDashboardManager(seller)
+      && getMonthlyManagerPlan(planMonth, getSellerId(seller)) != null
+    ))
     .sort((a, b) => a.localeCompare(b, "uk"));
-  const equalManagerPlan = monthlyPlan?.total && activeManagerNames.length
-    ? monthlyPlan.total / activeManagerNames.length
-    : null;
   const elapsedDays = elapsedDaysForMonth(planMonth);
   const totalDays = daysInMonth(planMonth);
   const managerList: SalesManagerSummary[] = activeManagerNames.map((seller) => {
@@ -1013,17 +1016,18 @@ function buildDataset(
       cancelReasons: new Map<string, { reason: string; docs: number; revenue: number }>(),
     };
     const planRevenue = managerMonthRevenue.get(seller) || 0;
+    const managerPlan = getMonthlyManagerPlan(planMonth, getSellerId(seller));
     const forecastRevenue = planRevenue > 0 ? (planRevenue / elapsedDays) * totalDays : null;
     const averageOrderRevenue = manager.orderedDocs ? manager.orderedRevenue / manager.orderedDocs : null;
     const averageCompletedRevenue = manager.completedDocs ? manager.completedRevenue / manager.completedDocs : null;
     return {
       seller,
-      plan: equalManagerPlan,
-      planSource: equalManagerPlan ? "equal-share" as const : "missing" as const,
+      plan: managerPlan,
+      planSource: managerPlan != null ? "configured" as const : "missing" as const,
       planRevenue,
-      planCompletionPct: equalManagerPlan ? (planRevenue / equalManagerPlan) * 100 : null,
+      planCompletionPct: managerPlan ? (planRevenue / managerPlan) * 100 : null,
       forecastRevenue,
-      forecastCompletionPct: equalManagerPlan && forecastRevenue ? (forecastRevenue / equalManagerPlan) * 100 : null,
+      forecastCompletionPct: managerPlan && forecastRevenue ? (forecastRevenue / managerPlan) * 100 : null,
       orderedDocs: manager.orderedDocs,
       completedDocs: manager.completedDocs,
       orderCompletionPct: manager.orderedDocs ? (manager.completedDocs / manager.orderedDocs) * 100 : null,

@@ -443,7 +443,7 @@ function ManagerPlanOverview({
   const visibleManagers = selectedSeller
     ? managers.filter((manager) => manager.seller === selectedSeller)
     : managers;
-  const hasEqualSharePlan = managers.some((manager) => manager.planSource === "equal-share");
+  const missingPlanManagers = managers.filter((manager) => manager.planSource === "missing");
 
   return (
     <div className="space-y-4">
@@ -479,9 +479,9 @@ function ManagerPlanOverview({
             );
           })}
         </div>
-        {hasEqualSharePlan && (
+        {missingPlanManagers.length > 0 && (
           <div className="mt-3 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: "#fde68a", background: "#fffbeb", color: "#92400e" }}>
-            Індивідуальні плани не задані в джерелі: загальний план місяця тимчасово розподілено порівну між активними менеджерами.
+            План не заданий: {missingPlanManagers.map((manager) => manager.seller).join(", ")}.
           </div>
         )}
       </section>

@@ -2,6 +2,19 @@ export const SALES_PLAN_SEGMENTS = ["Плитка", "Сантехніка", "І�
 
 export const SALES_DASHBOARD_MANAGER_IDS = new Set(["58255", "58242", "4964", "6693"]);
 
+export const SALES_MANAGER_PLAN_BY_MONTH: Record<string, Record<string, number>> = {
+  "2026-08": {
+    "4964": 2_350_000,
+    "58255": 2_250_000,
+    "58242": 2_250_000,
+  },
+  "2026-09": {
+    "4964": 2_350_000,
+    "58255": 2_250_000,
+    "58242": 2_250_000,
+  },
+};
+
 export type SalesPlanSegment = (typeof SALES_PLAN_SEGMENTS)[number];
 
 export type MonthlySalesPlan = {
@@ -33,4 +46,9 @@ export function normalizeSalesPlanSegment(value: string): SalesPlanSegment {
 
 export function getMonthlySalesPlan(month: string) {
   return SALES_PLAN_BY_MONTH[month] || null;
+}
+
+export function getMonthlyManagerPlan(month: string, sellerId: string | null) {
+  if (!sellerId) return null;
+  return SALES_MANAGER_PLAN_BY_MONTH[month]?.[sellerId] ?? null;
 }
