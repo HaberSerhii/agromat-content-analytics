@@ -94,6 +94,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function withDatabaseRetry(label, operation, retries = 4) {
+  let lastError;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || error);
+      if (!/statement timeout|57014/i.test(message) || attempt === retries - 1) throw error;
+      const delayMs = Math.min(2 ** attempt * 1000, 8000);
+      console.warn(`${label}: Supabase timeout, retry ${attempt + 2}/${retries} in ${delayMs}ms`);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
+
 function parseProduct(html) {
   return adapter === "plitka" ? parsePlitka(html) : parseLeoceramika(html);
 }
@@ -287,11 +304,20 @@ async function main() {
   }
 
   await writeJob({ label: `${LABEL}: читаю URL-и з БД` });
-  const [targets, previousRows, qualityBaselineRows] = await Promise.all([
-    fetchTargets(db, competitor.id),
-    fetchPublishedSnapshot(db, competitor.id, snapshotDate),
-    fetchPublishedSnapshot(db, competitor.id),
-  ]);
+  // Fetch the large historical snapshot only once for the normal daily run.
+  // Running two identical scans concurrently pushed Supabase over its statement
+  // timeout and prevented both tile competitors from starting.
+  const targets = await fetchTargets(db, competitor.id);
+  const previousRows = await withDatabaseRetry(
+    `${LABEL}: previous snapshot`,
+    () => fetchPublishedSnapshot(db, competitor.id, snapshotDate),
+  );
+  const qualityBaselineRows = requestedSnapshotDate
+    ? await withDatabaseRetry(
+      `${LABEL}: quality baseline`,
+      () => fetchPublishedSnapshot(db, competitor.id),
+    )
+    : previousRows;
   const previousSuccessful = new Map(
     [...previousRows].filter(([, row]) => row.price != null),
   );
