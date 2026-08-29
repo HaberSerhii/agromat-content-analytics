@@ -42,6 +42,18 @@ const PromotionsDashboard = dynamic(
   },
 );
 
+const CompetitorDashboardV2 = dynamic(
+  () => import("@/components/CompetitorDashboardV2").then((m) => m.CompetitorDashboardV2),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>
+        Завантаження тестового дашборда…
+      </div>
+    ),
+  },
+);
+
 // Default points at the production same-origin nginx location
 // (`/parcer/` → parser UI). In local Next dev, that path belongs to this app
 // unless the parser URL is explicitly configured, so we show a small placeholder
@@ -61,6 +73,7 @@ export function AppShell() {
   const isCatalog = pathname === "/catalog";
   const isPromotions = pathname === "/promotions";
   const isSales = pathname === "/sales";
+  const isCompetitorsV2 = pathname === "/competitors-v2";
   // Keep the server and first client render identical so the visible parser
   // iframe can be emitted in the initial HTML instead of waiting for hydration.
   const [isLocalHost, setIsLocalHost] = useState(false);
@@ -171,6 +184,8 @@ export function AppShell() {
           <SalesDashboard />
         </div>
       )}
+
+      {isCompetitorsV2 && <CompetitorDashboardV2 />}
     </>
   );
 }
