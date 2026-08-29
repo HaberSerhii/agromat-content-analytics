@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
-type ViewMode = "overview" | "competing" | "vtm-competing" | "changed" | "vtm-changed";
+type ViewMode = "overview" | "changed" | "vtm-changed" | "below-median" | "vtm-below-median";
+type CabinetMode = "menu" | "sessions" | null;
+type ExportKind = "general-xlsx" | "segment-xlsx" | "general-pdf" | "segment-pdf";
 
 interface MetricValues {
   tile: number;
@@ -75,13 +77,33 @@ interface DashboardResponse {
   error?: string;
 }
 
+interface DashboardSession {
+  id: string;
+  device: string;
+  ip: string;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+interface CompactDashboardResponse {
+  currentDate: string | null;
+  competitors: Competitor[];
+  rows: PriceRow[];
+  total: number;
+  page: number;
+  limit: number;
+  error?: string;
+}
+
 const VIEW_ITEMS: Array<{ id: ViewMode; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "Головна сторінка" },
-  { id: "competing", label: "Конкуруюча ціна", hint: "Товари зі співпадінням" },
-  { id: "vtm-competing", label: "ВТМ з ціною", hint: "ВТМ зі співпадінням" },
-  { id: "changed", label: "Змінили ціну", hint: "Зміни у конкурентів" },
-  { id: "vtm-changed", label: "ВТМ змінили ціну", hint: "Зміни ВТМ" },
+  { id: "changed", label: "Змінили ціну", hint: "Усі товари" },
+  { id: "vtm-changed", label: "Змінили ціну", hint: "Тільки ВТМ" },
+  { id: "below-median", label: "Ціна нижче сер. медіани", hint: "Усі товари" },
+  { id: "vtm-below-median", label: "Ціна нижче сер. медіани", hint: "Тільки ВТМ" },
 ];
+
+const CHART_COLORS = ["#118dff", "#4a6ee0", "#6d5bd0", "#16a085", "#f39c4a", "#e05c68", "#38a3a5", "#78909c", "#9b59b6", "#2d98da", "#7f8c8d"];
 
 const METRICS: Array<{ key: keyof DashboardResponse["overview"]; label: string; symbol: string; tone: string }> = [
   { key: "feed", label: "Товарів у фіді Агромат", symbol: "A", tone: "#118dff" },
@@ -181,6 +203,45 @@ function PriceValue({ price, ourPrice }: { price: number | null; ourPrice: numbe
   );
 }
 
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function fetchAllDashboardRows(query: URLSearchParams): Promise<CompactDashboardResponse> {
+  const firstQuery = new URLSearchParams(query);
+  firstQuery.set("page", "1");
+  firstQuery.set("limit", "100");
+  firstQuery.set("compact", "1");
+  const firstResponse = await fetch(`/api/parser/dashboard-v2?${firstQuery}`);
+  const first = await firstResponse.json() as CompactDashboardResponse;
+  if (!firstResponse.ok) throw new Error(first.error || `HTTP ${firstResponse.status}`);
+  const pageCount = Math.ceil(first.total / first.limit);
+  if (pageCount <= 1) return first;
+  const pages = await Promise.all(Array.from({ length: pageCount - 1 }, async (_, index) => {
+    const nextQuery = new URLSearchParams(firstQuery);
+    nextQuery.set("page", String(index + 2));
+    const response = await fetch(`/api/parser/dashboard-v2?${nextQuery}`);
+    const body = await response.json() as CompactDashboardResponse;
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    return body.rows;
+  }));
+  return { ...first, rows: [first.rows, ...pages].flat() };
+}
+
 export function CompetitorDashboardV2() {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -198,6 +259,13 @@ export function CompetitorDashboardV2() {
   const [productIds, setProductIds] = useState("");
   const [notice, setNotice] = useState("");
   const [localUrls, setLocalUrls] = useState<Record<string, string | null>>({});
+  const [cabinetMode, setCabinetMode] = useState<CabinetMode>(null);
+  const [sessions, setSessions] = useState<DashboardSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [agromatUpdatedAt, setAgromatUpdatedAt] = useState<string | null>(null);
+  const [runningAction, setRunningAction] = useState("");
+  const [exporting, setExporting] = useState<ExportKind | null>(null);
+  const [hoveredViolation, setHoveredViolation] = useState<number | null>(null);
 
   const selectedKey = [...selectedCompetitors].sort((a, b) => a - b).join(",");
 
@@ -228,6 +296,13 @@ export function CompetitorDashboardV2() {
   }, [brand, category, page, priceMode, productIds, search, selectedKey, view]);
 
   useEffect(() => setPage(1), [brand, category, priceMode, productIds, search, selectedKey, view]);
+
+  useEffect(() => {
+    const heartbeat = () => fetch("/api/dashboard/sessions", { cache: "no-store" }).catch(() => undefined);
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const defaultCompetitors = useMemo(() => new Set((data?.competitors || []).slice(0, 4).map((item) => item.id)), [data?.competitors]);
   const visibleCompetitorIds = selectedCompetitors.size ? selectedCompetitors : defaultCompetitors;
@@ -270,9 +345,166 @@ export function CompetitorDashboardV2() {
     setNotice("Прототип: вигляд URL змінено локально. Запис у БД підключимо після затвердження дизайну.");
   }
 
+  function reportQuery(segmented: boolean): URLSearchParams {
+    const query = new URLSearchParams({ view: segmented ? view : "overview" });
+    if (!segmented) return query;
+    if (category) query.set("category", category);
+    if (brand) query.set("brand", brand);
+    if (priceMode !== "all") query.set("price", priceMode);
+    if (selectedKey) query.set("competitors", selectedKey);
+    if (search) query.set("search", search);
+    if (productIds) query.set("ids", productIds);
+    return query;
+  }
+
+  async function exportExcel(segmented: boolean) {
+    const kind: ExportKind = segmented ? "segment-xlsx" : "general-xlsx";
+    if (exporting) return;
+    setExporting(kind);
+    setNotice("");
+    try {
+      const report = await fetchAllDashboardRows(reportQuery(segmented));
+      const competitors = segmented
+        ? report.competitors.filter((competitor) => visibleCompetitorIds.has(competitor.id))
+        : report.competitors;
+      const XLSX = await import("xlsx");
+      const headers = [
+        "IDD", "ID товару", "Артикул", "Категорія", "Бренд", "Назва", "Ціна Агромат", "URL Агромат",
+        ...competitors.flatMap((competitor) => [`${competitor.name} · ціна`, `${competitor.name} · URL`]),
+      ];
+      const rows = report.rows.map((row) => [
+        row.code || row.productId,
+        row.productId,
+        row.sku || "",
+        row.category || "",
+        row.brand || "",
+        row.name,
+        row.ourPrice,
+        row.ourUrl || "",
+        ...competitors.flatMap((competitor) => [row.byCompetitor[competitor.id]?.price ?? null, row.byCompetitor[competitor.id]?.url || ""]),
+      ]);
+      const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      sheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 1}` };
+      sheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+      sheet["!cols"] = headers.map((header, index) => ({ wch: index === 5 ? 55 : /URL/.test(header) ? 38 : Math.max(12, Math.min(24, header.length + 2)) }));
+      const meta = XLSX.utils.aoa_to_sheet([
+        ["Параметр", "Значення"],
+        ["Тип звіту", segmented ? "Сегментований" : "Загальний"],
+        ["Розділ", activeView.label],
+        ["Категорія", category || "Усі"],
+        ["Бренд", brand || "Усі"],
+        ["Ціновий фільтр", priceMode],
+        ["Товарів", report.total],
+        ["Створено", new Date().toISOString()],
+      ]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "Ціни конкурентів");
+      XLSX.utils.book_append_sheet(workbook, meta, "Параметри");
+      const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx", compression: true }) as ArrayBuffer;
+      triggerDownload(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `competitor-prices-${segmented ? "segment" : "general"}-${report.currentDate || "current"}.xlsx`);
+      setNotice(`Excel-звіт сформовано: ${formatNumber(report.total)} товарів.`);
+    } catch (reason) {
+      setNotice(`Не вдалося сформувати Excel: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  async function exportPdf(segmented: boolean) {
+    const kind: ExportKind = segmented ? "segment-pdf" : "general-pdf";
+    if (exporting) return;
+    const popup = window.open("", "_blank");
+    if (!popup) {
+      setNotice("Браузер заблокував вікно презентації. Дозвольте спливаючі вікна та повторіть.");
+      return;
+    }
+    popup.document.write("<title>Формування презентації…</title><p style='font-family:Arial;padding:32px'>Формування презентації…</p>");
+    setExporting(kind);
+    try {
+      const report = await fetchAllDashboardRows(reportQuery(segmented));
+      const competitors = segmented
+        ? report.competitors.filter((competitor) => visibleCompetitorIds.has(competitor.id))
+        : report.competitors.slice(0, 6);
+      const tableRows = report.rows.slice(0, 250).map((row) => `<tr><td>${escapeHtml(row.code || row.productId)}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.name)}</td><td class="num">${escapeHtml(formatPrice(row.ourPrice))}</td>${competitors.map((competitor) => `<td class="num">${escapeHtml(formatPrice(row.byCompetitor[competitor.id]?.price ?? null))}</td>`).join("")}</tr>`).join("");
+      const metricCards = METRICS.map((metricItem) => {
+        const value = data?.overview[metricItem.key];
+        return `<div class="metric"><span>${escapeHtml(metricItem.label)}</span><b>${formatNumber((value?.tile || 0) + (value?.sanitary || 0))}</b><small>Плитка ${formatNumber(value?.tile || 0)} · Сантехніка ${formatNumber(value?.sanitary || 0)}</small></div>`;
+      }).join("");
+      popup.document.open();
+      popup.document.write(`<!doctype html><html lang="uk"><head><meta charset="utf-8"><title>Аналіз цін конкурентів</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font:11px Arial,sans-serif;color:#22303d;margin:0}h1{font-size:28px;margin:0 0 6px}h1 span{color:#118dff}.sub{color:#6d7884;margin-bottom:22px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;page-break-after:always}.metric{border:1px solid #dfe4ea;border-radius:12px;padding:16px}.metric span,.metric small{display:block;color:#697581}.metric b{display:block;font-size:25px;margin:9px 0 5px}.section{font-size:18px;margin:0 0 10px}table{width:100%;border-collapse:collapse;font-size:8px}th{background:#eef6ff;color:#0b6fc2;text-align:left}th,td{padding:5px;border:1px solid #e0e5ea;vertical-align:top}.num{text-align:right;white-space:nowrap}.note{margin-top:8px;color:#7b8791}@media print{button{display:none}}</style></head><body><h1>Аналіз цін <span>конкурентів</span></h1><div class="sub">${segmented ? "Сегментована" : "Загальна"} презентація · ${escapeHtml(report.currentDate)} · ${formatNumber(report.total)} товарів</div><div class="metrics">${metricCards}</div><h2 class="section">Товари та ціни</h2><table><thead><tr><th>IDD</th><th>Категорія</th><th>Бренд</th><th>Товар</th><th>Агромат</th>${competitors.map((competitor) => `<th>${escapeHtml(competitor.name)}</th>`).join("")}</tr></thead><tbody>${tableRows}</tbody></table>${report.total > 250 ? `<p class="note">У презентації показано перші 250 із ${formatNumber(report.total)} товарів. Повний перелік доступний в Excel.</p>` : ""}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
+      popup.document.close();
+      setNotice("Презентацію підготовлено. У діалозі друку виберіть «Зберегти як PDF».");
+    } catch (reason) {
+      popup.close();
+      setNotice(`Не вдалося сформувати презентацію: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  async function openCabinet() {
+    setCabinetMode("menu");
+    try {
+      const response = await fetch("/api/products/sync/status", { cache: "no-store" });
+      const body = await response.json() as { syncedAt?: string | null };
+      if (response.ok) setAgromatUpdatedAt(body.syncedAt || null);
+    } catch {
+      // The cabinet remains usable even if this auxiliary timestamp is unavailable.
+    }
+  }
+
+  async function showSessions() {
+    setCabinetMode("sessions");
+    setSessionsLoading(true);
+    try {
+      const response = await fetch("/api/dashboard/sessions", { cache: "no-store" });
+      const body = await response.json() as { sessions?: DashboardSession[]; error?: string };
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      setSessions(body.sessions || []);
+    } catch (reason) {
+      setNotice(`Не вдалося отримати сесії: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }
+
+  async function runAgromatUpdate() {
+    if (runningAction) return;
+    setRunningAction("agromat");
+    try {
+      const response = await fetch("/api/products/sync", { method: "POST" });
+      const body = await response.json() as { ok?: boolean; message?: string; error?: string; result?: { finishedAt?: string } };
+      if (!response.ok) throw new Error(body.message || body.error || `HTTP ${response.status}`);
+      setAgromatUpdatedAt(body.result?.finishedAt || new Date().toISOString());
+      setNotice("Оновлення API Agromat завершено.");
+    } catch (reason) {
+      setNotice(`Оновлення Agromat не запущено: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setRunningAction("");
+    }
+  }
+
+  async function runCompetitorUpdate(adapter: string, competitor: string) {
+    if (runningAction) return;
+    setRunningAction(adapter);
+    try {
+      const response = await fetch(`/api/parser/run/prices-${encodeURIComponent(adapter)}`, { method: "POST" });
+      const body = await response.json() as { ok?: boolean; error?: string; job_id?: string };
+      if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
+      setNotice(`${competitor}: оновлення запущено${body.job_id ? ` · job ${body.job_id}` : ""}.`);
+      setCabinetMode(null);
+    } catch (reason) {
+      setNotice(`${competitor}: не вдалося запустити оновлення — ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setRunningAction("");
+    }
+  }
+
   const latestUpdate = data?.updates.find((update) => update.updatedAt)?.updatedAt || null;
   const progressPct = data?.progress.total ? Math.round((data.progress.completed / data.progress.total) * 100) : 0;
   const activeView = VIEW_ITEMS.find((item) => item.id === view) || VIEW_ITEMS[0];
+  const violationTotal = (data?.violations || []).reduce((sum, item) => sum + item.count, 0);
+  const hoveredViolationItem = hoveredViolation == null ? null : data?.violations.find((item) => item.competitorId === hoveredViolation);
 
   return (
     <div className="min-h-[calc(100dvh-104px)] overflow-hidden rounded-2xl border border-[#dfe4ea] bg-[#f4f5f3] text-[#27313c] shadow-sm">
@@ -308,9 +540,17 @@ export function CompetitorDashboardV2() {
               );
             })}
           </nav>
-          <div className="mt-8 hidden rounded-xl border border-[#304152] bg-[#1d2a36] p-3 lg:block">
+          <div className="mt-8 rounded-xl border border-[#304152] bg-[#1d2a36] p-3">
             <div className="text-[10px] font-bold uppercase tracking-[.14em] text-[#7f90a0]">Тестовий режим</div>
             <p className="mt-2 text-[10px] leading-4 text-[#aab5bf]">Поточний дашборд і блок у картках товару не змінені.</p>
+            <div className="my-3 h-px bg-[#304152]" />
+            <div className="mb-2 text-[9px] font-bold uppercase tracking-[.14em] text-[#7f90a0]">Технічні інструменти</div>
+            <div className="space-y-1.5">
+              <button disabled={Boolean(exporting)} onClick={() => exportExcel(false)} className="w-full rounded-lg border border-[#36506a] bg-[#243647] px-2.5 py-2 text-left text-[9px] font-bold text-[#dce8f3] disabled:opacity-50">{exporting === "general-xlsx" ? "Формування…" : "↓ Звіт загальний (Excel)"}</button>
+              <button disabled={Boolean(exporting)} onClick={() => exportExcel(true)} className="w-full rounded-lg border border-[#36506a] bg-[#243647] px-2.5 py-2 text-left text-[9px] font-bold text-[#dce8f3] disabled:opacity-50">{exporting === "segment-xlsx" ? "Формування…" : "↓ Звіт сегментований (Excel)"}</button>
+              <button disabled={Boolean(exporting)} onClick={() => exportPdf(false)} className="w-full rounded-lg border border-[#36506a] bg-[#243647] px-2.5 py-2 text-left text-[9px] font-bold text-[#dce8f3] disabled:opacity-50">{exporting === "general-pdf" ? "Формування…" : "▣ Презентація загальна (PDF)"}</button>
+              <button disabled={Boolean(exporting)} onClick={() => exportPdf(true)} className="w-full rounded-lg border border-[#36506a] bg-[#243647] px-2.5 py-2 text-left text-[9px] font-bold text-[#dce8f3] disabled:opacity-50">{exporting === "segment-pdf" ? "Формування…" : "▣ Презентація сегментована (PDF)"}</button>
+            </div>
           </div>
         </aside>
 
@@ -330,7 +570,7 @@ export function CompetitorDashboardV2() {
                 <h1 className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">Аналіз цін <span className="text-[#118dff]">конкурентів</span></h1>
                 <p className="mt-1 text-xs text-[#737d87]">Єдиний простір огляду, фільтрації та моніторингу оновлень.</p>
               </div>
-              <button onClick={() => window.location.reload()} className="rounded-xl border-0 bg-[#118dff] px-4 py-2.5 text-xs font-bold text-white shadow-[0_8px_18px_rgba(17,141,255,.2)]">↻ Оновити дані</button>
+              <button onClick={openCabinet} className="rounded-xl border-0 bg-[#118dff] px-4 py-2.5 text-xs font-bold text-white shadow-[0_8px_18px_rgba(17,141,255,.2)]">● Особистий кабінет</button>
             </section>
 
             {notice && (
@@ -459,12 +699,47 @@ export function CompetitorDashboardV2() {
                     <p className="mt-0.5 text-[9px] text-[#8b949e]">Конкурент дешевше Агромат більш ніж на 5%</p>
                   </header>
                   <div className="space-y-3 p-4">
+                    <div className="relative mx-auto mb-5 h-44 w-44" onMouseLeave={() => setHoveredViolation(null)}>
+                      <svg viewBox="0 0 42 42" className="h-full w-full -rotate-90" role="img" aria-label="Розподіл порушень за конкурентами">
+                        <circle cx="21" cy="21" r="15.9155" fill="transparent" stroke="#edf0f3" strokeWidth="7" />
+                        {(() => {
+                          let offset = 0;
+                          return (data?.violations || []).filter((item) => item.count > 0).map((item, index) => {
+                            const percentage = violationTotal ? (item.count / violationTotal) * 100 : 0;
+                            const currentOffset = offset;
+                            offset += percentage;
+                            return (
+                              <circle
+                                key={item.competitorId}
+                                cx="21"
+                                cy="21"
+                                r="15.9155"
+                                fill="transparent"
+                                stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                                strokeWidth={hoveredViolation === item.competitorId ? "8.5" : "7"}
+                                strokeDasharray={`${percentage} ${100 - percentage}`}
+                                strokeDashoffset={-currentOffset}
+                                pathLength="100"
+                                className="cursor-pointer transition-all"
+                                onMouseEnter={() => setHoveredViolation(item.competitorId)}
+                              >
+                                <title>{item.competitor}: {item.count}</title>
+                              </circle>
+                            );
+                          });
+                        })()}
+                      </svg>
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                        <b className="max-w-24 text-[11px] leading-4 text-[#26313d]">{hoveredViolationItem?.competitor || formatNumber(violationTotal)}</b>
+                        <span className="mt-0.5 text-[9px] text-[#87919b]">{hoveredViolationItem ? `${formatNumber(hoveredViolationItem.count)} порушень` : "усі порушення"}</span>
+                      </div>
+                    </div>
                     {(data?.violations || []).slice(0, 8).map((item, index) => {
                       const max = Math.max(1, data?.violations[0]?.count || 1);
                       return (
                         <div key={item.competitorId}>
                           <div className="mb-1 flex items-center justify-between text-[10px]"><span className="font-semibold text-[#59646f]">{index + 1}. {item.competitor}</span><b className="text-[#26313d]">{formatNumber(item.count)}</b></div>
-                          <div className="h-1.5 overflow-hidden rounded-full bg-[#edf0f3]"><div className="h-full rounded-full bg-[#118dff]" style={{ width: `${Math.max(3, Math.round((item.count / max) * 100))}%` }} /></div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-[#edf0f3]"><div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.round((item.count / max) * 100))}%`, background: CHART_COLORS[index % CHART_COLORS.length] }} /></div>
                         </div>
                       );
                     })}
@@ -503,6 +778,54 @@ export function CompetitorDashboardV2() {
             <div className="mb-4 flex items-start justify-between"><div><h3 className="text-base font-black">Пошук набором IDD</h3><p className="mt-1 text-xs text-[#7c8792]">Вставте IDD, code або goods_ref через кому, пробіл чи з нового рядка.</p></div><button onClick={() => setSetModalOpen(false)} className="rounded-lg bg-[#f1f3f5] px-2 py-1 text-sm">×</button></div>
             <textarea value={setDraft} onChange={(event) => setSetDraft(event.target.value)} rows={9} placeholder={"473998\n59002\n10452180"} className="w-full resize-y rounded-xl border border-[#d8dde3] p-3 text-xs outline-none focus:border-[#118dff]" />
             <div className="mt-4 flex justify-end gap-2"><button onClick={() => { setSetDraft(""); setProductIds(""); setSetModalOpen(false); }} className="rounded-lg border border-[#d8dde3] bg-white px-4 py-2 text-xs font-bold">Очистити</button><button onClick={applyProductSet} className="rounded-lg border-0 bg-[#118dff] px-4 py-2 text-xs font-bold text-white">Застосувати набір</button></div>
+          </div>
+        </div>
+      )}
+
+      {cabinetMode && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#111827a6] p-4" onMouseDown={() => setCabinetMode(null)}>
+          <div className="max-h-[88dvh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="flex items-start justify-between border-b border-[#e4e8ec] px-5 py-4">
+              <div>
+                <div className="text-[9px] font-black uppercase tracking-[.18em] text-[#118dff]">Безпечне керування</div>
+                <h3 className="mt-1 text-lg font-black text-[#24303c]">{cabinetMode === "sessions" ? "Актуальні сесії" : "Особистий кабінет"}</h3>
+                <p className="mt-1 text-[10px] text-[#7d8791]">{cabinetMode === "sessions" ? "Пристрої, активні у дашборді протягом останніх 30 хвилин." : "Стан джерел і ручний запуск оновлень."}</p>
+              </div>
+              <button onClick={() => setCabinetMode(null)} className="rounded-lg bg-[#f0f3f5] px-2.5 py-1.5 text-sm text-[#58636d]">×</button>
+            </header>
+
+            {cabinetMode === "sessions" ? (
+              <div className="p-5">
+                <button onClick={() => setCabinetMode("menu")} className="mb-4 rounded-lg border border-[#cbd9e7] bg-[#f3f8fd] px-3 py-2 text-[10px] font-bold text-[#0b6fc2]">← Назад до кабінету</button>
+                <div className="overflow-hidden rounded-xl border border-[#dfe4ea]">
+                  <div className="grid grid-cols-[1.3fr_.8fr_1fr] gap-3 bg-[#f5f7f9] px-4 py-2 text-[9px] font-black uppercase tracking-[.12em] text-[#8a949e]"><span>Пристрій</span><span>IP</span><span>Час входу</span></div>
+                  {sessionsLoading && <div className="p-8 text-center text-xs text-[#7d8791]">Завантаження сесій…</div>}
+                  {!sessionsLoading && sessions.length === 0 && <div className="p-8 text-center text-xs text-[#7d8791]">Активних сесій не знайдено</div>}
+                  {!sessionsLoading && sessions.map((session) => (
+                    <div key={session.id} className="grid grid-cols-[1.3fr_.8fr_1fr] gap-3 border-t border-[#edf0f2] px-4 py-3 text-[10px]">
+                      <div><b className="text-[#34404c]">{session.device}</b><div className="mt-1 text-[9px] text-[#95a0aa]">активна {formatDateTime(session.lastSeen)}</div></div>
+                      <span className="font-mono text-[#596571]">{session.ip}</span>
+                      <span className="text-[#596571]">{formatDateTime(session.firstSeen)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="max-h-[70dvh] space-y-3 overflow-auto p-5">
+                <button onClick={showSessions} className="flex w-full items-center justify-between rounded-xl border border-[#cfe1f2] bg-[#f2f8fe] px-4 py-3 text-left">
+                  <span><b className="block text-xs text-[#23415d]">Актуальні сесії</b><small className="mt-1 block text-[9px] text-[#71808e]">Пристрій · IP · час входу</small></span><span className="text-[#118dff]">→</span>
+                </button>
+                <button disabled={Boolean(runningAction)} onClick={runAgromatUpdate} className="flex w-full items-center justify-between rounded-xl border border-[#dfe4ea] bg-white px-4 py-3 text-left disabled:opacity-55">
+                  <span><b className="block text-xs text-[#34404c]">Оновити API Agromat</b><small className="mt-1 block text-[9px] text-[#87919b]">Останнє оновлення: {formatDateTime(agromatUpdatedAt)}</small></span><span className="rounded-lg bg-[#eaf5ff] px-2.5 py-1.5 text-[10px] font-bold text-[#0b6fc2]">{runningAction === "agromat" ? "Оновлення…" : "Оновити"}</span>
+                </button>
+                <div className="pt-2 text-[9px] font-black uppercase tracking-[.15em] text-[#8a949e]">Конкуренти</div>
+                {(data?.updates || []).map((update) => (
+                  <button key={update.competitorId} disabled={Boolean(runningAction)} onClick={() => runCompetitorUpdate(update.adapter, update.competitor)} className="flex w-full items-center justify-between rounded-xl border border-[#dfe4ea] bg-white px-4 py-3 text-left disabled:opacity-55">
+                    <span><b className="block text-xs text-[#34404c]">Оновити {update.competitor}</b><small className="mt-1 block text-[9px] text-[#87919b]">Останнє оновлення: {formatDateTime(update.updatedAt)}</small></span><span className="rounded-lg bg-[#eaf5ff] px-2.5 py-1.5 text-[10px] font-bold text-[#0b6fc2]">{runningAction === update.adapter ? "Запуск…" : "Оновити"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

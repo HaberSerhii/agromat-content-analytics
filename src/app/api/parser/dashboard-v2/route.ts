@@ -21,7 +21,7 @@ const VTM_TILE = new Set([
 ]);
 
 type Segment = "tile" | "sanitary";
-type ViewMode = "overview" | "competing" | "vtm-competing" | "changed" | "vtm-changed";
+type ViewMode = "overview" | "changed" | "vtm-changed" | "below-median" | "vtm-below-median";
 
 interface Competitor {
   id: number;
@@ -177,6 +177,21 @@ function agromatIsHigher(row: PriceRow): boolean {
   if (row.ourPrice == null || row.ourPrice <= 0) return false;
   const prices = validCompetitorPrices(row);
   return prices.length > 0 && row.ourPrice > Math.min(...prices);
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function agromatIsBelowMedian(row: PriceRow): boolean {
+  if (row.ourPrice == null || row.ourPrice <= 0) return false;
+  const competitorMedian = median(validCompetitorPrices(row));
+  return competitorMedian != null && row.ourPrice < competitorMedian;
 }
 
 function previousDate(date: string | null): string | null {
@@ -377,10 +392,10 @@ function parseIdSet(value: string | null): Set<number> {
 }
 
 function rowMatchesView(row: PriceRow, view: ViewMode, changedIds: Set<number>): boolean {
-  if (view === "competing") return hasMatch(row);
-  if (view === "vtm-competing") return isVtm(row) && hasMatch(row);
   if (view === "changed") return changedIds.has(row.productId);
   if (view === "vtm-changed") return isVtm(row) && changedIds.has(row.productId);
+  if (view === "below-median") return agromatIsBelowMedian(row);
+  if (view === "vtm-below-median") return isVtm(row) && agromatIsBelowMedian(row);
   return true;
 }
 
@@ -419,7 +434,7 @@ export async function GET(request: Request) {
     const selectedCompetitors = parseIdSet(query.get("competitors"));
     const ids = parseIdSet(query.get("ids"));
     const requestedView = query.get("view") || "overview";
-    const view: ViewMode = ["competing", "vtm-competing", "changed", "vtm-changed"].includes(requestedView)
+    const view: ViewMode = ["changed", "vtm-changed", "below-median", "vtm-below-median"].includes(requestedView)
       ? requestedView as ViewMode
       : "overview";
 
@@ -453,7 +468,7 @@ export async function GET(request: Request) {
     })).sort((a, b) => b.count - a.count);
     const start = (page - 1) * limit;
 
-    return NextResponse.json({
+    const responseBody = {
       prototype: true,
       cacheStatus,
       currentDate: base.currentDate,
@@ -469,7 +484,18 @@ export async function GET(request: Request) {
       total: filtered.length,
       page,
       limit,
-    });
+    };
+    if (query.get("compact") === "1") {
+      return NextResponse.json({
+        currentDate: base.currentDate,
+        competitors: base.competitors,
+        rows: responseBody.rows,
+        total: responseBody.total,
+        page,
+        limit,
+      });
+    }
+    return NextResponse.json(responseBody);
   } catch (error) {
     return NextResponse.json({
       error: error instanceof Error ? error.message : "parser_dashboard_v2_failed",
