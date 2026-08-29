@@ -103,7 +103,9 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
 
   CURRENT_STEP="npm run build"
   echo "▸ $CURRENT_STEP"
-  npm run build
+  # The production VPS has 2 GB RAM. Node's detected default heap (~1 GB)
+  # is too small for Next.js type-checking even though swap is available.
+  NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=1536}" npm run build
 
   # Next.js standalone output needs static/ + public/ + .env copied into the
   # standalone tree — `next build` does not do this automatically. Mirrors the
