@@ -200,6 +200,31 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { ok: false, error: "not_found" }, origin);
 });
 
+server.on("error", async (error) => {
+  if (error?.code !== "EADDRINUSE") {
+    console.error(`Не удалось запустить локальный runner: ${String(error?.message || error)}`);
+    process.exit(1);
+  }
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${PORT}/health`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    const health = await response.json();
+    if (response.ok && health?.name === "agromat-local-parser-runner") {
+      console.log(`Локальный runner уже работает: http://127.0.0.1:${PORT}`);
+      console.log("Второй экземпляр запускать не нужно — можно вернуться в dashboard.");
+      process.exit(0);
+    }
+  } catch {
+    // The port belongs to another process or its health endpoint is unavailable.
+  }
+
+  console.error(`Порт ${PORT} занят другим процессом.`);
+  console.error(`Проверьте его командой: lsof -nP -iTCP:${PORT} -sTCP:LISTEN`);
+  process.exit(1);
+});
+
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`Agromat local parser runner: http://127.0.0.1:${PORT}`);
   console.log("Allowed actions: /run/santechshara, /run/vannaja");
