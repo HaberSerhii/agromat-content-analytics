@@ -78,7 +78,10 @@ export async function GET(request: Request) {
     redis.zremrangebyscore(INDEX_KEY, 0, now - ACTIVE_WINDOW_MS),
   ]);
 
-  const keys = await redis.zrange(INDEX_KEY, now - ACTIVE_WINDOW_MS, now, { byScore: true, rev: true });
+  // Redis ZRANGEBYSCORE uses min/max ordering. Reverse the result locally;
+  // the shared adapter's `rev` form maps to ZREVRANGEBYSCORE, whose arguments
+  // are max/min and therefore cannot reuse the same bounds safely.
+  const keys = (await redis.zrange(INDEX_KEY, now - ACTIVE_WINDOW_MS, now, { byScore: true })).reverse();
   const pipeline = redis.pipeline();
   keys.forEach((sessionKey) => pipeline.get(sessionKey));
   const rows = keys.length ? await pipeline.exec() : [];
