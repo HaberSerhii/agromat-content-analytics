@@ -1,4 +1,5 @@
-// The persistent AppShell in the root layout renders this route's dashboard.
+import { redirect } from "next/navigation";
+
 export default function CompetitorsV2Page() {
-  return null;
+  redirect("/");
 }

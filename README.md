@@ -1,8 +1,8 @@
 # Agromat Content Analytics
 
-Внутрішня dashboard-аплікація для контент-команди Agromat. Складається з двох інструментів, об'єднаних у вкладки:
+Внутрішня dashboard-аплікація для контент-команди Agromat. Основні розділи об'єднані у вкладки:
 
-1. **Аналіз цін конкурентів** — вбудований через `iframe` legacy Flask-проект `Agromat_Parcer` (на VPS, порт 8080).
+1. **Аналіз цін конкурентів** — нативний Next.js-дашборд з KPI, фільтрами, порушеннями, статусами оновлень та експортами.
 2. **Аналіз карток товара** — основний модуль: каталог товарів Agromat зі своєю аналітикою, фільтрами, експортом, snapshot-ами та налаштуваннями обов'язкових атрибутів.
 
 Стек: **Next.js 15 (App Router) · React 19 · TypeScript · TailwindCSS · Upstash Redis · XLSX**.
@@ -75,14 +75,7 @@ npm run dev                       # http://localhost:3000
 
 ## Tab 1 — Аналіз цін конкурентів
 
-Файл: `src/app/page.tsx`.
-
-Один `<iframe>` на весь viewport (мінус ~90px під header), що вантажить URL зі змінної `NEXT_PUBLIC_PARCER_URL` (у production за замовчуванням same-origin `/parcer/`). На головній сторінці iframe потрапляє вже в перший HTML без штучної затримки й завантажується eager; після першого відкриття він лишається змонтованим між вкладками, тому зберігає фільтри, скрол і готовий звіт. Це legacy Flask-додаток `Agromat_Parcer`, що крутиться на VPS і відповідає за моніторинг цін у конкурентів.
-
-- `sandbox` навмисно **не** вказаний — інакше зламаються кукі/POST-форми Flask-аплікації.
-- Коли весь стек переїде на один домен з SSL, URL зміниться на щось на кшталт `/parser/` через nginx-proxy.
-
-> Усе, що видно у вкладці, — функціонал зовнішнього застосунку; цей репозиторій його не імплементує.
+Маршрут: `/`. Інтерфейс реалізований у `src/components/CompetitorDashboardV2.tsx`, дані віддає `GET /api/parser/dashboard-v2`. Flask-проєкт `Agromat_Parcer` більше не рендерить користувацький UI у вкладці, але залишається внутрішнім backend-сервісом для запуску парсерів та формування Excel/PPTX-звітів через `/parcer/api/*`.
 
 ---
 
@@ -285,12 +278,13 @@ npm run dev                       # http://localhost:3000
 src/
 ├── app/
 │   ├── layout.tsx                ← глобальна шапка з логотипом + Tabs
-│   ├── page.tsx                  ← Tab 1: iframe на Agromat_Parcer
+│   ├── page.tsx                  ← Tab 1: нативний дашборд цін конкурентів
 │   ├── catalog/page.tsx          ← Tab 2: рендерить <ProductsCatalog />
 │   ├── globals.css               ← CSS-змінні теми (--bg-card, --text, …)
 │   └── api/products/             ← усі серверні роути (див. таблицю нижче)
 ├── components/
 │   ├── Tabs.tsx                  ← header tab-switcher
+│   ├── CompetitorDashboardV2.tsx ← основний дашборд цін конкурентів
 │   ├── ProductsCatalog.tsx       ← головний модуль каталогу (усі підкомпоненти inline)
 │   └── ui/index.tsx              ← <Card />, базові примітиви
 └── lib/
@@ -424,8 +418,6 @@ DASHBOARD_PROXY_SECRET=
 # Окремий Bearer для /api/admin/deploy
 DEPLOY_SECRET=
 
-# Опціонально — URL legacy парсера, що вантажиться в iframe Tab 1
-# NEXT_PUBLIC_PARCER_URL=http://91.239.233.125:8080/
 ```
 
 > Dashboard і його мутації закриваються Basic Auth у nginx. nginx перезаписує приватний `X-Agromat-Dashboard-Auth`, а Next.js звіряє його із серверним `DASHBOARD_PROXY_SECRET`. Жоден секрет не потрапляє в клієнтський бандл.

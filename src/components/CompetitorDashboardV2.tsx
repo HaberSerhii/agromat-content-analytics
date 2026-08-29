@@ -574,9 +574,6 @@ export function CompetitorDashboardV2() {
             })}
           </nav>
           <div className="mt-8 rounded-xl border border-[#304152] bg-[#1d2a36] p-3">
-            <div className="text-[10px] font-bold uppercase tracking-[.14em] text-[#7f90a0]">Тестовий режим</div>
-            <p className="mt-2 text-[10px] leading-4 text-[#aab5bf]">Поточний дашборд і блок у картках товару не змінені.</p>
-            <div className="my-3 h-px bg-[#304152]" />
             <div className="mb-2 text-[9px] font-bold uppercase tracking-[.14em] text-[#7f90a0]">Технічні інструменти</div>
             <div className="space-y-1.5">
               <button disabled={Boolean(exporting)} onClick={() => exportExcel(false)} className="w-full rounded-lg border border-[#36506a] bg-[#243647] px-2.5 py-2 text-left text-[9px] font-bold text-[#dce8f3] disabled:opacity-50">{exporting === "general-xlsx" ? "Формування…" : "↓ Звіт загальний (Excel)"}</button>
@@ -591,7 +588,6 @@ export function CompetitorDashboardV2() {
           <header className="flex flex-col gap-3 border-b border-[#e1e4e8] bg-white px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="text-xs text-[#8b949e]">Моніторинг цін&nbsp; / &nbsp;<b className="text-[#27313c]">{activeView.label}</b></div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-lg bg-[#eef6ff] px-2.5 py-1.5 text-[10px] font-bold text-[#0b6fc2]">TEST · V2</span>
               <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Останнє оновлення: <b className="text-[#27313c]">{formatDateTime(latestUpdate)}</b></span>
             </div>
           </header>
