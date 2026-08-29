@@ -432,6 +432,7 @@ export async function GET(request: Request) {
     const brand = query.get("brand") || "";
     const price = query.get("price") || "all";
     const selectedCompetitors = parseIdSet(query.get("competitors"));
+    const violationCompetitorId = Number(query.get("violation_competitor")) || 0;
     const ids = parseIdSet(query.get("ids"));
     const requestedView = query.get("view") || "overview";
     const view: ViewMode = ["changed", "vtm-changed", "below-median", "vtm-below-median"].includes(requestedView)
@@ -453,11 +454,15 @@ export async function GET(request: Request) {
         String(row.goodsRef || ""),
       ].some((value) => value.toLowerCase().includes(search))) return false;
       if (selectedCompetitors.size && validCompetitorPrices(row, selectedCompetitors).length === 0) return false;
+      if (violationCompetitorId) {
+        const competitorPrice = row.byCompetitor[violationCompetitorId]?.price;
+        if (row.ourPrice == null || competitorPrice == null || competitorPrice >= row.ourPrice * PRICE_VIOLATION_RATIO) return false;
+      }
       if (price === "lower" && !agromatIsLower(row)) return false;
       if (price === "higher" && !agromatIsHigher(row)) return false;
       return true;
     });
-    const violationRows = filtered.length ? filtered : base.currentRows;
+    const violationRows = filtered;
     const violations = base.competitors.map((competitor) => ({
       competitorId: competitor.id,
       competitor: competitor.name,

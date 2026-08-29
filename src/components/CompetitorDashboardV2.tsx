@@ -104,6 +104,7 @@ const VIEW_ITEMS: Array<{ id: ViewMode; label: string; hint: string }> = [
 ];
 
 const CHART_COLORS = ["#118dff", "#4a6ee0", "#6d5bd0", "#16a085", "#f39c4a", "#e05c68", "#38a3a5", "#78909c", "#9b59b6", "#2d98da", "#7f8c8d"];
+const ROWS_PER_PAGE = 15;
 
 const METRICS: Array<{ key: keyof DashboardResponse["overview"]; label: string; symbol: string; tone: string }> = [
   { key: "feed", label: "Товарів у фіді Агромат", symbol: "A", tone: "#118dff" },
@@ -139,6 +140,18 @@ function durationLabel(minutes: number | null): string {
   if (minutes == null) return "тривалість не зафіксована";
   if (minutes < 60) return `${minutes} хв`;
   return `${Math.floor(minutes / 60)} год ${minutes % 60} хв`;
+}
+
+function paginationItems(current: number, total: number): Array<number | "ellipsis-left" | "ellipsis-right"> {
+  if (total <= 8) return Array.from({ length: total }, (_, index) => index + 1);
+  const pages = new Set([1, 2, total - 1, total, current - 1, current, current + 1]);
+  const sorted = [...pages].filter((value) => value >= 1 && value <= total).sort((a, b) => a - b);
+  const result: Array<number | "ellipsis-left" | "ellipsis-right"> = [];
+  sorted.forEach((value, index) => {
+    if (index && value - sorted[index - 1] > 1) result.push(value < current ? "ellipsis-left" : "ellipsis-right");
+    result.push(value);
+  });
+  return result;
 }
 
 function DeltaBadge({ value }: { value: number }) {
@@ -212,15 +225,6 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function escapeHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 async function fetchAllDashboardRows(query: URLSearchParams): Promise<CompactDashboardResponse> {
   const firstQuery = new URLSearchParams(query);
   firstQuery.set("page", "1");
@@ -242,6 +246,18 @@ async function fetchAllDashboardRows(query: URLSearchParams): Promise<CompactDas
   return { ...first, rows: [first.rows, ...pages].flat() };
 }
 
+async function downloadLegacyReport(path: string, payload: Record<string, unknown>, fallbackName: string): Promise<void> {
+  const response = await fetch(`/parcer/api/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error((await response.text()).slice(0, 240) || `HTTP ${response.status}`);
+  const disposition = response.headers.get("content-disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackName;
+  triggerDownload(await response.blob(), filename);
+}
+
 export function CompetitorDashboardV2() {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -254,6 +270,8 @@ export function CompetitorDashboardV2() {
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [pagePickerOpen, setPagePickerOpen] = useState(false);
+  const [pageDraft, setPageDraft] = useState("1");
   const [setModalOpen, setSetModalOpen] = useState(false);
   const [setDraft, setSetDraft] = useState("");
   const [productIds, setProductIds] = useState("");
@@ -266,18 +284,21 @@ export function CompetitorDashboardV2() {
   const [runningAction, setRunningAction] = useState("");
   const [exporting, setExporting] = useState<ExportKind | null>(null);
   const [hoveredViolation, setHoveredViolation] = useState<number | null>(null);
+  const [violationCompetitorId, setViolationCompetitorId] = useState(0);
+  const [copiedKey, setCopiedKey] = useState("");
 
   const selectedKey = [...selectedCompetitors].sort((a, b) => a - b).join(",");
 
   useEffect(() => {
     const controller = new AbortController();
-    const query = new URLSearchParams({ page: String(page), limit: "20", view });
+    const query = new URLSearchParams({ page: String(page), limit: String(ROWS_PER_PAGE), view });
     if (category) query.set("category", category);
     if (brand) query.set("brand", brand);
     if (priceMode !== "all") query.set("price", priceMode);
     if (selectedKey) query.set("competitors", selectedKey);
     if (search) query.set("search", search);
     if (productIds) query.set("ids", productIds);
+    if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
     setLoading(true);
     setError("");
     fetch(`/api/parser/dashboard-v2?${query}`, { signal: controller.signal })
@@ -293,9 +314,9 @@ export function CompetitorDashboardV2() {
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [brand, category, page, priceMode, productIds, search, selectedKey, view]);
+  }, [brand, category, page, priceMode, productIds, search, selectedKey, view, violationCompetitorId]);
 
-  useEffect(() => setPage(1), [brand, category, priceMode, productIds, search, selectedKey, view]);
+  useEffect(() => setPage(1), [brand, category, priceMode, productIds, search, selectedKey, view, violationCompetitorId]);
 
   useEffect(() => {
     const heartbeat = () => fetch("/api/dashboard/sessions", { cache: "no-store" }).catch(() => undefined);
@@ -307,9 +328,10 @@ export function CompetitorDashboardV2() {
   const defaultCompetitors = useMemo(() => new Set((data?.competitors || []).slice(0, 4).map((item) => item.id)), [data?.competitors]);
   const visibleCompetitorIds = selectedCompetitors.size ? selectedCompetitors : defaultCompetitors;
   const visibleCompetitors = (data?.competitors || []).filter((competitor) => visibleCompetitorIds.has(competitor.id));
-  const totalPages = Math.max(1, Math.ceil((data?.total || 0) / 20));
+  const totalPages = Math.max(1, Math.ceil((data?.total || 0) / ROWS_PER_PAGE));
 
   function toggleCompetitor(id: number) {
+    setViolationCompetitorId(0);
     setSelectedCompetitors((current) => {
       const next = new Set(current.size ? current : defaultCompetitors);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -325,6 +347,8 @@ export function CompetitorDashboardV2() {
     setSearchDraft("");
     setSearch("");
     setProductIds("");
+    setViolationCompetitorId(0);
+    setPagePickerOpen(false);
     setPage(1);
   }
 
@@ -354,7 +378,40 @@ export function CompetitorDashboardV2() {
     if (selectedKey) query.set("competitors", selectedKey);
     if (search) query.set("search", search);
     if (productIds) query.set("ids", productIds);
+    if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
     return query;
+  }
+
+  async function copyValue(value: string | number | null, key: string) {
+    if (value == null || value === "") return;
+    try {
+      await navigator.clipboard.writeText(String(value));
+      setCopiedKey(key);
+      window.setTimeout(() => setCopiedKey((current) => current === key ? "" : current), 1400);
+    } catch {
+      setNotice("Браузер не дозволив скопіювати значення в буфер обміну.");
+    }
+  }
+
+  function filterByViolation(competitorId: number, competitor: string) {
+    const nextId = violationCompetitorId === competitorId ? 0 : competitorId;
+    setViolationCompetitorId(nextId);
+    setSelectedCompetitors(nextId ? new Set([competitorId]) : new Set());
+    setPage(1);
+    setNotice(nextId ? `Фільтр порушень: ${competitor}.` : "Фільтр порушень вимкнено.");
+  }
+
+  function openPagePicker() {
+    setPageDraft(String(page));
+    setPagePickerOpen(true);
+  }
+
+  function applyPagePicker(event: FormEvent) {
+    event.preventDefault();
+    const nextPage = Math.min(totalPages, Math.max(1, Number(pageDraft) || 1));
+    setPage(nextPage);
+    setPageDraft(String(nextPage));
+    setPagePickerOpen(false);
   }
 
   async function exportExcel(segmented: boolean) {
@@ -363,46 +420,24 @@ export function CompetitorDashboardV2() {
     setExporting(kind);
     setNotice("");
     try {
-      const report = await fetchAllDashboardRows(reportQuery(segmented));
-      const competitors = segmented
-        ? report.competitors.filter((competitor) => visibleCompetitorIds.has(competitor.id))
-        : report.competitors;
-      const XLSX = await import("xlsx");
-      const headers = [
-        "IDD", "ID товару", "Артикул", "Категорія", "Бренд", "Назва", "Ціна Агромат", "URL Агромат",
-        ...competitors.flatMap((competitor) => [`${competitor.name} · ціна`, `${competitor.name} · URL`]),
-      ];
-      const rows = report.rows.map((row) => [
-        row.code || row.productId,
-        row.productId,
-        row.sku || "",
-        row.category || "",
-        row.brand || "",
-        row.name,
-        row.ourPrice,
-        row.ourUrl || "",
-        ...competitors.flatMap((competitor) => [row.byCompetitor[competitor.id]?.price ?? null, row.byCompetitor[competitor.id]?.url || ""]),
-      ]);
-      const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-      sheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 1}` };
-      sheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-      sheet["!cols"] = headers.map((header, index) => ({ wch: index === 5 ? 55 : /URL/.test(header) ? 38 : Math.max(12, Math.min(24, header.length + 2)) }));
-      const meta = XLSX.utils.aoa_to_sheet([
-        ["Параметр", "Значення"],
-        ["Тип звіту", segmented ? "Сегментований" : "Загальний"],
-        ["Розділ", activeView.label],
-        ["Категорія", category || "Усі"],
-        ["Бренд", brand || "Усі"],
-        ["Ціновий фільтр", priceMode],
-        ["Товарів", report.total],
-        ["Створено", new Date().toISOString()],
-      ]);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, sheet, "Ціни конкурентів");
-      XLSX.utils.book_append_sheet(workbook, meta, "Параметри");
-      const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx", compression: true }) as ArrayBuffer;
-      triggerDownload(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `competitor-prices-${segmented ? "segment" : "general"}-${report.currentDate || "current"}.xlsx`);
-      setNotice(`Excel-звіт сформовано: ${formatNumber(report.total)} товарів.`);
+      const report = segmented ? await fetchAllDashboardRows(reportQuery(true)) : null;
+      const payload = {
+        scope: segmented ? "segmented" : "full",
+        snapshot_date: data?.currentDate,
+        show: "matched",
+        competitor_ids: segmented ? [...visibleCompetitorIds] : [],
+        competitor_dates: {},
+        filters: segmented ? {
+          search: "",
+          price: "all",
+          categories: [],
+          brands: [],
+          vtm: "",
+          productSetIds: report?.rows.map((row) => row.productId) || [],
+        } : {},
+      };
+      await downloadLegacyReport("export-prices", payload, `competitor-prices-${segmented ? "segmented" : "full"}-${data?.currentDate || "current"}.xlsx`);
+      setNotice(`Excel-звіт у форматі поточного блока сформовано${report ? `: ${formatNumber(report.total)} товарів` : ""}.`);
     } catch (reason) {
       setNotice(`Не вдалося сформувати Excel: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
     } finally {
@@ -413,29 +448,27 @@ export function CompetitorDashboardV2() {
   async function exportPdf(segmented: boolean) {
     const kind: ExportKind = segmented ? "segment-pdf" : "general-pdf";
     if (exporting) return;
-    const popup = window.open("", "_blank");
-    if (!popup) {
-      setNotice("Браузер заблокував вікно презентації. Дозвольте спливаючі вікна та повторіть.");
-      return;
-    }
-    popup.document.write("<title>Формування презентації…</title><p style='font-family:Arial;padding:32px'>Формування презентації…</p>");
     setExporting(kind);
     try {
-      const report = await fetchAllDashboardRows(reportQuery(segmented));
-      const competitors = segmented
-        ? report.competitors.filter((competitor) => visibleCompetitorIds.has(competitor.id))
-        : report.competitors.slice(0, 6);
-      const tableRows = report.rows.slice(0, 250).map((row) => `<tr><td>${escapeHtml(row.code || row.productId)}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.name)}</td><td class="num">${escapeHtml(formatPrice(row.ourPrice))}</td>${competitors.map((competitor) => `<td class="num">${escapeHtml(formatPrice(row.byCompetitor[competitor.id]?.price ?? null))}</td>`).join("")}</tr>`).join("");
-      const metricCards = METRICS.map((metricItem) => {
-        const value = data?.overview[metricItem.key];
-        return `<div class="metric"><span>${escapeHtml(metricItem.label)}</span><b>${formatNumber((value?.tile || 0) + (value?.sanitary || 0))}</b><small>Плитка ${formatNumber(value?.tile || 0)} · Сантехніка ${formatNumber(value?.sanitary || 0)}</small></div>`;
-      }).join("");
-      popup.document.open();
-      popup.document.write(`<!doctype html><html lang="uk"><head><meta charset="utf-8"><title>Аналіз цін конкурентів</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font:11px Arial,sans-serif;color:#22303d;margin:0}h1{font-size:28px;margin:0 0 6px}h1 span{color:#118dff}.sub{color:#6d7884;margin-bottom:22px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;page-break-after:always}.metric{border:1px solid #dfe4ea;border-radius:12px;padding:16px}.metric span,.metric small{display:block;color:#697581}.metric b{display:block;font-size:25px;margin:9px 0 5px}.section{font-size:18px;margin:0 0 10px}table{width:100%;border-collapse:collapse;font-size:8px}th{background:#eef6ff;color:#0b6fc2;text-align:left}th,td{padding:5px;border:1px solid #e0e5ea;vertical-align:top}.num{text-align:right;white-space:nowrap}.note{margin-top:8px;color:#7b8791}@media print{button{display:none}}</style></head><body><h1>Аналіз цін <span>конкурентів</span></h1><div class="sub">${segmented ? "Сегментована" : "Загальна"} презентація · ${escapeHtml(report.currentDate)} · ${formatNumber(report.total)} товарів</div><div class="metrics">${metricCards}</div><h2 class="section">Товари та ціни</h2><table><thead><tr><th>IDD</th><th>Категорія</th><th>Бренд</th><th>Товар</th><th>Агромат</th>${competitors.map((competitor) => `<th>${escapeHtml(competitor.name)}</th>`).join("")}</tr></thead><tbody>${tableRows}</tbody></table>${report.total > 250 ? `<p class="note">У презентації показано перші 250 із ${formatNumber(report.total)} товарів. Повний перелік доступний в Excel.</p>` : ""}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
-      popup.document.close();
-      setNotice("Презентацію підготовлено. У діалозі друку виберіть «Зберегти як PDF».");
+      const report = segmented ? await fetchAllDashboardRows(reportQuery(true)) : null;
+      const payload = {
+        scope: segmented ? "segmented" : "full",
+        snapshot_date: data?.currentDate,
+        show: "matched",
+        competitor_ids: segmented ? [...visibleCompetitorIds] : [],
+        competitor_dates: {},
+        filters: segmented ? {
+          search: "",
+          price: "all",
+          categories: [],
+          brands: [],
+          vtm: "",
+          productSetIds: report?.rows.map((row) => row.productId) || [],
+        } : {},
+      };
+      await downloadLegacyReport("export-price-monitoring", payload, `price-monitoring-${segmented ? "segmented-" : ""}${data?.currentDate || "current"}.pptx`);
+      setNotice(`Презентацію у форматі поточного блока сформовано${report ? `: ${formatNumber(report.total)} товарів` : ""}.`);
     } catch (reason) {
-      popup.close();
       setNotice(`Не вдалося сформувати презентацію: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
     } finally {
       setExporting(null);
@@ -656,8 +689,24 @@ export function CompetitorDashboardV2() {
                             <div className="mt-1 text-[10px] text-[#8a949e]">{row.brand || "Без бренду"}</div>
                           </td>
                           <td className="px-3 py-3 text-[10px] font-semibold text-[#58636f]">
-                            <div>{row.sku || "—"}</div>
-                            <div className="mt-1 text-[9px] text-[#9aa2aa]">IDD {row.code || row.productId}</div>
+                            {row.sku ? (
+                              <button
+                                type="button"
+                                onClick={() => copyValue(row.sku, `${row.productId}:sku`)}
+                                className="block max-w-36 truncate rounded text-left hover:text-[#118dff] focus:outline-none focus:ring-2 focus:ring-[#9cccf6]"
+                                title={`Скопіювати артикул ${row.sku}`}
+                              >
+                                {row.sku} {copiedKey === `${row.productId}:sku` && <span className="text-[#087a55]">✓</span>}
+                              </button>
+                            ) : <div>—</div>}
+                            <button
+                              type="button"
+                              onClick={() => copyValue(row.code || row.productId, `${row.productId}:idd`)}
+                              className="mt-1 block max-w-36 truncate rounded text-left text-[9px] text-[#9aa2aa] hover:text-[#118dff] focus:outline-none focus:ring-2 focus:ring-[#9cccf6]"
+                              title={`Скопіювати IDD ${row.code || row.productId}`}
+                            >
+                              IDD {row.code || row.productId} {copiedKey === `${row.productId}:idd` && <span className="text-[#087a55]">✓</span>}
+                            </button>
                           </td>
                           <td className="px-3 py-3">
                             {row.ourUrl ? <a href={row.ourUrl} target="_blank" rel="noreferrer" className="line-clamp-2 text-[11px] font-semibold leading-4 text-[#26313d] no-underline hover:text-[#118dff]">{row.name}</a> : <span className="line-clamp-2 text-[11px] font-semibold leading-4">{row.name}</span>}
@@ -669,10 +718,24 @@ export function CompetitorDashboardV2() {
                             const localUrl = Object.prototype.hasOwnProperty.call(localUrls, key) ? localUrls[key] : cell?.url;
                             return (
                               <td key={competitor.id} className="px-3 py-3 text-right">
-                                <PriceValue price={cell?.price ?? null} ourPrice={row.ourPrice} />
-                                <div className="mt-1.5 flex items-center justify-end gap-1">
-                                  <button onClick={() => prototypeUrlAction(row.productId, competitor.id, localUrl || "https://")} className="rounded bg-[#edf6ff] px-1.5 py-1 text-[9px] font-bold text-[#0b6fc2]">{localUrl ? "URL ✎" : "+ URL"}</button>
-                                  {localUrl && <button onClick={() => prototypeUrlAction(row.productId, competitor.id, null)} className="rounded bg-[#fff0f0] px-1.5 py-1 text-[9px] font-bold text-[#c64040]" title="Видалити URL">×</button>}
+                                <div className="flex min-h-[50px] flex-col items-end justify-between">
+                                  <div className="flex min-h-7 items-start justify-end">
+                                    {cell?.price != null && localUrl ? (
+                                      <a href={localUrl} target="_blank" rel="noreferrer" className="rounded no-underline hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-[#9cccf6]" title={`Відкрити товар на сайті ${competitor.name}`}>
+                                        <PriceValue price={cell.price} ourPrice={row.ourPrice} />
+                                      </a>
+                                    ) : <PriceValue price={cell?.price ?? null} ourPrice={row.ourPrice} />}
+                                  </div>
+                                  <div className="flex h-5 items-center justify-end gap-1">
+                                    <button onClick={() => prototypeUrlAction(row.productId, competitor.id, localUrl || "https://")} className="h-5 min-w-[42px] rounded bg-[#edf6ff] px-1.5 text-[9px] font-bold text-[#0b6fc2]">{localUrl ? "URL ✎" : "+ URL"}</button>
+                                    <button
+                                      onClick={() => localUrl && prototypeUrlAction(row.productId, competitor.id, null)}
+                                      disabled={!localUrl}
+                                      className="h-5 w-5 rounded bg-[#fff0f0] text-[9px] font-bold text-[#c64040] disabled:invisible"
+                                      title="Видалити URL"
+                                      aria-label={`Видалити URL ${competitor.name}`}
+                                    >×</button>
+                                  </div>
                                 </div>
                               </td>
                             );
@@ -683,12 +746,32 @@ export function CompetitorDashboardV2() {
                   </table>
                 </div>
 
-                <footer className="flex items-center justify-between border-t border-[#e5e8eb] px-4 py-3">
+                <footer className="relative flex flex-col items-center justify-between gap-3 border-t border-[#e5e8eb] px-4 py-3 sm:flex-row">
                   <span className="text-[10px] text-[#8a949e]">Сторінка {data?.page || 1} з {totalPages}</span>
-                  <div className="flex gap-2">
-                    <button disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-lg border border-[#d8dde3] bg-white px-3 py-1.5 text-[10px] font-bold disabled:opacity-30">← Назад</button>
-                    <button disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)} className="rounded-lg border border-[#bcd8f1] bg-[#edf6ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2] disabled:opacity-30">Далі →</button>
+                  <div className="flex max-w-full items-center gap-1 overflow-x-auto pb-1">
+                    <button disabled={page <= 1} onClick={() => { setPagePickerOpen(false); setPage((value) => Math.max(1, value - 1)); }} className="whitespace-nowrap rounded-lg border border-[#d8dde3] bg-white px-3 py-1.5 text-[10px] font-bold disabled:opacity-30">← Назад</button>
+                    {paginationItems(page, totalPages).map((item) => item === "ellipsis-left" || item === "ellipsis-right" ? (
+                      <button key={item} type="button" onClick={openPagePicker} className="h-7 min-w-7 rounded-lg border border-[#d8dde3] bg-white px-1 text-[10px] font-black text-[#63707d]" title="Перейти до сторінки">…</button>
+                    ) : (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => { setPagePickerOpen(false); setPage(item); }}
+                        aria-current={page === item ? "page" : undefined}
+                        className={`h-7 min-w-7 rounded-lg border px-1 text-[10px] font-black ${page === item ? "border-[#118dff] bg-[#118dff] text-white" : "border-[#d8dde3] bg-white text-[#63707d]"}`}
+                      >{item}</button>
+                    ))}
+                    <button disabled={page >= totalPages} onClick={() => { setPagePickerOpen(false); setPage((value) => value + 1); }} className="whitespace-nowrap rounded-lg border border-[#bcd8f1] bg-[#edf6ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2] disabled:opacity-30">Далі →</button>
                   </div>
+                  {pagePickerOpen && (
+                    <form onSubmit={applyPagePicker} className="absolute bottom-14 right-4 z-30 flex items-end gap-2 rounded-xl border border-[#d8dde3] bg-white p-3 shadow-xl">
+                      <label className="text-[9px] font-bold uppercase tracking-[.1em] text-[#7d8791]">Сторінка
+                        <input autoFocus type="number" min="1" max={totalPages} value={pageDraft} onChange={(event) => setPageDraft(event.target.value)} className="mt-1 block w-24 rounded-lg border border-[#d8dde3] px-2.5 py-2 text-xs outline-none focus:border-[#118dff]" />
+                      </label>
+                      <button className="rounded-lg border-0 bg-[#118dff] px-3 py-2 text-[10px] font-bold text-white">Перейти</button>
+                      <button type="button" onClick={() => setPagePickerOpen(false)} className="rounded-lg bg-[#f1f3f5] px-2.5 py-2 text-[10px] font-bold">×</button>
+                    </form>
+                  )}
                 </footer>
               </div>
 
@@ -716,12 +799,13 @@ export function CompetitorDashboardV2() {
                                 r="15.9155"
                                 fill="transparent"
                                 stroke={CHART_COLORS[index % CHART_COLORS.length]}
-                                strokeWidth={hoveredViolation === item.competitorId ? "8.5" : "7"}
+                                strokeWidth={hoveredViolation === item.competitorId || violationCompetitorId === item.competitorId ? "8.5" : "7"}
                                 strokeDasharray={`${percentage} ${100 - percentage}`}
                                 strokeDashoffset={-currentOffset}
                                 pathLength="100"
                                 className="cursor-pointer transition-all"
                                 onMouseEnter={() => setHoveredViolation(item.competitorId)}
+                                onClick={() => filterByViolation(item.competitorId, item.competitor)}
                               >
                                 <title>{item.competitor}: {item.count}</title>
                               </circle>
@@ -736,11 +820,12 @@ export function CompetitorDashboardV2() {
                     </div>
                     {(data?.violations || []).slice(0, 8).map((item, index) => {
                       const max = Math.max(1, data?.violations[0]?.count || 1);
+                      const active = violationCompetitorId === item.competitorId;
                       return (
-                        <div key={item.competitorId}>
+                        <button key={item.competitorId} type="button" onClick={() => filterByViolation(item.competitorId, item.competitor)} className={`block w-full rounded-lg p-1.5 text-left transition ${active ? "bg-[#edf6ff] ring-1 ring-[#9cccf6]" : "hover:bg-[#f7f9fb]"}`}>
                           <div className="mb-1 flex items-center justify-between text-[10px]"><span className="font-semibold text-[#59646f]">{index + 1}. {item.competitor}</span><b className="text-[#26313d]">{formatNumber(item.count)}</b></div>
                           <div className="h-1.5 overflow-hidden rounded-full bg-[#edf0f3]"><div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.round((item.count / max) * 100))}%`, background: CHART_COLORS[index % CHART_COLORS.length] }} /></div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
