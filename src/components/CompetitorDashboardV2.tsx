@@ -157,7 +157,6 @@ const VIEW_ITEMS: Array<{ id: ViewMode; label: string; hint: string }> = [
 const CHART_COLORS = ["#118dff", "#4a6ee0", "#6d5bd0", "#16a085", "#f39c4a", "#e05c68", "#38a3a5", "#78909c", "#9b59b6", "#2d98da", "#7f8c8d"];
 const ROWS_PER_PAGE = 15;
 const COMPETITOR_SELECTION_STORAGE_KEY = "agromat.competitor-dashboard.selected-competitors.v2";
-const LOCAL_RUNNER_URL = "http://127.0.0.1:8765";
 const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
 
 function canonicalParserAdapter(adapter: string): string {
@@ -357,7 +356,6 @@ export function CompetitorDashboardV2() {
   const [agromatUpdatedAt, setAgromatUpdatedAt] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState("");
   const [job, setJob] = useState<ParserJob | null>(null);
-  const [jobSource, setJobSource] = useState<"server" | "local">("server");
   const [localRunnerHelp, setLocalRunnerHelp] = useState(false);
   const [cellBusy, setCellBusy] = useState<Record<string, boolean>>({});
   const [refreshRequest, setRefreshRequest] = useState(0);
@@ -756,34 +754,28 @@ export function CompetitorDashboardV2() {
     setLocalRunnerHelp(false);
     try {
       const local = LOCAL_BROWSER_ADAPTERS.has(canonicalAdapter);
-      if (local) {
-        const healthResponse = await fetch(`${LOCAL_RUNNER_URL}/health`, { cache: "no-store" });
-        const health = await healthResponse.json().catch(() => ({ ok: false })) as { ok?: boolean; protocol?: number };
-        if (!healthResponse.ok || !health.ok) throw new Error("локальний runner не відповідає");
-        if ((health.protocol || 0) < 2) throw new Error("локальний runner потрібно перезапустити після оновлення dashboard");
-      }
       const response = local
-        ? await fetch(`${LOCAL_RUNNER_URL}/run/${encodeURIComponent(canonicalAdapter)}`, {
+        ? await fetch("/api/parser/local-runner/queue", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ source: "agromat-competitor-dashboard" }),
+            body: JSON.stringify({ adapter: canonicalAdapter }),
           })
         : await fetch(`/api/parser/run/prices-${encodeURIComponent(canonicalAdapter)}`, { method: "POST" });
       const body = await response.json().catch(() => ({ ok: false, error: "bad_runner_response" })) as ParserJob & { active_job_id?: string };
       if (!response.ok || body.ok === false) {
         if (body.error === "busy" && body.active_job_id) {
           setJob({ ok: true, job_id: body.active_job_id, status: "running", action: `prices-${canonicalAdapter}` });
-          setJobSource(local ? "local" : "server");
           setNotice(`${competitor}: підключено до вже запущеного оновлення.`);
           setCabinetMode(null);
           return;
         }
-        throw new Error(body.error || `HTTP ${response.status}`);
+        throw new Error(body.error === "local_runner_offline"
+          ? "локальний runner не підключений до dashboard"
+          : body.error || `HTTP ${response.status}`);
       }
       setJob({ ...body, status: body.status || "starting", action: body.action || `prices-${canonicalAdapter}` });
-      setJobSource(local ? "local" : "server");
       setNotice(local
-        ? `${competitor}: локальний runner прийняв команду. Відстежуйте прогрес у блоці нижче.`
+        ? `${competitor}: команду передано локальному runner. Відстежуйте прогрес у блоці нижче.`
         : `${competitor}: оновлення запущено${body.job_id ? ` · job ${body.job_id}` : ""}.`);
       setCabinetMode(null);
     } catch (reason) {
@@ -846,9 +838,7 @@ export function CompetitorDashboardV2() {
     let stopped = false;
     const poll = async () => {
       try {
-        const url = jobSource === "local"
-          ? `${LOCAL_RUNNER_URL}/job/${encodeURIComponent(job.job_id as string)}`
-          : `/api/parser/job/${encodeURIComponent(job.job_id as string)}`;
+        const url = `/api/parser/job/${encodeURIComponent(job.job_id as string)}`;
         const response = await fetch(url, { cache: "no-store" });
         const next = await response.json() as ParserJob;
         if (!response.ok || !next.ok || stopped) return;
@@ -871,7 +861,7 @@ export function CompetitorDashboardV2() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [job?.job_id, job?.status, jobSource]);
+  }, [job?.job_id, job?.status]);
 
   const latestUpdate = data?.updates.find((update) => update.updatedAt)?.updatedAt || null;
   const progressPct = data?.progress.total ? Math.round((data.progress.completed / data.progress.total) * 100) : 0;
@@ -880,6 +870,7 @@ export function CompetitorDashboardV2() {
   const hoveredViolationItem = hoveredViolation == null ? null : data?.violations.find((item) => item.competitorId === hoveredViolation);
   const jobCurrent = job?.current || 0;
   const jobTotal = job?.total || 0;
+  const jobIsLocal = LOCAL_BROWSER_ADAPTERS.has(canonicalParserAdapter((job?.action || "").replace(/^prices-/, "")));
   const jobProgress = jobTotal > 0 ? Math.min(100, Math.round((jobCurrent / jobTotal) * 100)) : 0;
   const jobFinished = job?.status === "done" || job?.status === "error" || job?.status === "blocked";
   const jobRunning = job?.status === "starting" || job?.status === "running";
@@ -956,7 +947,7 @@ export function CompetitorDashboardV2() {
                   <div>
                     <b className="text-[#26313d]">{job.label || `Оновлення ${(job.action || "").replace(/^prices-/, "")}`}</b>
                     <div className="mt-1 text-[10px] text-[#71808e]">
-                      {job.status === "done" ? "Завершено" : job.status === "error" || job.status === "blocked" ? `Зупинено: ${job.error || job.status}` : jobSource === "local" ? "Працює локально на цьому комп’ютері" : "Працює на сервері"}
+                      {job.status === "done" ? "Завершено" : job.status === "error" || job.status === "blocked" ? `Зупинено: ${job.error || job.status}` : jobIsLocal ? "Працює локально на цьому комп’ютері" : "Працює на сервері"}
                       {jobTotal > 0 ? ` · ${jobCurrent}/${jobTotal} товарів` : ""}
                     </div>
                   </div>
@@ -1330,7 +1321,7 @@ export function CompetitorDashboardV2() {
                     <ol className="mt-2 list-decimal pl-4">
                       <li>Якщо runner уже працював, зупиніть його у старому Terminal через <b>Ctrl+C</b>.</li>
                       <li>Відкрийте Terminal у папці <b>agromat-content-analytics</b> і запустіть <code className="rounded bg-white px-1.5 py-0.5 font-mono">npm run local-parser-runner</code>.</li>
-                      <li>Не закривайте це вікно Terminal і ще раз натисніть «Оновити Vannaja».</li>
+                      <li>Дочекайтеся повідомлення «Підключено до dashboard», не закривайте Terminal і ще раз натисніть «Оновити Vannaja».</li>
                     </ol>
                     <div className="mt-2 text-[9px] text-[#8a6b1e]">Після успішного запуску прогрес з’явиться у верхній частині основного дашборда; дані оновляться автоматично після завершення.</div>
                     <button onClick={() => copyValue("npm run local-parser-runner", "local-runner-command")} className="mt-2 rounded-lg border border-[#e5bd65] bg-white px-2.5 py-1 text-[9px] font-bold text-[#6f5311]">{copiedKey === "local-runner-command" ? "Скопійовано ✓" : "Скопіювати команду"}</button>

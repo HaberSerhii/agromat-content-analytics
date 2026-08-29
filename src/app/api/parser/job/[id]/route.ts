@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isSantechsharaJobId, readSantechsharaJob } from "@/lib/parser-jobs/santechshara";
 import { isSimplePriceJobId, readSimplePriceJob } from "@/lib/parser-jobs/simple-price";
 import { isDashboardRequest } from "@/lib/dashboard-auth";
+import { isLocalRunnerJobId, readLocalRunnerJob } from "@/lib/parser-jobs/local-runner";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,12 @@ export async function GET(
 
   if (isSimplePriceJobId(id)) {
     const job = await readSimplePriceJob(id);
+    if (!job) return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
+    return NextResponse.json(job);
+  }
+
+  if (isLocalRunnerJobId(id)) {
+    const job = await readLocalRunnerJob(id);
     if (!job) return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
     return NextResponse.json(job);
   }

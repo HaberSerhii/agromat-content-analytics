@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
+try {
+  process.loadEnvFile(envFilePath());
+} catch (error) {
+  console.warn(`Не вдалося завантажити env-файл: ${String(error?.message || error)}`);
+}
 const PORT = Number(process.env.AGROMAT_LOCAL_RUNNER_PORT || "8765");
 const ALLOWED_ORIGIN_RE = process.env.AGROMAT_LOCAL_RUNNER_ORIGIN_RE
   ? new RegExp(process.env.AGROMAT_LOCAL_RUNNER_ORIGIN_RE)
@@ -15,6 +20,8 @@ const ALLOWED_ORIGIN_RE = process.env.AGROMAT_LOCAL_RUNNER_ORIGIN_RE
 
 const jobs = new Map();
 const JOB_DIR = path.join(ROOT, "data", "parser-jobs");
+const remoteJobs = new Set();
+let relayState = "";
 
 function json(res, status, payload, origin = "") {
   if (origin && (!ALLOWED_ORIGIN_RE || ALLOWED_ORIGIN_RE.test(origin))) {
@@ -59,6 +66,10 @@ function envFilePath() {
   if (existsSync(env)) return env;
   return path.join(ROOT, ".env.local");
 }
+
+const DASHBOARD_URL = String(process.env.AGROMAT_DASHBOARD_URL || "https://agromat-analytics.co.ua").replace(/\/$/, "");
+const DASHBOARD_TOKEN = process.env.CRON_SECRET || "";
+const WORKER_RELAY_URL = `${DASHBOARD_URL}/api/parser/local-runner/worker`;
 
 function makeCommand(adapter, jobId) {
   if (adapter === "santechshara") {
@@ -116,8 +127,8 @@ function terminalCommand({ cwd, title, command, windowsCommand }) {
   return candidates[0];
 }
 
-function start(adapter) {
-  const jobId = `local-${adapter}-${Date.now().toString(36)}`;
+function start(adapter, requestedJobId = "") {
+  const jobId = requestedJobId || `local-${adapter}-${Date.now().toString(36)}`;
   const spec = makeCommand(adapter, jobId);
   if (!spec) return { ok: false, error: "action_not_allowed" };
 
@@ -126,6 +137,7 @@ function start(adapter) {
     ok: true,
     job_id: jobId,
     action: `prices-${adapter}`,
+    adapter,
     status: "starting",
     current: 0,
     total: 0,
@@ -171,6 +183,64 @@ async function readJob(jobId) {
   }
 }
 
+function adapterFromJob(job) {
+  const value = String(job?.adapter || job?.action || job?.job_id || "").toLowerCase();
+  if (value.includes("santechshara")) return "santechshara";
+  if (value.includes("vannaja")) return "vannaja";
+  return null;
+}
+
+async function relayJob(jobId) {
+  const job = await readJob(jobId);
+  const adapter = adapterFromJob(job);
+  if (!job || !adapter) return;
+  const response = await fetch(WORKER_RELAY_URL, {
+    method: "PUT",
+    headers: {
+      "Authorization": `Bearer ${DASHBOARD_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...job, adapter }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`status relay HTTP ${response.status}`);
+  if (["done", "error", "blocked"].includes(job.status)) remoteJobs.delete(jobId);
+}
+
+async function syncWithDashboard() {
+  if (!DASHBOARD_TOKEN) {
+    if (relayState !== "missing-token") {
+      relayState = "missing-token";
+      console.warn("CRON_SECRET не налаштовано — зв'язок із dashboard вимкнено.");
+    }
+    return;
+  }
+  try {
+    const response = await fetch(WORKER_RELAY_URL, {
+      headers: { "Authorization": `Bearer ${DASHBOARD_TOKEN}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
+    if (relayState !== "connected") {
+      relayState = "connected";
+      console.log(`Підключено до dashboard: ${DASHBOARD_URL}`);
+    }
+    if (body.job?.job_id && body.job?.adapter) {
+      remoteJobs.add(body.job.job_id);
+      start(body.job.adapter, body.job.job_id);
+    }
+    await Promise.all([...remoteJobs].map((jobId) => relayJob(jobId)));
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (relayState !== message) {
+      relayState = message;
+      console.error(`Dashboard недоступний: ${message}`);
+    }
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || "";
   if (req.method === "OPTIONS") {
@@ -180,7 +250,14 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
   if (url.pathname === "/health") {
-    return json(res, 200, { ok: true, name: "agromat-local-parser-runner", protocol: 2, port: PORT, platform: os.platform() }, origin);
+    return json(res, 200, {
+      ok: true,
+      name: "agromat-local-parser-runner",
+      protocol: 3,
+      port: PORT,
+      platform: os.platform(),
+      dashboardRelay: relayState === "connected",
+    }, origin);
   }
 
   const runMatch = url.pathname.match(/^\/run\/(santechshara|vannaja)$/);
@@ -230,4 +307,6 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log("Allowed actions: /run/santechshara, /run/vannaja");
   console.log(`Agromat Analytics repo: ${ROOT}`);
   console.log(`Agromat parser repo: ${parserRepoPath()}`);
+  void syncWithDashboard();
+  setInterval(() => void syncWithDashboard(), 3_000);
 });

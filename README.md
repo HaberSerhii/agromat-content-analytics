@@ -374,7 +374,9 @@ npm install
 npm run local-parser-runner
 ```
 
-Після цього натискання кнопок у dashboard звертається до `http://127.0.0.1:8765` і runner відкриває локальний термінал з потрібною командою. Для `Vannaja` runner очікує, що репозиторій `Agromat_Parcer` лежить поруч з `Agromat-Analytics`; якщо шлях інший:
+Runner кожні 3 секунди перевіряє захищену чергу production dashboard. Після натискання кнопки dashboard ставить команду в чергу, runner забирає її та відкриває локальний Terminal; прогрес повертається у верхній блок dashboard. Така схема не залежить від браузерного доступу HTTPS-сторінки до `127.0.0.1`, який Safari та деякі корпоративні браузери блокують.
+
+Після запуску дочекайтеся повідомлення `Підключено до dashboard`. Для `Vannaja` runner очікує, що репозиторій `Agromat_Parcer` лежить поруч з `Agromat-Analytics`; якщо шлях інший:
 
 ```bash
 AGROMAT_PARSER_REPO=/absolute/path/to/Agromat_Parcer npm run local-parser-runner
