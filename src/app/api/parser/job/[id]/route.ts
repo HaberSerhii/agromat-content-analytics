@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isSantechsharaJobId, readSantechsharaJob } from "@/lib/parser-jobs/santechshara";
 import { isSimplePriceJobId, readSimplePriceJob } from "@/lib/parser-jobs/simple-price";
+import { isDashboardRequest } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -8,9 +9,13 @@ export const dynamic = "force-dynamic";
 // thing this proxy adds is keeping the Flask hostname off the public iframe-
 // less dashboard so we can later move the parser without touching the UI.
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  if (!isDashboardRequest(request)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   const { id } = await params;
   if (!/^[a-zA-Z0-9_-]{4,64}$/.test(id)) {
     return NextResponse.json({ ok: false, error: "bad_id" }, { status: 400 });

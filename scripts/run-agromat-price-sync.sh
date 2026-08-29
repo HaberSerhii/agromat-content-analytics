@@ -16,7 +16,11 @@ if [ -f ".env" ]; then
 fi
 
 PARSER_URL="${PARCER_INTERNAL_URL:-http://127.0.0.1:8080}"
-PASSWORD="${PARCER_RUN_PASSWORD:-Agromat2026}"
+PASSWORD="${PARCER_RUN_PASSWORD:-}"
+if [ -z "$PASSWORD" ]; then
+  echo "$(date -Iseconds) missing PARCER_RUN_PASSWORD in $APP_DIR/.env" >> "$LOG"
+  exit 1
+fi
 payload="$(PARCER_RUN_PASSWORD_PAYLOAD="$PASSWORD" node -e 'process.stdout.write(JSON.stringify({ password: process.env.PARCER_RUN_PASSWORD_PAYLOAD || "" }))')"
 
 {

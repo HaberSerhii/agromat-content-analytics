@@ -27,12 +27,29 @@ import type {
   PromotionCatalogRow,
   PromotionLink,
   PromotionOption,
+  PromotionsCatalogPayload,
   PromotionsCatalogResponse,
 } from "@/lib/promotions-types";
+import {
+  applyPromotionsKpiFilter,
+  buildPromotionsCatalogFacets,
+  filterPromotionsCatalogRows,
+  parsePromotionsCatalogFilters,
+  summarizePromotionsCatalog,
+} from "@/lib/promotions-catalog-query";
+import { hasServerBearer } from "@/lib/dashboard-auth";
+import {
+  readPromotionsCatalogDiskCache,
+  writePromotionsCatalogDiskCache,
+} from "@/lib/promotions-catalog-disk-cache";
+import { getServerResult, putServerResult } from "@/lib/server-result-cache";
 
 export const dynamic = "force-dynamic";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DEFAULT_CACHE_KEY = "default|default";
+const MEMORY_CACHE_TTL_MS = 5 * 60_000;
+const DISK_CACHE_MAX_AGE_MS = 30 * 60_000;
 
 function kyivToday(): string {
   const parts = Object.fromEntries(
@@ -148,18 +165,10 @@ function membershipMap(promotions: ApiPromotion[]): Map<string, Set<number>> {
   return membership;
 }
 
-export async function GET(request: Request) {
-  try {
-    const url = new URL(request.url);
-    const requestedFrom = url.searchParams.get("from");
-    const requestedTo = url.searchParams.get("to");
-    if ((requestedFrom && !DATE_RE.test(requestedFrom)) || (requestedTo && !DATE_RE.test(requestedTo))) {
-      return NextResponse.json({ error: "Дата має формат YYYY-MM-DD" }, { status: 400 });
-    }
-    if (requestedFrom && requestedTo && requestedFrom > requestedTo) {
-      return NextResponse.json({ error: "Дата від не може бути пізніше дати до" }, { status: 400 });
-    }
-
+async function buildCatalogPayload(
+  requestedFrom: string | null,
+  requestedTo: string | null,
+): Promise<PromotionsCatalogPayload> {
     const today = kyivToday();
     const toDate = requestedTo ?? today;
     const targetIsLive = toDate === today;
@@ -229,9 +238,6 @@ export async function GET(request: Request) {
 
     const defaultFrom = [...availableDates].reverse().find((date) => date < toDate) ?? toDate;
     const fromDate = requestedFrom ?? defaultFrom;
-    if (fromDate > toDate) {
-      return NextResponse.json({ error: "Дата від не може бути пізніше дати до" }, { status: 400 });
-    }
 
     let baselineAllPromotions: ApiPromotion[];
     let baselineCapturedAt: string;
@@ -410,7 +416,7 @@ export async function GET(request: Request) {
       for (const link of links) uniqueLinks.set(link.idinc, link);
     }
 
-    const response: PromotionsCatalogResponse = {
+    const response: PromotionsCatalogPayload = {
       items,
       promotions,
       linkedPromotions: [...uniqueLinks.values()].sort((a, b) => a.name.localeCompare(b.name, "uk")),
@@ -428,8 +434,140 @@ export async function GET(request: Request) {
       generatedAt: new Date().toISOString(),
       today,
     };
-    return NextResponse.json(response, {
-      headers: { "Cache-Control": "private, no-store" },
+    return response;
+}
+
+export async function GET(request: Request) {
+  try {
+    const url = new URL(request.url);
+    const requestedFrom = url.searchParams.get("from");
+    const requestedTo = url.searchParams.get("to");
+    const forceRefresh = url.searchParams.get("refresh") === "1";
+    const responseView = url.searchParams.get("view");
+    const exportAll = url.searchParams.get("export") === "1";
+    const wantsPagination = url.searchParams.has("page") && !exportAll;
+    const requestedPage = Number(url.searchParams.get("page") ?? "1");
+    const requestedPageSize = Number(url.searchParams.get("limit") ?? "100");
+    if ((requestedFrom && !DATE_RE.test(requestedFrom)) || (requestedTo && !DATE_RE.test(requestedTo))) {
+      return NextResponse.json({ error: "Дата має формат YYYY-MM-DD" }, { status: 400 });
+    }
+    const effectiveTo = requestedTo ?? kyivToday();
+    if (requestedFrom && requestedFrom > effectiveTo) {
+      return NextResponse.json({ error: "Дата від не може бути пізніше дати до" }, { status: 400 });
+    }
+    if (forceRefresh && (requestedFrom || requestedTo)) {
+      return NextResponse.json({ error: "Prewarm supports only the default range" }, { status: 400 });
+    }
+    if (forceRefresh && !hasServerBearer(request, "CRON_SECRET")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
+      return NextResponse.json({ error: "Сторінка має бути додатним цілим числом" }, { status: 400 });
+    }
+    if (!Number.isSafeInteger(requestedPageSize) || requestedPageSize < 1 || requestedPageSize > 500) {
+      return NextResponse.json({ error: "Розмір сторінки має бути від 1 до 500" }, { status: 400 });
+    }
+
+    const cacheKey = `${requestedFrom || "default"}|${requestedTo || "default"}`;
+    let payload: PromotionsCatalogPayload;
+    let status: "hit" | "miss" | "shared" | "disk" | "refresh";
+
+    if (forceRefresh) {
+      payload = await buildCatalogPayload(requestedFrom, requestedTo);
+      await writePromotionsCatalogDiskCache(JSON.stringify(payload)).catch((error) => {
+        console.warn("[promotions/catalog] disk cache write failed:", error instanceof Error ? error.message : error);
+      });
+      putServerResult({
+        namespace: "promotions-catalog-payload",
+        key: DEFAULT_CACHE_KEY,
+        value: payload,
+        ttlMs: MEMORY_CACHE_TTL_MS,
+        maxEntries: 2,
+      });
+      status = "refresh";
+    } else {
+      let loadedFromDisk = false;
+      const cached = await getServerResult({
+        namespace: "promotions-catalog-payload",
+        key: cacheKey,
+        ttlMs: requestedFrom || requestedTo ? 60_000 : MEMORY_CACHE_TTL_MS,
+        maxEntries: 2,
+        load: async () => {
+          if (cacheKey === DEFAULT_CACHE_KEY) {
+            const disk = await readPromotionsCatalogDiskCache(DISK_CACHE_MAX_AGE_MS);
+            if (disk) {
+              try {
+                loadedFromDisk = true;
+                return JSON.parse(disk) as PromotionsCatalogPayload;
+              } catch (error) {
+                loadedFromDisk = false;
+                console.warn("[promotions/catalog] disk cache parse failed:", error instanceof Error ? error.message : error);
+              }
+            }
+          }
+          const built = await buildCatalogPayload(requestedFrom, requestedTo);
+          if (cacheKey === DEFAULT_CACHE_KEY) {
+            await writePromotionsCatalogDiskCache(JSON.stringify(built)).catch((error) => {
+              console.warn("[promotions/catalog] disk cache write failed:", error instanceof Error ? error.message : error);
+            });
+          }
+          return built;
+        },
+      });
+      payload = cached.value;
+      status = loadedFromDisk && cached.status === "miss" ? "disk" : cached.status;
+    }
+
+    if (forceRefresh) {
+      return NextResponse.json(
+        { ok: true, items: payload.items.length, generatedAt: payload.generatedAt },
+        { headers: { "Cache-Control": "no-store", "X-Agromat-Cache": status } },
+      );
+    }
+
+    if (responseView === "history") {
+      return new NextResponse(JSON.stringify({
+        historicalLinkedPromotions: payload.historicalLinkedPromotions,
+        generatedAt: payload.generatedAt,
+      }), {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+          "X-Agromat-Cache": status,
+        },
+      });
+    }
+
+    const filters = parsePromotionsCatalogFilters(url.searchParams);
+    const baseFiltered = filterPromotionsCatalogRows(payload.items, filters);
+    const summary = summarizePromotionsCatalog(baseFiltered, payload.promotions);
+    const filtered = applyPromotionsKpiFilter(baseFiltered, payload.promotions, filters.kpi);
+    const total = filtered.length;
+    const pageCount = Math.max(1, Math.ceil(total / requestedPageSize));
+    const page = wantsPagination ? Math.min(requestedPage, pageCount) : 1;
+    const items = wantsPagination
+      ? filtered.slice((page - 1) * requestedPageSize, page * requestedPageSize)
+      : filtered;
+    const response: PromotionsCatalogResponse = {
+      ...payload,
+      ...(responseView === "compact" ? {
+        historicalLinkedPromotions: payload.historicalLinkedPromotions.filter((promotion) => promotion.active),
+      } : {}),
+      items,
+      facets: buildPromotionsCatalogFacets(payload.items),
+      summary,
+      page,
+      pageSize: wantsPagination ? requestedPageSize : total,
+      pageCount: wantsPagination ? pageCount : 1,
+      total,
+    };
+
+    return new NextResponse(JSON.stringify(response), {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+        "X-Agromat-Cache": status,
+      },
     });
   } catch (error) {
     return NextResponse.json(

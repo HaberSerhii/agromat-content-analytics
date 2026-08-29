@@ -323,6 +323,7 @@ export async function readPromotionProductMetrics(input: {
   channel: WebFunnelChannel;
   device: WebFunnelDevice;
   includeOutOfStock: boolean;
+  compact?: boolean;
 }): Promise<PromotionProductMetricsResponse> {
   const { requestedUrl, normalizedUrl } = normalizeAnalyticsUrl(input.url);
   const scope = normalizedUrl === "agromat.ua" ? "sitewide" : "page";
@@ -471,14 +472,14 @@ export async function readPromotionProductMetrics(input: {
       productViewEvents: rows.reduce((sum, row) => sum + row.productViews, 0),
       unmatchedGoodsRefs: missingProducts.length,
     },
-    missingProducts,
+    missingProducts: input.compact ? [] : missingProducts,
     rankings: {
-      addToCart: addToCart.rows,
-      listToProduct: listToProduct.rows,
-      addToWishlist: addToWishlist.rows,
-      productToSale: productToSale.rows,
-      antiListToProduct: antiListToProduct.rows,
-      antiProductToSale: antiProductToSale.rows,
+      addToCart: input.compact ? [] : addToCart.rows,
+      listToProduct: input.compact ? listToProduct.rows.slice(0, 20) : listToProduct.rows,
+      addToWishlist: input.compact ? [] : addToWishlist.rows,
+      productToSale: input.compact ? productToSale.rows.slice(0, 20) : productToSale.rows,
+      antiListToProduct: input.compact ? antiListToProduct.rows.slice(0, 20) : antiListToProduct.rows,
+      antiProductToSale: input.compact ? antiProductToSale.rows.slice(0, 20) : antiProductToSale.rows,
     },
     totals: {
       addToCart: addToCart.total,

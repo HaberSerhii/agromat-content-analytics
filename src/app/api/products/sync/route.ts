@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runSync, isSyncRunning } from "@/lib/products-sync";
+import { hasServerBearer, isDashboardRequest } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min — full sync over 157 pages takes ~3-4 min
@@ -13,17 +14,9 @@ export const maxDuration = 300; // 5 min — full sync over 157 pages takes ~3-4
  *     -H "Authorization: Bearer <CRON_SECRET>"
  */
 async function handle(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  const dashSecret = process.env.NEXT_PUBLIC_DASHBOARD_SECRET;
-  if (!cronSecret && !dashSecret) {
-    return NextResponse.json({ error: "No auth secret configured" }, { status: 500 });
-  }
-  // Accept either: Vercel cron sends CRON_SECRET; dashboard UI sends DASHBOARD_SECRET
-  const auth = request.headers.get("authorization") || "";
-  const ok =
-    (cronSecret && auth === `Bearer ${cronSecret}`) ||
-    (dashSecret && auth === `Bearer ${dashSecret}`);
-  if (!ok) {
+  // Cron authenticates with its server-only token. Interactive dashboard
+  // requests are marked by nginx after successful Basic Auth.
+  if (!hasServerBearer(request, "CRON_SECRET") && !isDashboardRequest(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

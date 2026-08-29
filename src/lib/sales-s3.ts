@@ -178,6 +178,7 @@ type ParsedSalesItem = {
 
 type ParsedSalesRow = SalesRow & {
   items: ParsedSalesItem[];
+  goodsCodeNumbers: number[];
   cancelReason: string;
 };
 
@@ -192,7 +193,22 @@ type CacheEntry = {
   expiresAt: number;
 };
 
-let cached: CacheEntry | null = null;
+type CachedSalesRows = {
+  rows: ParsedSalesRow[];
+  source: SalesDataset["source"];
+};
+
+type SalesRowsCacheState = {
+  cached: CacheEntry | null;
+  nextSignatureCheckAt: number;
+  pending?: Promise<CachedSalesRows>;
+};
+
+declare global {
+  var _agromatSalesRowsCacheState: SalesRowsCacheState | undefined;
+  var _agromatSalesS3Client: S3Client | undefined;
+}
+
 let productMetaByCodeCache: Map<string, { name: string; brand: string; category: string; url: string }> | null = null;
 let groupNameByIdCache: Map<string, string> | null = null;
 
@@ -208,12 +224,32 @@ export type SalesDateFilter = {
   statuses?: string | string[];
 };
 
+export type SalesDatasetOptions = {
+  // The dashboard normally loads category products only when a category is
+  // expanded. The default remains "all" for backward-compatible callers.
+  categoryProducts?: "all" | string | false;
+};
+
 function getSalesS3Url() {
   return process.env.SALES_S3_URL || "s3://dataset4bq/analysebillsofparsel.csv";
 }
 
 function getSalesGroupsS3Url() {
   return process.env.SALES_GROUPS_S3_URL || "s3://dataset4bq/inventorygroups.csv";
+}
+
+function getSalesS3RevalidateMs() {
+  const configured = Number(process.env.SALES_S3_REVALIDATE_MS);
+  if (!Number.isFinite(configured) || configured <= 0) return 5 * 60_000;
+  return Math.max(5_000, Math.min(configured, 10 * 60_000));
+}
+
+function getSalesRowsCacheState(): SalesRowsCacheState {
+  globalThis._agromatSalesRowsCacheState ??= {
+    cached: null,
+    nextSignatureCheckAt: 0,
+  };
+  return globalThis._agromatSalesRowsCacheState;
 }
 
 export function parseS3Url(value: string) {
@@ -223,9 +259,10 @@ export function parseS3Url(value: string) {
 }
 
 function getS3Client() {
-  return new S3Client({
+  globalThis._agromatSalesS3Client ??= new S3Client({
     region: process.env.AWS_REGION || "us-east-1",
   });
+  return globalThis._agromatSalesS3Client;
 }
 
 function getKyivParts(date = new Date()) {
@@ -447,9 +484,9 @@ function parseStatuses(value: SalesDateFilter["statuses"]): string[] {
   return out;
 }
 
-function matchesProductCodes(goodsCodes: string[], productCodeSet: Set<number>) {
+function matchesProductCodes(goodsCodes: number[], productCodeSet: Set<number>) {
   if (productCodeSet.size === 0) return true;
-  return goodsCodes.some((code) => productCodeSet.has(parseInt(code, 10)));
+  return goodsCodes.some((code) => productCodeSet.has(code));
 }
 
 function getPlanMonthForFilter(filter: ReturnType<typeof getEffectiveFilter>) {
@@ -792,6 +829,9 @@ function parseSalesRows(
         qty: rowQty[i] || 1,
         revenue: rowSums[i] || 0,
       })),
+      goodsCodeNumbers: goodsCodes
+        .map((code) => parseInt(code, 10))
+        .filter((code) => Number.isFinite(code)),
       cancelReason,
     };
 
@@ -805,8 +845,10 @@ function buildDataset(
   rows: ParsedSalesRow[],
   source: SalesDataset["source"],
   dateFilter?: SalesDateFilter,
+  options: SalesDatasetOptions = {},
 ): SalesDataset {
   const filter = getEffectiveFilter(dateFilter);
+  const categoryProductsMode = options.categoryProducts ?? "all";
   const productCodeSet = new Set(filter.productCodes);
   const statusSet = new Set(filter.statuses);
   const planMonth = getPlanMonthForFilter(filter);
@@ -866,7 +908,7 @@ function buildDataset(
   let lastShippedDate: string | null = null;
 
   for (const row of rows) {
-    const goodsCodes = splitList(row.goodsCodes);
+    const goodsCodes = row.goodsCodeNumbers;
     if (matchesProductCodes(goodsCodes, productCodeSet)) {
       const statusDate = row.shippedDate || row.createdDate;
       const statusIgnoresDate = isShipmentAllowed(row.state);
@@ -933,7 +975,9 @@ function buildDataset(
       for (const item of row.items) {
         addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount);
         addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount);
-        addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
+        if (categoryProductsMode === "all" || categoryProductsMode === item.category) {
+          addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
+        }
       }
     }
 
@@ -961,8 +1005,7 @@ function buildDataset(
       managerMonthRevenue.set(shippedSeller, (managerMonthRevenue.get(shippedSeller) || 0) + netRevenue);
     }
     for (const code of goodsCodes) {
-      const n = parseInt(code, 10);
-      if (productCodeSet.has(n)) matchedProductCodes.add(n);
+      if (productCodeSet.has(code)) matchedProductCodes.add(code);
     }
 
     addMonth(planMonths, shippedMonth, row);
@@ -994,8 +1037,13 @@ function buildDataset(
   const segmentList = finishSegmentBuckets(segments);
   const brandList = topBuckets(brands, 25);
   const categoryList = topBuckets(categories, 25);
+  const productCategories = categoryProductsMode === "all"
+    ? categoryList
+    : categoryProductsMode === false
+      ? []
+      : categoryList.filter((category) => category.label === categoryProductsMode);
   const categoryProductList = Object.fromEntries(
-    categoryList.map((category) => {
+    productCategories.map((category) => {
       const products = categoryProducts.get(category.label) || new Map<string, MutableSalesProductSummary>();
       return [category.label, [...products.values()]
         .map((product) => ({
@@ -1116,20 +1164,81 @@ function buildDataset(
   };
 }
 
-async function readCachedSalesRows(): Promise<{
-  rows: ParsedSalesRow[];
-  source: SalesDataset["source"];
-}> {
-  const { bucket, key } = parseS3Url(getSalesS3Url());
-  const client = getS3Client();
-  const head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-plan-v2`;
-  const [groupNameById, productMetaByCode] = await Promise.all([getGroupNameById(), getProductMetaByCode()]);
+function buildCategoryProducts(
+  rows: ParsedSalesRow[],
+  category: string,
+  dateFilter?: SalesDateFilter,
+): SalesProductSummary[] {
+  const filter = getEffectiveFilter(dateFilter);
+  const productCodeSet = new Set(filter.productCodes);
+  const statusSet = new Set(filter.statuses);
+  const categoryRevenue = new Map<string, number>();
+  const categoryProducts = new Map<string, Map<string, MutableSalesProductSummary>>();
 
-  if (cached && cached.signature === signature && Date.now() < cached.expiresAt) {
-    return { rows: cached.rows, source: cached.source };
+  for (const row of rows) {
+    if (!matchesProductCodes(row.goodsCodeNumbers, productCodeSet)) continue;
+    if (statusSet.size > 0 && !statusSet.has(row.state || "Без статусу")) continue;
+    const analysisDate = row.shippedDate || row.createdDate;
+    const statusIgnoresDate = statusSet.has("відвантаження дозволено") && isShipmentAllowed(row.state);
+    if (!isWithinOptionalFilter(analysisDate, filter) && !statusIgnoresDate) continue;
+    if (isExcludedAnalyticsOrder(row)) continue;
+
+    for (const item of row.items) {
+      const revenue = item.revenue || row.docsSum / row.goodsCount;
+      categoryRevenue.set(item.category, (categoryRevenue.get(item.category) || 0) + revenue);
+      if (item.category === category) {
+        addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
+      }
+    }
   }
 
+  const isTopCategory = [...categoryRevenue.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 25)
+    .some(([label]) => label === category);
+  if (!isTopCategory) return [];
+
+  return [...(categoryProducts.get(category) || new Map()).values()]
+    .map((product) => ({
+      code: product.code,
+      name: product.name,
+      url: product.url,
+      brand: product.brand,
+      category: product.category,
+      orders: product.orders,
+      qty: product.qty,
+      revenue: product.revenue,
+    }))
+    .sort((left, right) => right.revenue - left.revenue);
+}
+
+async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<CachedSalesRows> {
+  const { bucket, key } = parseS3Url(getSalesS3Url());
+  const client = getS3Client();
+  const revalidateMs = getSalesS3RevalidateMs();
+  let head;
+  try {
+    head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+  } catch (error) {
+    // A temporary S3 metadata outage should not take down an already-warm
+    // dashboard. Retry shortly and keep the last verified dataset until its
+    // normal 06:00 Kyiv refresh boundary.
+    if (state.cached && Date.now() < state.cached.expiresAt) {
+      state.nextSignatureCheckAt = Date.now() + Math.min(10_000, revalidateMs);
+      console.warn("[sales] S3 metadata revalidation failed; serving cached data", error);
+      return { rows: state.cached.rows, source: state.cached.source };
+    }
+    throw error;
+  }
+
+  const now = Date.now();
+  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-plan-v2`;
+  if (state.cached && state.cached.signature === signature && now < state.cached.expiresAt) {
+    state.nextSignatureCheckAt = Math.min(now + revalidateMs, state.cached.expiresAt);
+    return { rows: state.cached.rows, source: state.cached.source };
+  }
+
+  const [groupNameById, productMetaByCode] = await Promise.all([getGroupNameById(), getProductMetaByCode()]);
   const csvText = await readS3Text(getSalesS3Url());
 
   const nextRefresh = getNextKyivSix();
@@ -1142,13 +1251,42 @@ async function readCachedSalesRows(): Promise<{
     nextRefreshAt: nextRefresh.toISOString(),
   };
   const rows = parseSalesRows(csvText, groupNameById, productMetaByCode);
-  cached = { signature, rows, source, expiresAt: nextRefresh.getTime() };
+  state.cached = { signature, rows, source, expiresAt: nextRefresh.getTime() };
+  state.nextSignatureCheckAt = Math.min(Date.now() + revalidateMs, nextRefresh.getTime());
   return { rows, source };
 }
 
-export async function readSalesDataset(filter?: SalesDateFilter): Promise<SalesDataset> {
+async function readCachedSalesRows(): Promise<CachedSalesRows> {
+  const state = getSalesRowsCacheState();
+  const now = Date.now();
+  if (state.cached && now < state.cached.expiresAt && now < state.nextSignatureCheckAt) {
+    return { rows: state.cached.rows, source: state.cached.source };
+  }
+  if (state.pending) return state.pending;
+
+  const pending = refreshCachedSalesRows(state);
+  state.pending = pending;
+  try {
+    return await pending;
+  } finally {
+    if (state.pending === pending) state.pending = undefined;
+  }
+}
+
+export async function readSalesDataset(
+  filter?: SalesDateFilter,
+  options?: SalesDatasetOptions,
+): Promise<SalesDataset> {
   const { rows, source } = await readCachedSalesRows();
-  return buildDataset(rows, source, filter);
+  return buildDataset(rows, source, filter, options);
+}
+
+export async function readSalesCategoryProducts(
+  category: string,
+  filter?: SalesDateFilter,
+): Promise<SalesProductSummary[]> {
+  const { rows } = await readCachedSalesRows();
+  return buildCategoryProducts(rows, category, filter);
 }
 
 // Product quantities from documents that completed their whole lifecycle
@@ -1293,6 +1431,7 @@ export async function readPromotionSalesDataset(input: {
   selectedPromotionIdincs?: number[];
   promotions: PromotionSalesPromotionInput[];
   publicPromotionGroups: PromotionSalesPublicGroup[];
+  includeProducts?: boolean;
 }): Promise<PromotionSalesDataset> {
   const { rows } = await readCachedSalesRows();
   const from = normalizeDateFilter(input.from) || input.from;
@@ -1416,23 +1555,25 @@ export async function readPromotionSalesDataset(input: {
       }
       addPromotionSalesRevenue(brands, item.brand, itemRevenue);
       addPromotionSalesRevenue(categories, item.category, itemRevenue);
-      const productKey = `${item.code}\u0000${item.brand}\u0000${item.category}`;
-      const product = products.get(productKey) ?? {
-        code: item.code,
-        name: item.name,
-        url: item.url,
-        brand: item.brand,
-        category: item.category,
-        docs: 0,
-        qty: 0,
-        revenue: 0,
-        docRefs: new Set<string>(),
-      };
-      product.qty += item.qty;
-      product.revenue += itemRevenue;
-      product.docRefs.add(row.docsRef || row.number);
-      product.docs = product.docRefs.size;
-      products.set(productKey, product);
+      if (input.includeProducts !== false) {
+        const productKey = `${item.code}\u0000${item.brand}\u0000${item.category}`;
+        const product = products.get(productKey) ?? {
+          code: item.code,
+          name: item.name,
+          url: item.url,
+          brand: item.brand,
+          category: item.category,
+          docs: 0,
+          qty: 0,
+          revenue: 0,
+          docRefs: new Set<string>(),
+        };
+        product.qty += item.qty;
+        product.revenue += itemRevenue;
+        product.docRefs.add(row.docsRef || row.number);
+        product.docs = product.docRefs.size;
+        products.set(productKey, product);
+      }
       if (createdDate.slice(0, 7) === planMonth && saleDate.slice(0, 7) === planMonth) {
         planRevenue += itemRevenue;
         if (itemSegment === "Плитка" || itemSegment === "Сантехніка") {

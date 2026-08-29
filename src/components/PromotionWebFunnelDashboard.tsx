@@ -443,7 +443,6 @@ export function PromotionWebFunnelDashboard({
     setLoading(true);
     setError("");
     fetch(`/api/promotions/web-funnel?${params.toString()}`, {
-      cache: "no-store",
       signal: controller.signal,
     })
       .then(async (response) => {

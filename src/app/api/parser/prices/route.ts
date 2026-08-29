@@ -6,6 +6,7 @@ import {
   evaluateCompetitorPrice,
   type CompetitorPriceReviewReason,
 } from "@/lib/competitor-price-quality";
+import { getServerResult, putServerResult } from "@/lib/server-result-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ const IDENTIFIER_CHUNK = 250;
 const CACHE_TZ = "Europe/Kyiv";
 const CACHE_MAX_ENTRIES = 200;
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const BASE_CACHE_TTL_MS = 20 * 60 * 1000;
 const HIDDEN_COMPETITOR_ADAPTERS = new Set(["santechshara"]);
 
 type CacheableBody = Record<string, unknown>;
@@ -89,6 +91,20 @@ interface PricesRow {
   ourUrl: string | null;
   status: string | null;
   byCompetitor: Record<number, CompetitorCell>;
+}
+
+interface ParserPricesMetadata {
+  competitors: Competitor[];
+  lastUpdated: Record<number, string | null>;
+  priceChanges: Record<number, number | null>;
+  latestDate: string | null;
+}
+
+interface ParserPricesDataset {
+  snapshots: SnapshotRow[];
+  products: ProductRow[];
+  productIds: number[];
+  snapshotByProduct: Map<number, Map<number, SnapshotRow>>;
 }
 
 type ParserSegment = "all" | "sanitary" | "tile";
@@ -403,7 +419,128 @@ async function countPriceChanges(
   return changed;
 }
 
-async function pricesResponse(q: URLSearchParams, maxLimit = 200) {
+async function loadParserPricesMetadata(db: SupabaseClient): Promise<ParserPricesMetadata> {
+  const { data: competitorsRaw, error: cErr } = await db
+    .from("competitors")
+    .select("id, name, adapter_name")
+    .order("id", { ascending: true });
+  if (cErr) throw new Error(cErr.message);
+
+  const competitors = ((competitorsRaw || []) as Competitor[]).filter(
+    (competitor) => !HIDDEN_COMPETITOR_ADAPTERS.has(competitor.adapter_name.trim().toLowerCase()),
+  );
+  const lastUpdated: Record<number, string | null> = {};
+  const priceChanges: Record<number, number | null> = {};
+
+  const [latestRows] = await Promise.all([
+    db
+      .from("price_snapshots")
+      .select("snapshot_date")
+      .order("snapshot_date", { ascending: false })
+      .limit(1)
+      .then(({ data }) => data),
+    Promise.all(
+      competitors.map(async (competitor) => {
+        const { data } = await db
+          .from("price_snapshots")
+          .select("created_at, snapshot_date")
+          .eq("competitor_id", competitor.id)
+          .order("snapshot_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const row = data?.[0] as { created_at?: string; snapshot_date?: string } | undefined;
+        lastUpdated[competitor.id] = row?.created_at ?? null;
+        priceChanges[competitor.id] = row?.snapshot_date
+          ? await countPriceChanges(db, competitor.id, row.snapshot_date)
+          : null;
+      }),
+    ),
+  ]);
+
+  return {
+    competitors,
+    lastUpdated,
+    priceChanges,
+    latestDate: latestRows?.[0]?.snapshot_date ?? null,
+  };
+}
+
+async function parserPricesMetadata(
+  db: SupabaseClient,
+  forceRefresh: boolean,
+): Promise<ParserPricesMetadata> {
+  if (forceRefresh) {
+    const value = await loadParserPricesMetadata(db);
+    putServerResult({
+      namespace: "parser-prices-metadata-v1",
+      key: "current",
+      value,
+      ttlMs: BASE_CACHE_TTL_MS,
+      maxEntries: 1,
+    });
+    return value;
+  }
+  return (await getServerResult({
+    namespace: "parser-prices-metadata-v1",
+    key: "current",
+    ttlMs: BASE_CACHE_TTL_MS,
+    maxEntries: 1,
+    load: () => loadParserPricesMetadata(db),
+  })).value;
+}
+
+async function loadParserPricesDataset(
+  db: SupabaseClient,
+  snapshotDate: string | null,
+  competitorIds: number[],
+): Promise<ParserPricesDataset> {
+  const snapshots = snapshotDate
+    ? await fetchAllSnapshotsForDate(db, snapshotDate, competitorIds)
+    : [];
+  const productIds = [...new Set(snapshots.map((snapshot) => snapshot.product_id))];
+  const products = productIds.length
+    ? await fetchProductsByIds(db, productIds, "", "all")
+    : [];
+  const snapshotByProduct = new Map<number, Map<number, SnapshotRow>>();
+  for (const snapshot of snapshots) {
+    let bucket = snapshotByProduct.get(snapshot.product_id);
+    if (!bucket) {
+      bucket = new Map();
+      snapshotByProduct.set(snapshot.product_id, bucket);
+    }
+    bucket.set(snapshot.competitor_id, snapshot);
+  }
+  return { snapshots, products, productIds, snapshotByProduct };
+}
+
+async function parserPricesDataset(
+  db: SupabaseClient,
+  snapshotDate: string | null,
+  competitorIds: number[],
+  forceRefresh: boolean,
+): Promise<ParserPricesDataset> {
+  const key = `${snapshotDate || "none"}:${competitorIds.join(",")}`;
+  if (forceRefresh) {
+    const value = await loadParserPricesDataset(db, snapshotDate, competitorIds);
+    putServerResult({
+      namespace: "parser-prices-dataset-v1",
+      key,
+      value,
+      ttlMs: BASE_CACHE_TTL_MS,
+      maxEntries: 4,
+    });
+    return value;
+  }
+  return (await getServerResult({
+    namespace: "parser-prices-dataset-v1",
+    key,
+    ttlMs: BASE_CACHE_TTL_MS,
+    maxEntries: 4,
+    load: () => loadParserPricesDataset(db, snapshotDate, competitorIds),
+  })).value;
+}
+
+async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefresh = false) {
   const search = (q.get("search") || "").trim().toLowerCase();
   const page = Math.max(parseIntOr(q.get("page"), 1), 1);
   const limit = Math.min(Math.max(parseIntOr(q.get("limit"), 50), 1), maxLimit);
@@ -414,72 +551,31 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200) {
   const identifierField = parseIdentifierField(q.get("identifier_field"));
 
   const db = getSupabase();
-
-  // 1) Competitors — usually 3 rows, sorted for stable column order.
-  const { data: competitorsRaw, error: cErr } = await db
-    .from("competitors")
-    .select("id, name, adapter_name")
-    .order("id", { ascending: true });
-  if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
-  const competitors = ((competitorsRaw || []) as Competitor[]).filter(
-    (competitor) => !HIDDEN_COMPETITOR_ADAPTERS.has(competitor.adapter_name.trim().toLowerCase()),
-  );
-
-  // 1b) Last price-write time per competitor — the freshest `created_at` across
-  //     all of that competitor's snapshots. Surfaces "when were these prices last
-  //     refreshed" in the UI (incl. the daily 03:00 Europe/Kyiv auto-run). One indexed
-  //     order-by-limit-1 query per competitor (~3 round trips). Best-effort:
-  //     a failure just yields null, never blocks the table.
-  //     Same query also yields the latest snapshot_date, which seeds the
-  //     per-competitor "price changed" count (latest run vs previous run).
-  const lastUpdated: Record<number, string | null> = {};
-  const priceChanges: Record<number, number | null> = {};
-  await Promise.all(
-    competitors.map(async (c) => {
-      const { data } = await db
-        .from("price_snapshots")
-        .select("created_at, snapshot_date")
-        .eq("competitor_id", c.id)
-        .order("snapshot_date", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(1);
-      const row = data?.[0] as { created_at?: string; snapshot_date?: string } | undefined;
-      lastUpdated[c.id] = row?.created_at ?? null;
-      priceChanges[c.id] = row?.snapshot_date
-        ? await countPriceChanges(db, c.id, row.snapshot_date)
-        : null;
-    }),
-  );
-
-  // 2) Resolve effective snapshot_date — explicit param wins, otherwise pick
-  //    the latest one that has any snapshots.
-  let effectiveDate = snapshotDate;
-  if (!effectiveDate) {
-    const { data: latestRows } = await db
-      .from("price_snapshots")
-      .select("snapshot_date")
-      .order("snapshot_date", { ascending: false })
-      .limit(1);
-    effectiveDate = latestRows?.[0]?.snapshot_date ?? null;
+  let metadata: ParserPricesMetadata;
+  let dataset: ParserPricesDataset;
+  try {
+    metadata = await parserPricesMetadata(db, forceBaseRefresh);
+    const effectiveDate = snapshotDate || metadata.latestDate;
+    dataset = await parserPricesDataset(
+      db,
+      effectiveDate,
+      metadata.competitors.map((competitor) => competitor.id),
+      forceBaseRefresh,
+    );
+  } catch (error) {
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "parser_prices_base_failed",
+    }, { status: 500 });
   }
-
-  // 3) Snapshots for the chosen date — one row per (product, competitor).
-  //    Paged to bypass PostgREST's default 1000-row cap.
-  let snapshots: SnapshotRow[] = [];
-  if (effectiveDate) {
-    try {
-      snapshots = await fetchAllSnapshotsForDate(db, effectiveDate, competitors.map((competitor) => competitor.id));
-    } catch (e) {
-      return NextResponse.json({ error: e instanceof Error ? e.message : "snapshots_failed" }, { status: 500 });
-    }
-  }
+  const { competitors, lastUpdated, priceChanges } = metadata;
+  const effectiveDate = snapshotDate || metadata.latestDate;
+  const { productIds: productIdList, snapshotByProduct } = dataset;
 
   // 4) Default view is restricted to products with at least one competitor
   //    snapshot. With a pasted set, resolve products directly from Agromat
   //    identifiers first; snapshots only fill competitor cells. Otherwise a
   //    895-item set collapses to only the few products already present in the
   //    parser snapshot.
-  const productIdList = [...new Set(snapshots.map((s) => s.product_id))];
   if (!idsInSet.size && productIdList.length === 0) {
     return NextResponse.json({
       snapshotDate: effectiveDate,
@@ -498,7 +594,7 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200) {
   try {
     products = idsInSet.size
       ? await fetchProductsByIdentifiers(db, idsIn, search, segment, identifierField)
-      : await fetchProductsByIds(db, productIdList, search, segment);
+      : filterProductRows(dataset.products, search, segment);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
   }
@@ -516,17 +612,6 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200) {
       }
     }
     notFoundIds = idsIn.filter((id) => !present.has(id));
-  }
-
-  // 5) Index snapshots by product → competitor for O(1) cell lookup.
-  const snapshotByProduct = new Map<number, Map<number, SnapshotRow>>();
-  for (const s of snapshots) {
-    let bucket = snapshotByProduct.get(s.product_id);
-    if (!bucket) {
-      bucket = new Map();
-      snapshotByProduct.set(s.product_id, bucket);
-    }
-    bucket.set(s.competitor_id, s);
   }
 
   // 6) Build response rows. Sort by name for predictable order.
@@ -622,7 +707,7 @@ async function cachedPricesResponse(q: URLSearchParams) {
   if (pending) return pending;
 
   const work = (async () => {
-    const response = await pricesResponse(canonicalQuery);
+    const response = await pricesResponse(canonicalQuery, 200, forceRefresh);
     if (response.status !== 200) return response;
 
     const body = await response.clone().json() as CacheableBody;

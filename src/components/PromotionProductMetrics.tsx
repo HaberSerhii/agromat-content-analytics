@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   PromotionProductMetricRow,
   PromotionProductMetricsResponse,
@@ -33,6 +33,26 @@ type RankingExportContext = {
   includeOutOfStock: boolean;
   total: number;
 };
+
+function productMetricsParams(input: {
+  url: string;
+  from: string;
+  to: string;
+  channel: WebFunnelChannel;
+  device: WebFunnelDevice;
+  includeOutOfStock: boolean;
+  compact: boolean;
+}): URLSearchParams {
+  return new URLSearchParams({
+    url: input.url,
+    from: input.from,
+    to: input.to,
+    channel: input.channel,
+    device: input.device,
+    include_out_of_stock: input.includeOutOfStock ? "1" : "0",
+    ...(input.compact ? { compact: "1" } : {}),
+  });
+}
 
 const RANKING_CONFIG: RankingConfig[] = [
   {
@@ -221,6 +241,7 @@ function ProductRanking({
   copiedCode,
   onCopyCode,
   exporting,
+  loadingDetails,
   onExport,
 }: {
   kind: RankingKind;
@@ -234,6 +255,7 @@ function ProductRanking({
   copiedCode: number | null;
   onCopyCode: (code: number) => void;
   exporting: boolean;
+  loadingDetails: boolean;
   onExport: () => void;
 }) {
   const visibleRows = rows.slice(0, expanded ? 250 : 20);
@@ -384,10 +406,13 @@ function ProductRanking({
         <button
           type="button"
           onClick={onToggle}
-          className="w-full border-0 border-t px-4 py-2.5 text-[10px] font-bold"
+          disabled={loadingDetails}
+          className="w-full border-0 border-t px-4 py-2.5 text-[10px] font-bold disabled:cursor-wait disabled:opacity-60"
           style={{ borderColor: "var(--border2)", background: "var(--bg-input)", color }}
         >
-          {expanded
+          {loadingDetails
+            ? "Завантажуємо повний рейтинг…"
+            : expanded
             ? `Згорнути до ${rankLabel} 20`
             : `Показати ${rankLabel} ${Math.min(250, total)}`}
         </button>
@@ -411,7 +436,9 @@ export function PromotionProductMetrics({
 }) {
   const [includeOutOfStock, setIncludeOutOfStock] = useState(false);
   const [data, setData] = useState<PromotionProductMetricsResponse | null>(null);
+  const [detailData, setDetailData] = useState<PromotionProductMetricsResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState<RankingKind | null>(null);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Record<RankingKind, boolean>>({
     listToProduct: false,
@@ -422,19 +449,31 @@ export function PromotionProductMetrics({
   const [copiedCode, setCopiedCode] = useState<number | null>(null);
   const [exportingRanking, setExportingRanking] = useState<RankingKind | null>(null);
   const [missingExportState, setMissingExportState] = useState<"idle" | "loading" | "done" | "empty">("idle");
+  const detailRequestRef = useRef<{
+    key: string;
+    promise: Promise<PromotionProductMetricsResponse>;
+  } | null>(null);
+  const currentRequestKeyRef = useRef("");
+
+  const requestKey = [url, from, to, channel, device, includeOutOfStock ? "1" : "0"].join("|");
+  currentRequestKeyRef.current = requestKey;
 
   useEffect(() => {
     const controller = new AbortController();
-    const params = new URLSearchParams({
+    const params = productMetricsParams({
       url,
       from,
       to,
       channel,
       device,
-      include_out_of_stock: includeOutOfStock ? "1" : "0",
+      includeOutOfStock,
+      compact: true,
     });
     setLoading(true);
     setError("");
+    setDetailData(null);
+    setLoadingDetails(null);
+    detailRequestRef.current = null;
     setExpanded({
       listToProduct: false,
       productToSale: false,
@@ -442,7 +481,6 @@ export function PromotionProductMetrics({
       antiProductToSale: false,
     });
     fetch(`/api/promotions/product-metrics?${params.toString()}`, {
-      cache: "no-store",
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -461,6 +499,34 @@ export function PromotionProductMetrics({
     return () => controller.abort();
   }, [channel, device, from, includeOutOfStock, to, url]);
 
+  const loadDetailData = useCallback(async (): Promise<PromotionProductMetricsResponse> => {
+    if (detailData) return detailData;
+    if (detailRequestRef.current?.key === requestKey) return detailRequestRef.current.promise;
+    const params = productMetricsParams({
+      url,
+      from,
+      to,
+      channel,
+      device,
+      includeOutOfStock,
+      compact: false,
+    });
+    const promise = fetch(`/api/promotions/product-metrics?${params.toString()}`)
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити повний рейтинг");
+        return payload as PromotionProductMetricsResponse;
+      });
+    detailRequestRef.current = { key: requestKey, promise };
+    try {
+      const payload = await promise;
+      if (currentRequestKeyRef.current === requestKey) setDetailData(payload);
+      return payload;
+    } finally {
+      if (detailRequestRef.current?.promise === promise) detailRequestRef.current = null;
+    }
+  }, [channel, detailData, device, from, includeOutOfStock, requestKey, to, url]);
+
   const copyCode = async (code: number) => {
     try {
       await navigator.clipboard.writeText(String(code));
@@ -473,18 +539,21 @@ export function PromotionProductMetrics({
 
   const exportMissingCodes = async () => {
     if (!data) return;
-    const codes = [...new Set(
-      data.missingProducts
-        .map((product) => product.code)
-        .filter((code): code is number => code != null && code > 0),
-    )].sort((left, right) => left - right);
-    if (codes.length === 0) {
-      setMissingExportState("empty");
-      window.setTimeout(() => setMissingExportState("idle"), 1800);
-      return;
-    }
     setMissingExportState("loading");
     try {
+      const source = data.missingProducts.length >= data.tracking.unmatchedGoodsRefs
+        ? data
+        : await loadDetailData();
+      const codes = [...new Set(
+        source.missingProducts
+        .map((product) => product.code)
+        .filter((code): code is number => code != null && code > 0),
+      )].sort((left, right) => left - right);
+      if (codes.length === 0) {
+        setMissingExportState("empty");
+        window.setTimeout(() => setMissingExportState("idle"), 1800);
+        return;
+      }
       const XLSX = await import("xlsx");
       const sheet = XLSX.utils.aoa_to_sheet([["IDD"], ...codes.map((code) => [code])]);
       const workbook = XLSX.utils.book_new();
@@ -496,7 +565,8 @@ export function PromotionProductMetrics({
       );
       await navigator.clipboard.writeText(codes.join("\n")).catch(() => undefined);
       setMissingExportState("done");
-    } catch {
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не вдалося завантажити повні дані");
       setMissingExportState("idle");
       return;
     }
@@ -507,16 +577,44 @@ export function PromotionProductMetrics({
     if (!data || exportingRanking) return;
     setExportingRanking(config.kind);
     try {
-      await downloadRankingXlsx(config, data.rankings[config.kind], {
-        from: data.from,
-        to: data.to,
-        channel: data.channel,
-        device: data.device,
-        includeOutOfStock: data.includeOutOfStock,
-        total: data.totals[config.kind],
+      const source = data.rankings[config.kind].length >= Math.min(250, data.totals[config.kind])
+        ? data
+        : await loadDetailData();
+      await downloadRankingXlsx(config, source.rankings[config.kind], {
+        from: source.from,
+        to: source.to,
+        channel: source.channel,
+        device: source.device,
+        includeOutOfStock: source.includeOutOfStock,
+        total: source.totals[config.kind],
       });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не вдалося завантажити повний рейтинг");
     } finally {
       setExportingRanking(null);
+    }
+  };
+
+  const toggleRanking = async (kind: RankingKind) => {
+    if (!data || loadingDetails) return;
+    if (expanded[kind]) {
+      setExpanded((current) => ({ ...current, [kind]: false }));
+      return;
+    }
+    const rows = detailData?.rankings[kind] ?? data.rankings[kind];
+    if (rows.length < Math.min(250, data.totals[kind])) {
+      setLoadingDetails(kind);
+      try {
+        await loadDetailData();
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Не вдалося завантажити повний рейтинг");
+        return;
+      } finally {
+        setLoadingDetails(null);
+      }
+    }
+    if (currentRequestKeyRef.current === requestKey) {
+      setExpanded((current) => ({ ...current, [kind]: true }));
     }
   };
 
@@ -586,13 +684,14 @@ export function PromotionProductMetrics({
               <ProductRanking
                 key={config.kind}
                 {...config}
-                rows={data.rankings[config.kind]}
+                rows={detailData?.rankings[config.kind] ?? data.rankings[config.kind]}
                 total={data.totals[config.kind]}
                 expanded={expanded[config.kind]}
-                onToggle={() => setExpanded((current) => ({ ...current, [config.kind]: !current[config.kind] }))}
+                onToggle={() => void toggleRanking(config.kind)}
                 copiedCode={copiedCode}
                 onCopyCode={copyCode}
                 exporting={exportingRanking === config.kind}
+                loadingDetails={loadingDetails === config.kind}
                 onExport={() => exportRanking(config)}
               />
             ))}

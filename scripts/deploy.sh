@@ -12,6 +12,7 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-$HOME/Agromat-Analytics}"
 LOG="${DEPLOY_LOG:-/tmp/agromat-deploy.log}"
 PM2_NAME="${PM2_NAME:-}"   # leave empty → auto-detect by cwd
+APP_PORT="${APP_PORT:-3000}"
 
 # Mark the step that failed in the log — without this, `set -e` exits silently
 # and the log just stops mid-stream, making it hard to tell which step blew up.
@@ -117,7 +118,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     [ -f .env ] && cp .env .next/standalone/
   fi
 
-  CURRENT_STEP="install Agromat price sync cron"
+  CURRENT_STEP="install dashboard background cron jobs"
   echo "▸ $CURRENT_STEP"
   AGROMAT_PRICE_SYNC_LOG="${AGROMAT_PRICE_SYNC_LOG:-/var/log/agromat-price-sync.log}"
   touch "$AGROMAT_PRICE_SYNC_LOG" 2>/dev/null || true
@@ -131,17 +132,25 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   echo "$AGROMAT_PRICE_CRON_LINE" >> "$TMP_CRON"
   # Tile competitors run independently from the long general parser chain.
   # A second daily attempt is safe: completed snapshots are detected and skipped.
-  sed -i.bak '/run-simple-price-auto\.sh/d' "$TMP_CRON"
+  sed -i.bak -e '/run-simple-price-auto\.sh/d' -e '/prewarm-dashboard-cache\.sh/d' "$TMP_CRON"
   rm -f "$TMP_CRON.bak"
   SIMPLE_PRICE_LOG="${SIMPLE_PRICE_LOG:-/var/log/agromat-simple-price.log}"
   touch "$SIMPLE_PRICE_LOG" 2>/dev/null || true
   chmod +x "$APP_DIR/scripts/run-simple-price-auto.sh"
   SIMPLE_PRICE_CRON_LINE="30 9,13 * * * APP_DIR=$APP_DIR SIMPLE_PRICE_LOG=$SIMPLE_PRICE_LOG $APP_DIR/scripts/run-simple-price-auto.sh"
   echo "$SIMPLE_PRICE_CRON_LINE" >> "$TMP_CRON"
+  DASHBOARD_CACHE_DIR="${DASHBOARD_CACHE_DIR:-/var/cache/agromat-analytics}"
+  DASHBOARD_PREWARM_LOG="${DASHBOARD_PREWARM_LOG:-/var/log/agromat-dashboard-prewarm.log}"
+  mkdir -p "$DASHBOARD_CACHE_DIR"
+  touch "$DASHBOARD_PREWARM_LOG" 2>/dev/null || true
+  chmod +x "$APP_DIR/scripts/prewarm-dashboard-cache.sh"
+  DASHBOARD_PREWARM_CRON_LINE="4,19,34,49 * * * * APP_DIR=$APP_DIR APP_PORT=$APP_PORT DASHBOARD_PREWARM_LOG=$DASHBOARD_PREWARM_LOG $APP_DIR/scripts/prewarm-dashboard-cache.sh"
+  echo "$DASHBOARD_PREWARM_CRON_LINE" >> "$TMP_CRON"
   crontab "$TMP_CRON"
   rm -f "$TMP_CRON"
   echo "  cron: $AGROMAT_PRICE_CRON_LINE"
   echo "  tile cron: $SIMPLE_PRICE_CRON_LINE"
+  echo "  dashboard prewarm cron: $DASHBOARD_PREWARM_CRON_LINE"
 
   CURRENT_STEP="deploy companion Agromat_Parcer"
   echo "▸ $CURRENT_STEP"

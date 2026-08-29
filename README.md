@@ -256,7 +256,7 @@ npm run dev                       # http://localhost:3000
 
 | Розділ                       | Контрол                                                                                                                              |
 |------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| **Синхронізація з API**      | Кнопка `Sync now` → `POST /api/products/sync` з `Bearer NEXT_PUBLIC_DASHBOARD_SECRET`. Поки йде sync — кнопка дизейблиться, з'являється прогрес-бар (`X/Y сторінок · NN% · K тов.`). Опитується `GET /api/products/sync/status` кожні 2 сек. |
+| **Синхронізація з API**      | Кнопка `Sync now` → `POST /api/products/sync`; доступ підтверджує nginx після Basic Auth. Поки йде sync — кнопка дизейблиться, з'являється прогрес-бар (`X/Y сторінок · NN% · K тов.`). Опитується `GET /api/products/sync/status` кожні 2 сек. |
 | **Перегляд стану на дату**   | `SnapshotPicker` — список доступних snapshot-ів (зберігаються 30 днів на диску VPS). `● Поточний` повертає в live-режим; вибір дати → банер у шапці.  |
 | **Обов'язкові атрибути**     | Кнопка `⚙ Відкрити налаштування` → закриває цю модалку і відкриває `RequiredAttrsModal`.                                            |
 | Футер «Останній синк»        | Дата останнього успішного синку + статистика (товари / нові / зміни статусу) + посилання `Звіт ↗` на `SyncReportModal`.              |
@@ -272,7 +272,7 @@ npm run dev                       # http://localhost:3000
 | Ліва — категорії     | Список активних категорій. Зелене число справа = скільки атрибутів уже задано як обов'язкові.                                 |
 | Права — атрибути     | При виборі категорії модалка тягне 30 повних карток її товарів і будує список атрибутів за частотою використання. Клік → toggle. |
 
-Кнопка `Зберегти` робить `POST /api/products/required-attrs` з `x-dashboard-secret` заголовком. Конфіг впливає на:
+Кнопка `Зберегти` робить `POST /api/products/required-attrs`; доступ підтверджує nginx після Basic Auth. Конфіг впливає на:
 
 - зелену рамку + `★` у модалці товара;
 - червоний банер «Не вистачає обов'язкових атрибутів…» у модалці.
@@ -360,8 +360,8 @@ curl -s http://127.0.0.1:3000/api/products/snapshots
 | GET     | `/api/products/summary`               | Зведена статистика по категоріях для блоку «Зведення по категоріях».                                              |
 | GET     | `/api/products/snapshots`             | Список доступних snapshot-дат.                                                                                    |
 | GET     | `/api/products/sync/status`           | Поточний стан синку (для polling-у з UI). Завжди bypass кешу.                                                     |
-| POST    | `/api/products/sync`                  | Тригерить повний sync. Захищено `Authorization: Bearer ${CRON_SECRET || NEXT_PUBLIC_DASHBOARD_SECRET}`.            |
-| GET/POST| `/api/products/required-attrs`        | GET — повертає поточний конфіг. POST — оновлює (потребує заголовок `x-dashboard-secret`).                         |
+| POST    | `/api/products/sync`                  | Тригерить повний sync. Cron використовує `Authorization: Bearer ${CRON_SECRET}`, UI — підтверджений nginx-запит. |
+| GET/POST| `/api/products/required-attrs`        | GET — повертає поточний конфіг. POST — оновлює після Basic Auth у nginx.                                         |
 | GET     | `/api/promotions/web-funnel`          | Воронка GA4 для всього сайту або відвідувачів заданого URL за період, каналом і пристроєм.                       |
 | GET     | `/api/promotions/product-metrics`     | TOP товарів за `add_to_cart`, CTR списку `select_item / view_item_list` і `add_to_wishlist`; зв'язок з каталогом за `item_id = goods_ref`. |
 | GET     | `/api/sales/web-metrics`              | Помісячні GA4-сесії з України та середня кількість товарів у кошику на події `begin_checkout`.                         |
@@ -410,15 +410,22 @@ PRODUCT_SNAPSHOTS_DIR=/var/lib/agromat-analytics/product-snapshots
 # VPS cron runner
 APP_PORT=3000
 SYNC_LOG=/var/log/agromat-products-sync.log
+DASHBOARD_CACHE_DIR=/var/cache/agromat-analytics
+DASHBOARD_PREWARM_LOG=/var/log/agromat-dashboard-prewarm.log
 
-# Bearer для cron на VPS і тригера з UI
+# Bearer лише для cron на VPS
 CRON_SECRET=
 
-# Захищає мутації з dashboard (required-attrs, sync trigger)
-NEXT_PUBLIC_DASHBOARD_SECRET=
+# Приватний заголовок між nginx і Next.js після Basic Auth
+DASHBOARD_PROXY_SECRET=
+
+# Окремий Bearer для /api/admin/deploy
+DEPLOY_SECRET=
 
 # Опціонально — URL legacy парсера, що вантажиться в iframe Tab 1
 # NEXT_PUBLIC_PARCER_URL=http://91.239.233.125:8080/
 ```
 
-> `NEXT_PUBLIC_DASHBOARD_SECRET` потрапляє в клієнтський бандл (це нормально для цього сценарію — секрет використовується лише для розмежування UI-дій, реальна авторизація йде на сервері за `CRON_SECRET`).
+> Dashboard і його мутації закриваються Basic Auth у nginx. nginx перезаписує приватний `X-Agromat-Dashboard-Auth`, а Next.js звіряє його із серверним `DASHBOARD_PROXY_SECRET`. Жоден секрет не потрапляє в клієнтський бандл.
+
+Акційний каталог попередньо будується `scripts/prewarm-dashboard-cache.sh` о 4, 19, 34 і 49 хвилині кожної години. Готовий JSON атомарно зберігається у `DASHBOARD_CACHE_DIR`, тому перший запит після перезапуску Next.js не звертається до всіх upstream API повторно.

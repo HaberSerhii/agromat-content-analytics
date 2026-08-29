@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 // Filters change only on sync (≤ a few times/day). Long browser cache is safe.
 const CACHE = "private, max-age=60, stale-while-revalidate=600";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const view = new URL(request.url).searchParams.get("view");
   const cached = await readFiltersCache();
   if (!cached) {
     return NextResponse.json(
@@ -14,7 +15,24 @@ export async function GET() {
       { status: 200 },
     );
   }
-  return NextResponse.json({ ...cached.filters, syncedAt: cached.syncedAt }, {
+  const payload = view === "compact"
+    ? {
+        categories: [],
+        statuses: cached.filters.statuses,
+        brands: [],
+        syncedAt: cached.syncedAt,
+      }
+    : view === "categories"
+      ? {
+          categories: cached.filters.categories.map((category) => ({
+            id: category.id,
+            name: category.name,
+            path: category.path,
+          })),
+          syncedAt: cached.syncedAt,
+        }
+      : { ...cached.filters, syncedAt: cached.syncedAt };
+  return NextResponse.json(payload, {
     headers: { "Cache-Control": CACHE },
   });
 }

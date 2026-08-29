@@ -10,7 +10,9 @@ import {
   readRequiredAttrs,
   readSyncState,
   type ProductLite,
+  type RequiredAttrsConfig,
 } from "@/lib/products-store";
+import { canonicalSearchParams, getServerResult } from "@/lib/server-result-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +39,38 @@ type ProductListItem = ProductLite & {
   missingRequiredAttrNames: string[];
   missingRequiredAttrsCount: number;
 };
+
+type ProductRequiredMeta = Pick<
+  ProductListItem,
+  "missingRequiredAttrIds" | "missingRequiredAttrNames" | "missingRequiredAttrsCount"
+>;
+
+const EMPTY_REQUIRED_META: ProductRequiredMeta = {
+  missingRequiredAttrIds: [],
+  missingRequiredAttrNames: [],
+  missingRequiredAttrsCount: 0,
+};
+
+declare global {
+  var _productsRequiredMetaCache: {
+    key: string;
+    byProductId: Map<number, ProductRequiredMeta>;
+  } | undefined;
+}
+
+type ProductsCacheContext = {
+  syncedAt: string | null;
+  required: RequiredAttrsConfig;
+  key: string;
+};
+
+function requiredAttrsKey(required: RequiredAttrsConfig): string {
+  return JSON.stringify(
+    Object.entries(required)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([categoryId, attributeIds]) => [categoryId, [...attributeIds].sort((a, b) => a - b)]),
+  );
+}
 
 function parseIntList(s: string | null): number[] {
   if (!s) return [];
@@ -99,7 +133,7 @@ function kyivCalendarDate(value: string | null) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-async function productsResponse(q: URLSearchParams) {
+async function buildProductsPayload(q: URLSearchParams, context: ProductsCacheContext) {
   const page = Math.max(1, parseInt(q.get("page") || "1", 10));
   // Cap at 50_000 — covers the whole catalog (~31K) in one shot for exports
   // while still bounding response size for malicious requests.
@@ -136,10 +170,8 @@ async function productsResponse(q: URLSearchParams) {
   const maxImages = q.get("max_images") ? parseInt(q.get("max_images")!, 10) : null;
   // Legacy attribute-count threshold: kept for old bookmarked URLs.
   const maxAttributes = q.get("max_attributes") ? parseInt(q.get("max_attributes")!, 10) : null;
-  const statsFrom = q.get("stats_from");
-  const statsTo = q.get("stats_to") || statsFrom;
-  const statsFromMs = parseKyivCalendarDate(statsFrom);
-  const statsToMs = parseKyivCalendarDate(statsTo, true);
+  const requestedStatsFrom = q.get("stats_from");
+  const requestedStatsTo = q.get("stats_to");
 
   // Bulk-id filter: user pastes a list of identifiers (whitespace/comma separated)
   // → we filter to that exact set and report which inputs we couldn't find.
@@ -163,15 +195,23 @@ async function productsResponse(q: URLSearchParams) {
 
   const [liveAll, liveSyncedAt, syncState, required, attrIndex, snap] = await Promise.all([
     asOfValid ? Promise.resolve([] as ProductLite[]) : readAllLite(),
-    readLiteSyncedAt(),
+    Promise.resolve(context.syncedAt),
     readSyncState(),
-    readRequiredAttrs(),
+    Promise.resolve(context.required),
     readProductAttributeIndex(),
     asOfValid ? readDailySnapshot(asOf!) : Promise.resolve(null),
   ]);
 
   const all: ProductLite[] = asOfValid ? (snap?.products ?? []) : liveAll;
   const syncedAt = asOfValid ? (snap?.syncedAt ?? null) : liveSyncedAt;
+  // Default KPI range is the day of the latest completed sync. Exposing this
+  // effective range prevents the client from repeating the products request
+  // merely to populate its two date inputs after the first response arrives.
+  const defaultStatsDate = kyivCalendarDate(syncedAt);
+  const statsFrom = requestedStatsFrom || requestedStatsTo || defaultStatsDate;
+  const statsTo = requestedStatsTo || statsFrom;
+  const statsFromMs = parseKyivCalendarDate(statsFrom);
+  const statsToMs = parseKyivCalendarDate(statsTo, true);
 
   let agg = await readCategoryAttrsAggregate();
   if (!agg) {
@@ -188,11 +228,9 @@ async function productsResponse(q: URLSearchParams) {
     attrNameByCategory.set(cat.id, names);
   }
 
-  const withRequiredMeta = (p: ProductLite): ProductListItem => {
+  const buildRequiredMeta = (p: ProductLite): ProductRequiredMeta => {
     const requiredIds = required[String(p.categoryId)] ?? [];
-    if (requiredIds.length === 0) {
-      return { ...p, missingRequiredAttrIds: [], missingRequiredAttrNames: [], missingRequiredAttrsCount: 0 };
-    }
+    if (requiredIds.length === 0) return EMPTY_REQUIRED_META;
     const presentAttrs = attrIndex.get(p.id) ?? [];
     const present = new Set(presentAttrs.map((a) => a.id));
     const presentNames = new Map(presentAttrs.map((a) => [a.id, a.name]));
@@ -200,13 +238,25 @@ async function productsResponse(q: URLSearchParams) {
     const missingIds = requiredIds.filter((id) => !present.has(id));
     const missingNames = missingIds.map((id) => categoryNames?.get(id) ?? presentNames.get(id) ?? `#${id}`);
     return {
-      ...p,
       missingRequiredAttrIds: missingIds,
       missingRequiredAttrNames: missingNames,
       missingRequiredAttrsCount: missingIds.length,
     };
   };
-  const allItems = all.map(withRequiredMeta);
+  const cachedRequiredMeta = !asOfValid && global._productsRequiredMetaCache?.key === context.key
+    ? global._productsRequiredMetaCache.byProductId
+    : null;
+  const requiredMetaByProductId = cachedRequiredMeta ?? new Map<number, ProductRequiredMeta>();
+  if (!cachedRequiredMeta) {
+    for (const product of all) {
+      const meta = buildRequiredMeta(product);
+      if (meta.missingRequiredAttrsCount > 0) requiredMetaByProductId.set(product.id, meta);
+    }
+    if (!asOfValid) {
+      global._productsRequiredMetaCache = { key: context.key, byProductId: requiredMetaByProductId };
+    }
+  }
+  const requiredMetaFor = (product: ProductLite) => requiredMetaByProductId.get(product.id) ?? EMPTY_REQUIRED_META;
 
   const newCutoff = onlyNewDays > 0 ? daysAgoIso(onlyNewDays) : "";
   const stChCutoff = onlyStatusChangedDays > 0 ? daysAgoIso(onlyStatusChangedDays) : "";
@@ -218,7 +268,8 @@ async function productsResponse(q: URLSearchParams) {
   // dropdown can be populated with options that respect *other* active filters
   // (the classic "self-exclude" facet pattern).
   type Skip = "category" | "brand" | "price" | "stock" | null;
-  const predicate = (skip: Skip) => (p: ProductListItem): boolean => {
+  const predicate = (skip: Skip) => (p: ProductLite): boolean => {
+    const requiredMeta = requiredMetaFor(p);
     if (search && !matchSearch(p, search)) return false;
     if (skip !== "category" && categoryIds.size && !categoryIds.has(p.categoryId)) return false;
     if (skip !== "brand" && brandIds.size && (p.brandId == null || !brandIds.has(p.brandId))) return false;
@@ -233,9 +284,9 @@ async function productsResponse(q: URLSearchParams) {
     if (hasAttributes === true && p.attributesCount === 0) return false;
     if (hasAttributes === false && p.attributesCount > 0) return false;
     if (maxAttributes != null && p.attributesCount >= maxAttributes) return false;
-    if (missingRequiredAttrs === true && p.missingRequiredAttrsCount === 0) return false;
-    if (missingRequiredAttrs === false && p.missingRequiredAttrsCount > 0) return false;
-    if (missingRequiredAttrIds.size && !p.missingRequiredAttrIds.some((id) => missingRequiredAttrIds.has(id))) return false;
+    if (missingRequiredAttrs === true && requiredMeta.missingRequiredAttrsCount === 0) return false;
+    if (missingRequiredAttrs === false && requiredMeta.missingRequiredAttrsCount > 0) return false;
+    if (missingRequiredAttrIds.size && !requiredMeta.missingRequiredAttrIds.some((id) => missingRequiredAttrIds.has(id))) return false;
     if (hasReviews === true && p.reviewsCount === 0) return false;
     if (hasReviews === false && p.reviewsCount > 0) return false;
     if (hasSku === true && (!p.sku || !p.sku.trim())) return false;
@@ -269,13 +320,13 @@ async function productsResponse(q: URLSearchParams) {
     return true;
   };
 
-  const filtered = allItems.filter(predicate(null));
+  const filtered = all.filter(predicate(null));
 
   // ── Facets: category + brand options derived from the filtered set.
   //    Each facet ignores its own filter — so picking a category still leaves
   //    every category visible in the dropdown (counts shift instead).
   const catCounts = new Map<number, { name: string; count: number }>();
-  for (const p of allItems) {
+  for (const p of all) {
     if (!predicate("category")(p)) continue;
     if (!p.categoryId) continue;
     const e = catCounts.get(p.categoryId) ?? { name: p.categoryName, count: 0 };
@@ -287,7 +338,7 @@ async function productsResponse(q: URLSearchParams) {
     .sort((a, b) => a.name.localeCompare(b.name, "uk"));
 
   const brandCounts = new Map<number, { name: string; count: number }>();
-  for (const p of allItems) {
+  for (const p of all) {
     if (!predicate("brand")(p)) continue;
     if (p.brandId == null) continue;
     const e = brandCounts.get(p.brandId) ?? { name: p.brand, count: 0 };
@@ -301,13 +352,13 @@ async function productsResponse(q: URLSearchParams) {
   // Price bounds: max across the *price-unfiltered* set (so the slider's range
   // doesn't collapse when the user narrows it). Min is just 0.
   let priceMax = 0;
-  for (const p of allItems) {
+  for (const p of all) {
     if (!predicate("price")(p)) continue;
     if ((p.price ?? 0) > priceMax) priceMax = p.price ?? 0;
   }
   // Stock bounds — same self-exclude pattern as price.
   let stockMax = 0;
-  for (const p of allItems) {
+  for (const p of all) {
     if (!predicate("stock")(p)) continue;
     if ((p.stockQty ?? 0) > stockMax) stockMax = p.stockQty ?? 0;
   }
@@ -320,7 +371,7 @@ async function productsResponse(q: URLSearchParams) {
   if (idsInSet.size) {
     // An input is "found" if it matches a product's code OR its goods_ref.
     const present = new Set<number>();
-    for (const p of allItems) {
+    for (const p of all) {
       if (idsInSet.has(p.code)) present.add(p.code);
       if (idsInSet.has(p.goodsRef)) present.add(p.goodsRef);
     }
@@ -328,12 +379,12 @@ async function productsResponse(q: URLSearchParams) {
   }
   if (codesInSet.size) {
     const presentCodes = new Set<number>();
-    for (const p of allItems) if (codesInSet.has(p.code)) presentCodes.add(p.code);
+    for (const p of all) if (codesInSet.has(p.code)) presentCodes.add(p.code);
     notFoundCodes = codesIn.filter((c) => !presentCodes.has(c));
   }
   if (refsInSet.size) {
     const presentRefs = new Set<number>();
-    for (const p of allItems) if (refsInSet.has(p.goodsRef)) presentRefs.add(p.goodsRef);
+    for (const p of all) if (refsInSet.has(p.goodsRef)) presentRefs.add(p.goodsRef);
     notFoundRefs = refsIn.filter((r) => !presentRefs.has(r));
   }
 
@@ -351,7 +402,7 @@ async function productsResponse(q: URLSearchParams) {
       case "imagesCount":      av = a.imagesCount; bv = b.imagesCount; break;
       case "reviewsCount":     av = a.reviewsCount; bv = b.reviewsCount; break;
       case "attributesCount":  av = a.attributesCount; bv = b.attributesCount; break;
-      case "missingRequiredAttrsCount": av = a.missingRequiredAttrsCount; bv = b.missingRequiredAttrsCount; break;
+      case "missingRequiredAttrsCount": av = requiredMetaFor(a).missingRequiredAttrsCount; bv = requiredMetaFor(b).missingRequiredAttrsCount; break;
     }
     if (av < bv) return -1 * sortDir;
     if (av > bv) return 1 * sortDir;
@@ -371,15 +422,16 @@ async function productsResponse(q: URLSearchParams) {
   let noImages = 0, noAttributes = 0, noReviews = 0, noSku = 0;
   const missingRequiredAttrCounts = new Map<number, { name: string; count: number }>();
   for (const p of filtered) {
+    const requiredMeta = requiredMetaFor(p);
     if (inStatsRange(p.firstSeenAt)) newCountRange++;
     if (inStatsRange(p.statusChangedAt)) statusChangedRange++;
     if (p.imagesCount === 0) noImages++;
-    if (p.missingRequiredAttrsCount > 0) noAttributes++;
+    if (requiredMeta.missingRequiredAttrsCount > 0) noAttributes++;
     if (p.reviewsCount === 0) noReviews++;
     if (!p.sku || !p.sku.trim()) noSku++;
-    for (let i = 0; i < p.missingRequiredAttrIds.length; i++) {
-      const id = p.missingRequiredAttrIds[i];
-      const e = missingRequiredAttrCounts.get(id) ?? { name: p.missingRequiredAttrNames[i] ?? `#${id}`, count: 0 };
+    for (let i = 0; i < requiredMeta.missingRequiredAttrIds.length; i++) {
+      const id = requiredMeta.missingRequiredAttrIds[i];
+      const e = missingRequiredAttrCounts.get(id) ?? { name: requiredMeta.missingRequiredAttrNames[i] ?? `#${id}`, count: 0 };
       e.count++;
       missingRequiredAttrCounts.set(id, e);
     }
@@ -390,9 +442,11 @@ async function productsResponse(q: URLSearchParams) {
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const offset = (page - 1) * limit;
-  const pageItems = filtered.slice(offset, offset + limit);
+  const pageItems: ProductListItem[] = filtered
+    .slice(offset, offset + limit)
+    .map((product) => ({ ...product, ...requiredMetaFor(product) }));
 
-  return NextResponse.json({
+  return {
     items: pageItems,
     page,
     limit,
@@ -408,6 +462,8 @@ async function productsResponse(q: URLSearchParams) {
     notFoundRefs,
     asOf: asOfValid ? asOf : null,
     syncedAt,
+    statsFrom,
+    statsTo,
     syncState,
     stats: {
       totalAll,
@@ -418,10 +474,34 @@ async function productsResponse(q: URLSearchParams) {
       noReviews,
       noSku,
     },
-  }, {
-    // Short fresh window + SWR — tab-switches and small filter tweaks hit the
-    // browser cache. Backend data only changes on sync, so 10s is conservative.
-    headers: { "Cache-Control": "private, max-age=10, stale-while-revalidate=60" },
+  };
+}
+
+async function productsResponse(q: URLSearchParams) {
+  const [syncedAt, required] = await Promise.all([
+    readLiteSyncedAt(),
+    readRequiredAttrs(),
+  ]);
+  const context: ProductsCacheContext = {
+    syncedAt,
+    required,
+    key: `${syncedAt ?? ""}:${requiredAttrsKey(required)}`,
+  };
+  const { value: json, status } = await getServerResult({
+    namespace: "products-list-json",
+    key: `${context.key}:${canonicalSearchParams(q)}`,
+    ttlMs: 5 * 60_000,
+    maxEntries: 64,
+    load: async () => JSON.stringify(await buildProductsPayload(q, context)),
+  });
+  return new NextResponse(json, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      // The server key includes the catalog sync timestamp and required-attribute
+      // configuration, so cached pages turn over immediately when either changes.
+      "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+      "X-Agromat-Cache": status,
+    },
   });
 }
 

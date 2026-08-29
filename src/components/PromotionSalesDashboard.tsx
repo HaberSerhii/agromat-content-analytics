@@ -582,11 +582,15 @@ function ProductSalesDetails({
   type,
   label,
   products,
+  loading,
+  error,
   onClose,
 }: {
   type: "brand" | "category";
   label: string;
   products: PromotionSalesProductSummary[];
+  loading?: boolean;
+  error?: string;
   onClose: () => void;
 }) {
   const totalRevenue = products.reduce((sum, product) => sum + product.revenue, 0);
@@ -623,7 +627,15 @@ function ProductSalesDetails({
           <span className="text-right">Документи</span>
           <span className="text-right">Продажі</span>
         </div>
-        {products.map((product) => (
+        {loading && (
+          <div className="px-4 py-8 text-center text-xs" style={{ color: "var(--text-dim)" }}>
+            Завантаження товарів…
+          </div>
+        )}
+        {!loading && error && (
+          <div className="px-4 py-8 text-center text-xs" style={{ color: "#b91c1c" }}>{error}</div>
+        )}
+        {!loading && !error && products.map((product) => (
           <a
             key={`${product.code}-${product.brand}-${product.category}`}
             href={product.url}
@@ -651,7 +663,7 @@ function ProductSalesDetails({
             </span>
           </a>
         ))}
-        {!products.length && (
+        {!loading && !error && !products.length && (
           <div className="px-4 py-8 text-center text-xs" style={{ color: "var(--text-dim)" }}>Продажів немає</div>
         )}
       </div>
@@ -755,6 +767,9 @@ export function PromotionSalesDashboard() {
   const [dayData, setDayData] = useState<PromotionSalesDataset | null>(null);
   const [dayLoading, setDayLoading] = useState(false);
   const [dayError, setDayError] = useState("");
+  const [detailProducts, setDetailProducts] = useState<PromotionSalesProductSummary[] | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -767,7 +782,8 @@ export function PromotionSalesDashboard() {
     else setLoading(true);
     const params = new URLSearchParams({ from: dateFrom, to: dateTo });
     selectedPromotionIdincs.forEach((idinc) => params.append("promotion_idinc", String(idinc)));
-    fetch(`/api/promotions/sales?${params.toString()}`, { cache: "no-store", signal: controller.signal })
+    if (selectedPromotionIdincs.length === 0) params.set("compact", "1");
+    fetch(`/api/promotions/sales?${params.toString()}`, { signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити продажі акційних товарів");
@@ -819,7 +835,7 @@ export function PromotionSalesDashboard() {
     setDayError("");
     const params = new URLSearchParams({ from: selectedChartDate, to: selectedChartDate });
     selectedPromotionIdincs.forEach((idinc) => params.append("promotion_idinc", String(idinc)));
-    fetch(`/api/promotions/sales?${params.toString()}`, { cache: "no-store", signal: controller.signal })
+    fetch(`/api/promotions/sales?${params.toString()}`, { signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити аналіз дня");
@@ -841,6 +857,44 @@ export function PromotionSalesDashboard() {
       controller.abort();
     };
   }, [selectedChartDate, selectedPromotionIdincs]);
+
+  const currentAnalysisData = selectedChartDate ? dayData : data;
+
+  useEffect(() => {
+    setDetailProducts(null);
+    setDetailError("");
+    if (!selectedBucket || !currentAnalysisData || currentAnalysisData.summary.products.length > 0) {
+      setDetailLoading(false);
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    const from = selectedChartDate ?? dateFrom;
+    const to = selectedChartDate ?? dateTo;
+    const params = new URLSearchParams({ from, to, view: "products" });
+    selectedPromotionIdincs.forEach((idinc) => params.append("promotion_idinc", String(idinc)));
+    setDetailLoading(true);
+    fetch(`/api/promotions/sales?${params.toString()}`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити товари");
+        return payload as { products: PromotionSalesProductSummary[] };
+      })
+      .then((payload) => {
+        if (alive) setDetailProducts(payload.products);
+      })
+      .catch((reason: unknown) => {
+        if (!alive || (reason instanceof DOMException && reason.name === "AbortError")) return;
+        setDetailError(reason instanceof Error ? reason.message : "Не вдалося завантажити товари");
+      })
+      .finally(() => {
+        if (alive) setDetailLoading(false);
+      });
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [currentAnalysisData, dateFrom, dateTo, selectedBucket, selectedChartDate, selectedPromotionIdincs]);
 
   const changeFrom = (value: string) => {
     setDateFrom(value);
@@ -888,8 +942,11 @@ export function PromotionSalesDashboard() {
   const selectedPromotions = data.summary.promotions.filter((promotion) =>
     selectedPromotionIdincs.includes(promotion.idinc));
   const analysisData = selectedChartDate ? dayData : data;
+  const availableDetailProducts = (analysisData?.summary.products.length ?? 0) > 0
+    ? analysisData?.summary.products ?? []
+    : detailProducts ?? [];
   const selectedProducts = selectedBucket
-    ? (analysisData?.summary.products ?? []).filter((product) => (
+    ? availableDetailProducts.filter((product) => (
       selectedBucket.type === "brand"
         ? product.brand === selectedBucket.label
         : product.category === selectedBucket.label
@@ -1187,6 +1244,8 @@ export function PromotionSalesDashboard() {
           type={selectedBucket.type}
           label={selectedBucket.label}
           products={selectedProducts}
+          loading={detailLoading}
+          error={detailError}
           onClose={() => setSelectedBucket(null)}
         />
       )}

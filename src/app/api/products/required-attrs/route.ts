@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { readRequiredAttrs, writeRequiredAttrs } from "@/lib/products-store";
+import { isDashboardRequest } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -11,13 +12,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  // Dashboard-only mutation — gate behind NEXT_PUBLIC_DASHBOARD_SECRET
-  const dashboardSecret = process.env.NEXT_PUBLIC_DASHBOARD_SECRET;
-  if (dashboardSecret) {
-    const incoming = req.headers.get("x-dashboard-secret");
-    if (incoming !== dashboardSecret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!isDashboardRequest(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let body: unknown;

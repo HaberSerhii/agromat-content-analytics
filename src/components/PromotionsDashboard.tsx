@@ -1,35 +1,124 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { PromotionSalesDashboard } from "@/components/PromotionSalesDashboard";
-import { PromotionWebFunnelDashboard } from "@/components/PromotionWebFunnelDashboard";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import type {
   HistoricalPromotionLink,
   PromotionCatalogRow,
+  PromotionsCatalogSummary,
   PromotionsCatalogResponse,
 } from "@/lib/promotions-types";
+import type { PromotionsKpiFilter } from "@/lib/promotions-catalog-query";
 
 type Section = "catalog" | "web" | "sales";
 type SetFilter = Set<string> | null;
-type KpiFilter =
-  | "all"
-  | "promotions"
-  | "new_promotions"
-  | "disabled_promotions"
-  | "added_products"
-  | "deleted_products"
-  | "switched_products"
-  | "updated_products"
-  | "products"
-  | "linked"
-  | "not_site"
-  | "no_photo"
-  | "missing_attributes"
-  | "no_reviews"
-  | "no_sku";
+type KpiFilter = PromotionsKpiFilter;
+
+const loadPromotionSalesDashboard = () => import("@/components/PromotionSalesDashboard")
+  .then((module) => module.PromotionSalesDashboard);
+const loadPromotionWebFunnelDashboard = () => import("@/components/PromotionWebFunnelDashboard")
+  .then((module) => module.PromotionWebFunnelDashboard);
+
+function SectionLoading({ label }: { label: string }) {
+  return (
+    <div
+      className="rounded-2xl border px-4 py-16 text-center text-sm font-semibold"
+      style={{ background: "var(--bg-card)", borderColor: "var(--border)", color: "var(--text-dim)" }}
+    >
+      Завантаження {label}…
+    </div>
+  );
+}
+
+const PromotionSalesDashboard = dynamic(loadPromotionSalesDashboard, {
+  ssr: false,
+  loading: () => <SectionLoading label="аналізу продажів" />,
+});
+const PromotionWebFunnelDashboard = dynamic(loadPromotionWebFunnelDashboard, {
+  ssr: false,
+  loading: () => <SectionLoading label="веб-метрик" />,
+});
+
+function preloadSection(section: Section) {
+  if (section === "sales") void loadPromotionSalesDashboard();
+  if (section === "web") void loadPromotionWebFunnelDashboard();
+}
 
 const PAGE_SIZE = 100;
 const UNLINKED = "__unlinked__";
+const EMPTY_SUMMARY: PromotionsCatalogSummary = {
+  promotions: 0,
+  products: 0,
+  positions: 0,
+  linkedProducts: 0,
+  notOnSite: 0,
+  newPromotions: 0,
+  disabledPromotions: 0,
+  addedProducts: 0,
+  deletedProducts: 0,
+  switchedProducts: 0,
+  updatedProducts: 0,
+  noPhoto: 0,
+  missingAttributes: 0,
+  noReviews: 0,
+  noSku: 0,
+};
+
+interface CatalogQueryValues {
+  dateFrom: string;
+  dateTo: string;
+  search: string;
+  category: string;
+  brand: string;
+  price: string;
+  stock: string;
+  photo: string;
+  attributes: string;
+  reviews: string;
+  sku: string;
+  statuses: SetFilter;
+  selectedPromotions: SetFilter;
+  selectedLinks: SetFilter;
+  kpiFilter: KpiFilter;
+}
+
+function buildCatalogParams(
+  values: CatalogQueryValues,
+  options: { page?: number; exportAll?: boolean } = {},
+): URLSearchParams {
+  const params = new URLSearchParams();
+  params.set("view", "compact");
+  if (values.dateFrom && values.dateTo) {
+    params.set("from", values.dateFrom);
+    params.set("to", values.dateTo);
+  }
+  const setUnlessDefault = (name: string, value: string) => {
+    if (value && value !== "all") params.set(name, value);
+  };
+  const setValues = (name: string, value: SetFilter) => {
+    if (value !== null) params.set(name, [...value].sort().join(","));
+  };
+  if (values.search.trim()) params.set("search", values.search.trim());
+  setUnlessDefault("category", values.category);
+  setUnlessDefault("brand", values.brand);
+  setUnlessDefault("price", values.price);
+  setUnlessDefault("stock", values.stock);
+  setUnlessDefault("photo", values.photo);
+  setUnlessDefault("attributes", values.attributes);
+  setUnlessDefault("reviews", values.reviews);
+  setUnlessDefault("sku", values.sku);
+  setValues("statuses", values.statuses);
+  setValues("promotions", values.selectedPromotions);
+  setValues("links", values.selectedLinks);
+  setUnlessDefault("kpi", values.kpiFilter);
+  if (options.exportAll) {
+    params.set("export", "1");
+  } else {
+    params.set("page", String(options.page ?? 1));
+    params.set("limit", String(PAGE_SIZE));
+  }
+  return params;
+}
 
 function formatMoney(value: number | null): string {
   if (value == null) return "—";
@@ -333,10 +422,16 @@ function HistoricalPromotionPicker({
   options,
   selectedId,
   onSelect,
+  onOpen,
+  loading,
+  error,
 }: {
   options: HistoricalPromotionLink[];
   selectedId: string;
   onSelect: (promotion: HistoricalPromotionLink) => void;
+  onOpen: () => void;
+  loading: boolean;
+  error: string;
 }) {
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLowerCase();
@@ -350,7 +445,12 @@ function HistoricalPromotionPicker({
   const selected = options.find((promotion) => String(promotion.idinc) === selectedId);
 
   return (
-    <details className="relative w-full sm:w-auto">
+    <details
+      className="relative w-full sm:w-auto"
+      onToggle={(event) => {
+        if (event.currentTarget.open) onOpen();
+      }}
+    >
       <summary
         className="flex h-9 w-full min-w-0 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border px-3 text-xs font-semibold sm:min-w-[250px] sm:max-w-[380px]"
         style={{ background: selected ? "#e8f4ff" : "var(--bg-input)", borderColor: selected ? "#118dff" : "var(--border2)", color: selected ? "#005a9e" : "var(--text-mid)" }}
@@ -371,6 +471,16 @@ function HistoricalPromotionPicker({
           style={{ background: "var(--bg-input)", borderColor: "var(--border2)" }}
         />
         <div className="max-h-80 overflow-auto">
+          {loading && (
+            <div className="px-2 py-4 text-center text-xs" style={{ color: "var(--text-muted)" }}>
+              Завантаження архіву…
+            </div>
+          )}
+          {!loading && error && (
+            <div className="px-2 py-4 text-center text-xs" style={{ color: "#d13438" }}>
+              {error}
+            </div>
+          )}
           {visibleOptions.map((promotion) => (
             <button
               key={promotion.idinc}
@@ -389,7 +499,7 @@ function HistoricalPromotionPicker({
               </span>
             </button>
           ))}
-          {visibleOptions.length === 0 && (
+          {!loading && !error && visibleOptions.length === 0 && (
             <div className="px-2 py-4 text-center text-xs" style={{ color: "var(--text-muted)" }}>
               Акцій не знайдено
             </div>
@@ -445,9 +555,14 @@ function SummaryCard({
 export function PromotionsDashboard() {
   const [section, setSection] = useState<Section>("catalog");
   const [data, setData] = useState<PromotionsCatalogResponse | null>(null);
+  const [historicalPromotions, setHistoricalPromotions] = useState<HistoricalPromotionLink[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [brand, setBrand] = useState("all");
   const [price, setPrice] = useState("all");
@@ -465,25 +580,56 @@ export function PromotionsDashboard() {
   const [kpiFilter, setKpiFilter] = useState<KpiFilter>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const skipServerDefaultReload = useRef(false);
+  const exportRowsCache = useRef<{ key: string; rows: PromotionCatalogRow[] } | null>(null);
 
   useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearch(search), 250);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    // The first response supplies its effective default date range. Updating
+    // the inputs with that same range must not request the identical page twice.
+    if (skipServerDefaultReload.current) {
+      skipServerDefaultReload.current = false;
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
-    const params = new URLSearchParams();
-    if (dateFrom && dateTo) {
-      params.set("from", dateFrom);
-      params.set("to", dateTo);
-    }
-    const query = params.size ? `?${params.toString()}` : "";
-    fetch(`/api/promotions/catalog${query}`, { cache: "no-store", signal: controller.signal })
+    const params = buildCatalogParams({
+      dateFrom,
+      dateTo,
+      search: debouncedSearch,
+      category,
+      brand,
+      price,
+      stock,
+      photo,
+      attributes,
+      reviews,
+      sku,
+      statuses,
+      selectedPromotions,
+      selectedLinks,
+      kpiFilter,
+    }, { page });
+    fetch(`/api/promotions/catalog?${params.toString()}`, { signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити акції");
         if (!controller.signal.aborted) {
           const nextData = payload as PromotionsCatalogResponse;
           setData(nextData);
+          setHistoricalPromotions((current) => (
+            current.length > nextData.historicalLinkedPromotions.length
+              ? current
+              : nextData.historicalLinkedPromotions
+          ));
+          if (!dateFrom || !dateTo) skipServerDefaultReload.current = true;
           setDateFrom((current) => current || nextData.fromDate);
           setDateTo((current) => current || nextData.toDate);
+          if (nextData.page !== page) setPage(nextData.page);
           setError("");
         }
       })
@@ -494,26 +640,31 @@ export function PromotionsDashboard() {
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
-      });
+    });
     return () => controller.abort();
-  }, [dateFrom, dateTo]);
+  }, [
+    attributes, brand, category, dateFrom, dateTo, debouncedSearch, kpiFilter, page,
+    photo, price, reviews, selectedLinks, selectedPromotions, sku, statuses, stock,
+  ]);
 
-  const facets = useMemo(() => {
-    const items = data?.items ?? [];
-    const categories = new Map<number, string>();
-    const brands = new Set<string>();
-    const statusMap = new Map<number, string>();
-    for (const item of items) {
-      if (item.categoryId != null) categories.set(item.categoryId, item.categoryName);
-      if (item.brand !== "—") brands.add(item.brand);
-      statusMap.set(item.statusId, item.statusName);
-    }
-    return {
-      categories: [...categories.entries()].sort((a, b) => a[1].localeCompare(b[1], "uk")),
-      brands: [...brands].sort((a, b) => a.localeCompare(b, "uk")),
-      statuses: [...statusMap.entries()].sort((a, b) => a[1].localeCompare(b[1], "uk")),
-    };
-  }, [data]);
+  const facets = data?.facets ?? { categories: [], brands: [], statuses: [] };
+
+  const loadHistoricalPromotions = useCallback(() => {
+    if (historyLoaded || historyLoading) return;
+    setHistoryLoading(true);
+    setHistoryError("");
+    fetch("/api/promotions/catalog?view=history")
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити архів акцій");
+        setHistoricalPromotions(payload.historicalLinkedPromotions as HistoricalPromotionLink[]);
+        setHistoryLoaded(true);
+      })
+      .catch((reason: unknown) => {
+        setHistoryError(reason instanceof Error ? reason.message : "Не вдалося завантажити архів акцій");
+      })
+      .finally(() => setHistoryLoading(false));
+  }, [historyLoaded, historyLoading]);
 
   const promotionOptions = useMemo(() => (data?.promotions ?? []).map((promotion) => ({
     value: String(promotion.idinc),
@@ -532,7 +683,7 @@ export function PromotionsDashboard() {
 
   const publicPromotionGroups = useMemo(() => {
     const availableIdincs = new Set((data?.promotions ?? []).map((promotion) => promotion.idinc));
-    return (data?.historicalLinkedPromotions ?? [])
+    return historicalPromotions
       .filter((promotion) => promotion.active)
       .map((promotion) => ({
         idinc: promotion.idinc,
@@ -547,123 +698,17 @@ export function PromotionsDashboard() {
       }))
       .filter((group) => group.promotionIdincs.length > 0)
       .sort((a, b) => a.name.localeCompare(b.name, "uk"));
-  }, [data]);
-
-  const baseFiltered = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-    return (data?.items ?? []).filter((item) => {
-      if (normalizedSearch && ![
-        item.name,
-        item.sku ?? "",
-        String(item.code),
-        String(item.goodsRef),
-        String(item.productId),
-        item.promotionName,
-        String(item.promotionId),
-        String(item.promotionIdinc),
-      ].some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch))) return false;
-      if (category !== "all" && item.categoryId !== Number(category)) return false;
-      if (brand !== "all" && item.brand !== brand) return false;
-      if (price === "under1000" && !(item.promoPrice != null && item.promoPrice < 1000)) return false;
-      if (price === "1000to5000" && !(item.promoPrice != null && item.promoPrice >= 1000 && item.promoPrice <= 5000)) return false;
-      if (price === "over5000" && !(item.promoPrice != null && item.promoPrice > 5000)) return false;
-      if (stock === "positive" && !(item.stockQty != null && item.stockQty > 0)) return false;
-      if (stock === "zero" && item.stockQty !== 0) return false;
-      if (photo === "none" && (!item.onSite || item.imagesCount !== 0)) return false;
-      if (photo === "lt2" && (!item.onSite || item.imagesCount >= 2)) return false;
-      if (attributes === "none" && item.attributesCount !== 0) return false;
-      if (attributes === "missing" && item.missingRequiredAttrsCount === 0) return false;
-      if (reviews === "yes" && item.reviewsCount === 0) return false;
-      if (reviews === "no" && item.reviewsCount > 0) return false;
-      if (sku === "yes" && !item.sku) return false;
-      if (sku === "no" && item.sku) return false;
-      if (statuses !== null && !statuses.has(String(item.statusId))) return false;
-      if (selectedPromotions !== null && !selectedPromotions.has(String(item.promotionIdinc))) return false;
-      if (selectedLinks !== null) {
-        if (item.linkedPromotions.length === 0 && !selectedLinks.has(UNLINKED)) return false;
-        if (item.linkedPromotions.length > 0 && !item.linkedPromotions.some((link) => selectedLinks.has(String(link.idinc)))) return false;
-      }
-      return true;
-    });
-  }, [
-    attributes, brand, category, data, photo, price, reviews, search,
-    selectedLinks, selectedPromotions, sku, statuses, stock,
-  ]);
-
-  const summary = useMemo(() => {
-    const currentRows = baseFiltered.filter((item) => item.change !== "delete");
-    const countUnique = (predicate: (item: PromotionCatalogRow) => boolean) =>
-      new Set(currentRows.filter(predicate).map((item) => item.productId)).size;
-    const representedPromotions = new Set(currentRows.map((item) => item.promotionIdinc));
-    const representedOptions = (data?.promotions ?? []).filter((promotion) =>
-      representedPromotions.has(promotion.idinc),
-    );
-    return {
-      promotions: representedPromotions.size,
-      products: countUnique(() => true),
-      positions: currentRows.length,
-      linkedProducts: countUnique((item) => item.linkedPromotions.length > 0),
-      notOnSite: countUnique((item) => item.onSite === false),
-      newPromotions: representedOptions.filter((promotion) => promotion.isNew).length,
-      disabledPromotions: representedOptions.filter((promotion) => !promotion.active).length,
-      addedProducts: new Set(baseFiltered.filter((item) => item.change === "add").map((item) => item.productId)).size,
-      deletedProducts: new Set(baseFiltered.filter((item) => item.change === "delete").map((item) => item.productId)).size,
-      switchedProducts: new Set(baseFiltered.filter((item) => item.change === "switch").map((item) => item.productId)).size,
-      updatedProducts: new Set(baseFiltered.filter((item) => item.change === "update").map((item) => item.productId)).size,
-      noPhoto: countUnique((item) => item.onSite && item.imagesCount === 0),
-      missingAttributes: countUnique((item) =>
-        item.onSite && item.missingRequiredAttrsCount > 0),
-      noReviews: countUnique((item) => item.onSite && item.reviewsCount === 0),
-      noSku: countUnique((item) => item.onSite && !item.sku),
-    };
-  }, [baseFiltered, data]);
-
-  const filtered = useMemo(() => {
-    if (kpiFilter === "all") return baseFiltered;
-    const promotions = new Map((data?.promotions ?? []).map((promotion) => [promotion.idinc, promotion]));
-    return baseFiltered.filter((item) => {
-      const promotion = promotions.get(item.promotionIdinc);
-      switch (kpiFilter) {
-        case "added_products":
-          return item.change === "add";
-        case "deleted_products":
-          return item.change === "delete";
-        case "switched_products":
-          return item.change === "switch";
-        case "updated_products":
-          return item.change === "update";
-        case "promotions":
-        case "products":
-          return item.change !== "delete";
-        case "new_promotions":
-          return item.change !== "delete" && promotion?.isNew === true;
-        case "disabled_promotions":
-          return item.change !== "delete" && promotion?.active === false;
-        case "linked":
-          return item.change !== "delete" && item.linkedPromotions.length > 0;
-        case "not_site":
-          return item.change !== "delete" && item.onSite === false;
-        case "no_photo":
-          return item.change !== "delete" && item.onSite && item.imagesCount === 0;
-        case "missing_attributes":
-          return item.change !== "delete" && item.onSite && item.missingRequiredAttrsCount > 0;
-        case "no_reviews":
-          return item.change !== "delete" && item.onSite && item.reviewsCount === 0;
-        case "no_sku":
-          return item.change !== "delete" && item.onSite && !item.sku;
-        default:
-          return true;
-      }
-    });
-  }, [baseFiltered, data, kpiFilter]);
+  }, [data?.promotions, historicalPromotions]);
 
   useEffect(() => { setPage(1); }, [
     attributes, brand, category, dateFrom, dateTo, photo, price, reviews, search,
     selectedLinks, selectedPromotions, sku, statuses, stock, kpiFilter,
   ]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const visibleItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const summary = data?.summary ?? EMPTY_SUMMARY;
+  const total = data?.total ?? 0;
+  const pageCount = data?.pageCount ?? 1;
+  const visibleItems = data?.items ?? [];
   const exportDate = () => new Date().toISOString().slice(0, 10);
   const withExportBusy = async (action: () => void | Promise<void>) => {
     setExportBusy(true);
@@ -673,9 +718,36 @@ export function PromotionsDashboard() {
       setExportBusy(false);
     }
   };
-  const goodsRefs = () => uniqueIds(filtered.map((item) => item.goodsRef));
-  const productCodes = () => uniqueIds(filtered.map((item) => item.code));
-  const competitorReportCodes = () => productCodes()
+  const fetchExportRows = async (): Promise<PromotionCatalogRow[]> => {
+    const params = buildCatalogParams({
+      dateFrom,
+      dateTo,
+      search: debouncedSearch,
+      category,
+      brand,
+      price,
+      stock,
+      photo,
+      attributes,
+      reviews,
+      sku,
+      statuses,
+      selectedPromotions,
+      selectedLinks,
+      kpiFilter,
+    }, { exportAll: true });
+    const key = params.toString();
+    if (exportRowsCache.current?.key === key) return exportRowsCache.current.rows;
+    const response = await fetch(`/api/promotions/catalog?${key}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Не вдалося підготувати експорт");
+    const rows = (payload as PromotionsCatalogResponse).items;
+    exportRowsCache.current = { key, rows };
+    return rows;
+  };
+  const goodsRefs = async () => uniqueIds((await fetchExportRows()).map((item) => item.goodsRef));
+  const productCodes = async () => uniqueIds((await fetchExportRows()).map((item) => item.code));
+  const competitorReportCodes = async () => (await productCodes())
     .map((code) => Number(code))
     .filter((code) => Number.isSafeInteger(code) && code > 0);
   const competitorReportLabel = () => {
@@ -690,10 +762,10 @@ export function PromotionsDashboard() {
       if (names.length > 0) return names.slice(0, 3).join("; ") + (names.length > 3 ? ` та ще ${names.length - 3}` : "");
     }
     if (historicalLinkId) {
-      const historical = data?.historicalLinkedPromotions.find((promotion) => String(promotion.idinc) === historicalLinkId);
+      const historical = historicalPromotions.find((promotion) => String(promotion.idinc) === historicalLinkId);
       if (historical) return historical.name;
     }
-    return `Поточна вибірка каталогу акцій (${filtered.length} позицій)`;
+    return `Поточна вибірка каталогу акцій (${total} позицій)`;
   };
 
   const clearFilters = () => {
@@ -774,6 +846,8 @@ export function PromotionsDashboard() {
                 key={value}
                 type="button"
                 onClick={() => setSection(value)}
+                onMouseEnter={() => preloadSection(value)}
+                onFocus={() => preloadSection(value)}
                 className="min-w-0 rounded-lg border-0 px-1.5 py-1.5 text-[11px] font-semibold sm:px-3 sm:text-xs"
                 style={section === value
                   ? { background: "#118dff", color: "#fff" }
@@ -790,9 +864,12 @@ export function PromotionsDashboard() {
           <>
             <div className="mt-3 flex justify-end">
               <HistoricalPromotionPicker
-                options={data?.historicalLinkedPromotions ?? []}
+                options={historicalPromotions}
                 selectedId={historicalLinkId}
                 onSelect={selectHistoricalPromotion}
+                onOpen={loadHistoricalPromotions}
+                loading={historyLoading}
+                error={historyError}
               />
             </div>
             <div className="mt-3 grid w-full grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_36px] items-end justify-end gap-2 sm:flex">
@@ -1025,7 +1102,7 @@ export function PromotionsDashboard() {
           <div className="p-3 border-b space-y-2" style={{ borderColor: "var(--border)" }}>
             <div className="flex flex-wrap items-center gap-1">
               <span className="text-xs font-bold" style={{ color: "var(--text-mid)" }}>
-                {data ? `${filtered.length} товарних позицій` : "Завантаження…"}
+                {data ? `${total} товарних позицій` : "Завантаження…"}
               </span>
               <span className="ml-auto text-[11px]" style={{ color: "var(--text-muted)" }}>
                 {data
@@ -1126,7 +1203,7 @@ export function PromotionsDashboard() {
                 ● Аналітика
               </div>
               <span className="text-[10px] tabular-nums" style={{ color: "#3b82f6" }}>
-                {filtered.length} товарних позицій у вибірці
+                {total} товарних позицій у вибірці
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -1137,7 +1214,7 @@ export function PromotionsDashboard() {
                 bg="rgba(16,185,129,0.12)"
                 busy={exportBusy}
                 successLabel="✓ Завантажено"
-                onClick={() => withExportBusy(() => downloadIdsCsv(goodsRefs(), `promo-goods_ref-${exportDate()}.csv`))}
+                onClick={() => withExportBusy(async () => downloadIdsCsv(await goodsRefs(), `promo-goods_ref-${exportDate()}.csv`))}
                 title="Завантажити унікальні goods_ref поточної вибірки у CSV"
               />
               <ExportPill
@@ -1146,7 +1223,7 @@ export function PromotionsDashboard() {
                 bg="rgba(16,185,129,0.12)"
                 busy={exportBusy}
                 successLabel="✓ Завантажено"
-                onClick={() => withExportBusy(() => downloadIdsXlsx(goodsRefs(), `promo-goods_ref-${exportDate()}.xlsx`, "goods_ref"))}
+                onClick={() => withExportBusy(async () => downloadIdsXlsx(await goodsRefs(), `promo-goods_ref-${exportDate()}.xlsx`, "goods_ref"))}
                 title="Завантажити унікальні goods_ref поточної вибірки у Excel"
               />
               <ExportPill
@@ -1155,7 +1232,7 @@ export function PromotionsDashboard() {
                 bg="rgba(245,158,11,0.12)"
                 busy={exportBusy}
                 successLabel="✓ Скопійовано"
-                onClick={() => withExportBusy(() => copyText(goodsRefs().join("|")))}
+                onClick={() => withExportBusy(async () => copyText((await goodsRefs()).join("|")))}
                 title="Скопіювати goods_ref у форматі id1|id2|…"
               />
 
@@ -1166,7 +1243,7 @@ export function PromotionsDashboard() {
                 bg="rgba(16,185,129,0.12)"
                 busy={exportBusy}
                 successLabel="✓ Завантажено"
-                onClick={() => withExportBusy(() => downloadIdsCsv(productCodes(), `promo-kod-tovara-${exportDate()}.csv`))}
+                onClick={() => withExportBusy(async () => downloadIdsCsv(await productCodes(), `promo-kod-tovara-${exportDate()}.csv`))}
                 title="Завантажити унікальні коди товарів поточної вибірки у CSV"
               />
               <ExportPill
@@ -1175,7 +1252,7 @@ export function PromotionsDashboard() {
                 bg="rgba(16,185,129,0.12)"
                 busy={exportBusy}
                 successLabel="✓ Завантажено"
-                onClick={() => withExportBusy(() => downloadIdsXlsx(productCodes(), `promo-kod-tovara-${exportDate()}.xlsx`, "Код товара"))}
+                onClick={() => withExportBusy(async () => downloadIdsXlsx(await productCodes(), `promo-kod-tovara-${exportDate()}.xlsx`, "Код товара"))}
                 title="Завантажити унікальні коди товарів поточної вибірки у Excel"
               />
               <ExportPill
@@ -1184,7 +1261,7 @@ export function PromotionsDashboard() {
                 bg="rgba(245,158,11,0.12)"
                 busy={exportBusy}
                 successLabel="✓ Скопійовано"
-                onClick={() => withExportBusy(() => copyText(productCodes().join("|")))}
+                onClick={() => withExportBusy(async () => copyText((await productCodes()).join("|")))}
                 title="Скопіювати коди товарів у форматі id1|id2|…"
               />
 
@@ -1195,7 +1272,7 @@ export function PromotionsDashboard() {
                 bg="rgba(99,102,241,0.18)"
                 busy={exportBusy}
                 successLabel="✓ Завантажено"
-                onClick={() => withExportBusy(() => downloadPromotionsXlsx(filtered, `promotions-full-${exportDate()}.xlsx`))}
+                onClick={() => withExportBusy(async () => downloadPromotionsXlsx(await fetchExportRows(), `promotions-full-${exportDate()}.xlsx`))}
                 title="Excel з усіма товарами, цінами, акціями та URL поточної вибірки"
               />
 
@@ -1206,8 +1283,8 @@ export function PromotionsDashboard() {
                 bg="rgba(244,63,94,0.13)"
                 busy={exportBusy}
                 successLabel="✓ Завантажено"
-                onClick={() => withExportBusy(() => downloadPromotionCompetitorReport(
-                  competitorReportCodes(),
+                onClick={() => withExportBusy(async () => downloadPromotionCompetitorReport(
+                  await competitorReportCodes(),
                   "pdf",
                   competitorReportLabel(),
                 ))}
@@ -1219,8 +1296,8 @@ export function PromotionsDashboard() {
                 bg="rgba(34,197,94,0.14)"
                 busy={exportBusy}
                 successLabel="✓ Завантажено"
-                onClick={() => withExportBusy(() => downloadPromotionCompetitorReport(
-                  competitorReportCodes(),
+                onClick={() => withExportBusy(async () => downloadPromotionCompetitorReport(
+                  await competitorReportCodes(),
                   "xlsx",
                   competitorReportLabel(),
                 ))}
@@ -1482,7 +1559,7 @@ export function PromotionsDashboard() {
                 )}
               </div>
               <div className="flex flex-col gap-2 border-t px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
-                <span>Показано {visibleItems.length} із {filtered.length} товарних позицій</span>
+                <span>Показано {visibleItems.length} із {total} товарних позицій</span>
                 <div className="flex items-center justify-between gap-2 sm:justify-start">
                   <button
                     type="button"

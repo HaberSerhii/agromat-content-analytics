@@ -63,7 +63,7 @@ export interface PromotionCatalogRow {
   onSite: boolean;
 }
 
-export interface PromotionsCatalogResponse {
+export interface PromotionsCatalogPayload {
   items: PromotionCatalogRow[];
   promotions: PromotionOption[];
   linkedPromotions: PromotionLink[];
@@ -80,4 +80,37 @@ export interface PromotionsCatalogResponse {
   syncedAt: string | null;
   generatedAt: string;
   today: string;
+}
+
+export interface PromotionsCatalogFacets {
+  categories: [number, string][];
+  brands: string[];
+  statuses: [number, string][];
+}
+
+export interface PromotionsCatalogSummary {
+  promotions: number;
+  products: number;
+  positions: number;
+  linkedProducts: number;
+  notOnSite: number;
+  newPromotions: number;
+  disabledPromotions: number;
+  addedProducts: number;
+  deletedProducts: number;
+  switchedProducts: number;
+  updatedProducts: number;
+  noPhoto: number;
+  missingAttributes: number;
+  noReviews: number;
+  noSku: number;
+}
+
+export interface PromotionsCatalogResponse extends PromotionsCatalogPayload {
+  facets: PromotionsCatalogFacets;
+  summary: PromotionsCatalogSummary;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  total: number;
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { isDashboardRequest } from "@/lib/dashboard-auth";
 import {
   isJobInFlight,
   makeSantechsharaJobId,
@@ -109,6 +110,10 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ action: string }> },
 ) {
+  if (!isDashboardRequest(request)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   const { action } = await params;
   if (!ALLOWED_ACTIONS.has(action)) {
     return NextResponse.json({ ok: false, error: "action_not_allowed" }, { status: 400 });
@@ -124,7 +129,10 @@ export async function POST(
   }
 
   const base = process.env.PARCER_INTERNAL_URL || "http://127.0.0.1:8080";
-  const password = process.env.PARCER_RUN_PASSWORD || "Agromat2026";
+  const password = process.env.PARCER_RUN_PASSWORD;
+  if (!password) {
+    return NextResponse.json({ ok: false, error: "parser_password_not_configured" }, { status: 503 });
+  }
 
   try {
     const resp = await fetch(`${base}/api/run/${action}`, {

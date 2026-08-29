@@ -40,6 +40,11 @@ type CategoryProductSummary = {
   revenue: number;
 };
 
+type CategoryProductsResponse = {
+  category: string;
+  items: CategoryProductSummary[];
+};
+
 type SalesDataset = {
   source: {
     bucket: string;
@@ -251,12 +256,16 @@ function CategoryRankingList({
   productsByCategory,
   maxRevenue,
   expandedCategory,
+  loadingCategory,
+  categoryError,
   onToggleCategory,
 }: {
   items: BucketSummary[];
   productsByCategory: Record<string, CategoryProductSummary[]>;
   maxRevenue: number;
   expandedCategory: string | null;
+  loadingCategory: string | null;
+  categoryError: string | null;
   onToggleCategory: (category: string) => void;
 }) {
   return (
@@ -299,7 +308,12 @@ function CategoryRankingList({
                       </tr>
                     </thead>
                     <tbody>
-                      {products.map((product, index) => (
+                      {loadingCategory === item.label && (
+                        <tr>
+                          <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "var(--text-dim)" }}>Завантаження товарів категорії…</td>
+                        </tr>
+                      )}
+                      {loadingCategory !== item.label && products.map((product, index) => (
                         <tr key={`${product.code}-${product.name}-${index}`} className="border-t" style={{ borderColor: "var(--border)" }}>
                           <td className="px-2 py-2 tabular-nums" style={{ color: "var(--text-dim)" }}>{index + 1}</td>
                           <td className="px-2 py-2 font-semibold" style={{ color: "var(--text)" }}>
@@ -319,7 +333,12 @@ function CategoryRankingList({
                           <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(product.qty)}</td>
                         </tr>
                       ))}
-                      {!products.length && (
+                      {loadingCategory !== item.label && categoryError && (
+                        <tr>
+                          <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "#b91c1c" }}>{categoryError}</td>
+                        </tr>
+                      )}
+                      {loadingCategory !== item.label && !categoryError && !products.length && (
                         <tr>
                           <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "var(--text-dim)" }}>Немає товарів у цій категорії під обрані фільтри</td>
                         </tr>
@@ -843,6 +862,9 @@ export function SalesDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [categoryProducts, setCategoryProducts] = useState<Record<string, CategoryProductSummary[]>>({});
+  const [loadingCategory, setLoadingCategory] = useState<string | null>(null);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
   const [selectedManager, setSelectedManager] = useState<string | null>(null);
   const hasLoadedRef = useRef(false);
 
@@ -866,10 +888,13 @@ export function SalesDashboard() {
     } else {
       setLoading(true);
     }
+    setExpandedCategory(null);
+    setCategoryProducts({});
+    setLoadingCategory(null);
+    setCategoryError(null);
     const request = productSet?.ids.length
       ? fetch("/api/sales", {
           method: "POST",
-          cache: "no-store",
           signal: controller.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -877,14 +902,16 @@ export function SalesDashboard() {
             to: dateTo || undefined,
             productCodes: productSet.ids,
             statuses: selectedStatuses,
+            compact: true,
           }),
         })
       : (() => {
           const params = new URLSearchParams();
           if (dateFrom) params.set("from", dateFrom);
           if (dateTo) params.set("to", dateTo);
+          params.set("compact", "1");
           selectedStatuses.forEach((status) => params.append("status", status));
-          return fetch(`/api/sales?${params.toString()}`, { cache: "no-store", signal: controller.signal });
+          return fetch(`/api/sales?${params.toString()}`, { signal: controller.signal });
         })();
     request
       .then(async (res) => {
@@ -916,6 +943,57 @@ export function SalesDashboard() {
   }, [dateFrom, dateTo, productSet, selectedStatuses]);
 
   useEffect(() => {
+    const category = expandedCategory;
+    if (!category || Object.prototype.hasOwnProperty.call(categoryProducts, category)) return;
+    let alive = true;
+    const controller = new AbortController();
+    setLoadingCategory(category);
+    setCategoryError(null);
+    const request = productSet?.ids.length
+      ? fetch("/api/sales/category-products", {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            category,
+            from: dateFrom || undefined,
+            to: dateTo || undefined,
+            productCodes: productSet.ids,
+            statuses: selectedStatuses,
+          }),
+        })
+      : (() => {
+          const params = new URLSearchParams({ category });
+          if (dateFrom) params.set("from", dateFrom);
+          if (dateTo) params.set("to", dateTo);
+          selectedStatuses.forEach((status) => params.append("status", status));
+          return fetch(`/api/sales/category-products?${params.toString()}`, { signal: controller.signal });
+        })();
+    request
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити товари категорії");
+        return payload as CategoryProductsResponse;
+      })
+      .then((payload) => {
+        if (!alive) return;
+        setCategoryProducts((current) => ({ ...current, [payload.category]: payload.items }));
+      })
+      .catch((reason: unknown) => {
+        if (!alive) return;
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setCategoryError(reason instanceof Error ? reason.message : "Не вдалося завантажити товари категорії");
+      })
+      .finally(() => {
+        if (alive) setLoadingCategory(null);
+      });
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [categoryProducts, dateFrom, dateTo, expandedCategory, productSet, selectedStatuses]);
+
+  useEffect(() => {
     let alive = true;
     const controller = new AbortController();
     const fallbackRange = yearToDateRange();
@@ -925,7 +1003,6 @@ export function SalesDashboard() {
     });
     setWebMetricsLoading(true);
     fetch(`/api/sales/web-metrics?${params.toString()}`, {
-      cache: "no-store",
       signal: controller.signal,
     })
       .then(async (res) => {
@@ -1243,9 +1320,11 @@ export function SalesDashboard() {
       <section className="grid gap-4 xl:grid-cols-2">
         <CategoryRankingList
           items={data.summary.categories}
-          productsByCategory={data.summary.categoryProducts || {}}
+          productsByCategory={categoryProducts}
           maxRevenue={maxCategoryRevenue}
           expandedCategory={expandedCategory}
+          loadingCategory={loadingCategory}
+          categoryError={categoryError}
           onToggleCategory={(category) => setExpandedCategory((current) => (current === category ? null : category))}
         />
         <DocumentStatusOverview

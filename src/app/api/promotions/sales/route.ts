@@ -9,8 +9,12 @@ import type {
   PromotionSalesPromotionInput,
   PromotionSalesPublicGroup,
 } from "@/lib/promotion-sales-types";
+import { canonicalSearchParams, getServerResult } from "@/lib/server-result-cache";
 
 export const dynamic = "force-dynamic";
+
+const COMPACT_CACHE_TTL_MS = 20 * 60_000;
+const DETAIL_CACHE_TTL_MS = 5 * 60_000;
 
 function kyivToday(): string {
   const parts = Object.fromEntries(
@@ -115,26 +119,43 @@ export async function GET(request: Request) {
         .map(Number)
         .filter((idinc) => Number.isFinite(idinc) && idinc > 0),
     )];
-    const allPromotions = await fetchAllPromotions();
-    const publicUrls = buildPublicUrls(allPromotions);
-    const promotions = allPromotions
-      .filter((promotion) => !isBundlePromotion(promotion))
-      .filter((promotion) => overlapsRange(promotion, from, to))
-      .map((promotion) => toPromotionInput(promotion, publicUrls));
-    const publicPromotionGroups = buildPublicGroups(
-      allPromotions,
-      new Set(promotions.map((promotion) => promotion.idinc)),
-    );
-    const dataset = await readPromotionSalesDataset({
-      from,
-      to,
-      selectedPromotionIdincs,
-      promotions,
-      publicPromotionGroups,
+    const compact = url.searchParams.get("compact") === "1";
+    const productsView = url.searchParams.get("view") === "products";
+    const cacheKey = canonicalSearchParams(url.searchParams);
+    const { value: json, status } = await getServerResult({
+      namespace: "promotion-sales-json-v2",
+      key: cacheKey,
+      ttlMs: compact && !productsView ? COMPACT_CACHE_TTL_MS : DETAIL_CACHE_TTL_MS,
+      maxEntries: 16,
+      load: async () => {
+        const allPromotions = await fetchAllPromotions();
+        const publicUrls = buildPublicUrls(allPromotions);
+        const promotions = allPromotions
+          .filter((promotion) => !isBundlePromotion(promotion))
+          .filter((promotion) => overlapsRange(promotion, from, to))
+          .map((promotion) => toPromotionInput(promotion, publicUrls));
+        const publicPromotionGroups = buildPublicGroups(
+          allPromotions,
+          new Set(promotions.map((promotion) => promotion.idinc)),
+        );
+        const dataset = await readPromotionSalesDataset({
+          from,
+          to,
+          selectedPromotionIdincs,
+          promotions,
+          publicPromotionGroups,
+          includeProducts: !compact || productsView,
+        });
+        return JSON.stringify(productsView
+          ? { filter: dataset.filter, products: dataset.summary.products }
+          : dataset);
+      },
     });
-    return NextResponse.json(dataset, {
+    return new NextResponse(json, {
       headers: {
+        "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "private, max-age=60, stale-while-revalidate=600",
+        "X-Agromat-Cache": status,
       },
     });
   } catch (error) {

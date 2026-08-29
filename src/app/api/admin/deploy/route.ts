@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { hasServerBearer } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -24,13 +25,8 @@ async function findRepoRoot(start: string): Promise<string | null> {
 }
 
 function authorize(req: Request): boolean {
-  const cron = process.env.CRON_SECRET;
-  const dash = process.env.NEXT_PUBLIC_DASHBOARD_SECRET;
-  const auth = req.headers.get("authorization") || "";
-  return Boolean(
-    (cron && auth === `Bearer ${cron}`) ||
-    (dash && auth === `Bearer ${dash}`),
-  );
+  // Deploy is intentionally separate from both dashboard and cron access.
+  return hasServerBearer(req, "DEPLOY_SECRET");
 }
 
 // POST → kick off the deploy script detached. Returns immediately; the script

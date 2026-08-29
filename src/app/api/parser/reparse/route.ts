@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
+import { isDashboardRequest } from "@/lib/dashboard-auth";
 import {
   competitorBrandAppearsInText,
   competitorBrandsMatch,
@@ -227,6 +228,10 @@ async function reparseSimple(body: ReparseBody, adapter: string) {
 // legacy Flask parser (Agromat_Parcer), which owns the curl_cffi scrapers.
 // Same JSON contract as Flask's POST /api/reparse — see app.py line ~575.
 export async function POST(request: Request) {
+  if (!isDashboardRequest(request)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   const base = process.env.PARCER_INTERNAL_URL || "http://127.0.0.1:8080";
 
   let body: unknown;
