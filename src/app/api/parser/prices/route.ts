@@ -56,6 +56,12 @@ interface SnapshotRow {
   url_approved: boolean | null;
 }
 
+interface UrlOverrideRow {
+  product_id: number;
+  competitor_id: number;
+  url: string;
+}
+
 interface ProductRow {
   id: number;
   code: number | null;
@@ -328,6 +334,48 @@ async function fetchProductsByIds(
   return out;
 }
 
+async function fetchAllActiveProducts(
+  db: SupabaseClient, search: string, segment: ParserSegment,
+): Promise<ProductRow[]> {
+  const out: ProductRow[] = [];
+  for (let from = 0; from < 100_000; from += PAGE) {
+    const { data, error } = await db
+      .from("products")
+      .select("id, code, goods_ref, sku, name, brand, category, actual_price, url, agromat_status")
+      .eq("is_active", true)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const chunk = (data || []) as ProductRow[];
+    out.push(...filterProductRows(chunk, search, segment));
+    if (chunk.length < PAGE) break;
+  }
+  return out;
+}
+
+async function fetchUrlOverrides(
+  db: SupabaseClient, productIds: number[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  for (let i = 0; i < productIds.length; i += ID_CHUNK) {
+    const chunk = productIds.slice(i, i + ID_CHUNK);
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await db
+        .from("url_overrides")
+        .select("product_id, competitor_id, url")
+        .in("product_id", chunk)
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(error.message);
+      const rows = (data || []) as UrlOverrideRow[];
+      for (const row of rows) {
+        if (row.url) result.set(`${row.product_id}:${row.competitor_id}`, row.url);
+      }
+      if (rows.length < PAGE) break;
+    }
+  }
+  return result;
+}
+
 async function fetchProductsByIdentifiers(
   db: SupabaseClient,
   ids: number[],
@@ -549,6 +597,7 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
   const idsInSet = new Set(idsIn);
   const segment = parseParserSegment(q.get("segment"));
   const identifierField = parseIdentifierField(q.get("identifier_field"));
+  const includeAllProducts = q.get("include_all") === "1";
 
   const db = getSupabase();
   let metadata: ParserPricesMetadata;
@@ -576,7 +625,7 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
   //    identifiers first; snapshots only fill competitor cells. Otherwise a
   //    895-item set collapses to only the few products already present in the
   //    parser snapshot.
-  if (!idsInSet.size && productIdList.length === 0) {
+  if (!includeAllProducts && !idsInSet.size && productIdList.length === 0) {
     return NextResponse.json({
       snapshotDate: effectiveDate,
       competitors,
@@ -594,7 +643,9 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
   try {
     products = idsInSet.size
       ? await fetchProductsByIdentifiers(db, idsIn, search, segment, identifierField)
-      : filterProductRows(dataset.products, search, segment);
+      : includeAllProducts
+        ? await fetchAllActiveProducts(db, search, segment)
+        : filterProductRows(dataset.products, search, segment);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
   }
@@ -614,6 +665,13 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
     notFoundIds = idsIn.filter((id) => !present.has(id));
   }
 
+  let urlOverrides: Map<string, string>;
+  try {
+    urlOverrides = await fetchUrlOverrides(db, products.map((product) => product.id));
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "url_overrides_failed" }, { status: 500 });
+  }
+
   // 6) Build response rows. Sort by name for predictable order.
   const rows: PricesRow[] = products
     .map((p) => {
@@ -621,12 +679,13 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
       const byCompetitor: Record<number, CompetitorCell> = {};
       for (const c of competitors) {
         const snapshot = snapshotsForProduct.get(c.id);
+        const overrideUrl = urlOverrides.get(`${p.id}:${c.id}`) || null;
         if (!snapshot) {
           byCompetitor[c.id] = {
             price: null,
             observedPrice: null,
             status: null,
-            url: null,
+            url: overrideUrl,
             confidence: null,
             foundBrand: null,
             reviewReason: null,
@@ -647,7 +706,7 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
           price: evaluated.price,
           observedPrice,
           status: snapshot.status,
-          url: snapshot.found_url,
+          url: overrideUrl || snapshot.found_url,
           confidence: snapshot.confidence,
           foundBrand,
           reviewReason: evaluated.reviewReason,
@@ -693,6 +752,7 @@ async function cachedPricesResponse(q: URLSearchParams) {
   canonicalQuery.delete("refresh");
   const key = canonicalQueryKey(canonicalQuery);
   const cache = parserPricesCache();
+  if (forceRefresh) cache.clear();
   pruneCache(cache, now);
 
   const cached = cache.get(key);

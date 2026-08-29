@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-type ViewMode = "overview" | "changed" | "vtm-changed" | "below-median" | "vtm-below-median";
-type CabinetMode = "menu" | "sessions" | null;
+type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median";
+type CabinetMode = "menu" | "sessions" | "logs" | null;
 type ExportKind = "general-xlsx" | "segment-xlsx" | "general-pdf" | "segment-pdf";
 
 interface MetricValues {
@@ -44,6 +44,11 @@ interface PriceRow {
   byCompetitor: Record<number, PriceCell>;
 }
 
+interface FacetValue {
+  value: string;
+  count: number;
+}
+
 interface DashboardResponse {
   prototype: boolean;
   currentDate: string | null;
@@ -57,8 +62,8 @@ interface DashboardResponse {
     agromatHigher: MetricValues;
   };
   competitors: Competitor[];
-  categories: string[];
-  brands: string[];
+  categories: FacetValue[];
+  brands: FacetValue[];
   updates: Array<{
     competitorId: number;
     competitor: string;
@@ -85,6 +90,29 @@ interface DashboardSession {
   lastSeen: string;
 }
 
+interface DashboardChangeLog {
+  id: number;
+  at: string;
+  action: "competitor_url_add" | "competitor_url_edit" | "competitor_url_delete";
+  productId: number;
+  competitorId: number;
+  device: string;
+  ip: string;
+  competitor: string;
+  product: string;
+  productUrl: string | null;
+  competitorUrl: string | null;
+}
+
+interface UrlEditorState {
+  productId: number;
+  competitorId: number;
+  competitor: string;
+  product: string;
+  originalUrl: string | null;
+  value: string;
+}
+
 interface CompactDashboardResponse {
   currentDate: string | null;
   competitors: Competitor[];
@@ -95,16 +123,49 @@ interface CompactDashboardResponse {
   error?: string;
 }
 
+interface ParserJobResult {
+  total?: number;
+  found?: number;
+  errors?: number;
+  new_finds?: number;
+  price_changes?: number;
+  blocked?: number;
+}
+
+interface ParserJob {
+  ok: boolean;
+  job_id?: string;
+  action?: string;
+  status?: "starting" | "running" | "blocked" | "done" | "error";
+  current?: number;
+  total?: number;
+  label?: string;
+  started_at?: number;
+  finished_at?: number | null;
+  error?: string | null;
+  result?: ParserJobResult | null;
+}
+
 const VIEW_ITEMS: Array<{ id: ViewMode; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "Головна сторінка" },
   { id: "changed", label: "Змінили ціну", hint: "Усі товари" },
   { id: "vtm-changed", label: "Змінили ціну", hint: "Тільки ВТМ" },
-  { id: "below-median", label: "Ціна нижче сер. медіани", hint: "Усі товари" },
-  { id: "vtm-below-median", label: "Ціна нижче сер. медіани", hint: "Тільки ВТМ" },
+  { id: "not-median", label: "Ціна не в медіані", hint: "Усі товари" },
+  { id: "vtm-not-median", label: "Ціна не в медіані", hint: "Тільки ВТМ" },
 ];
 
 const CHART_COLORS = ["#118dff", "#4a6ee0", "#6d5bd0", "#16a085", "#f39c4a", "#e05c68", "#38a3a5", "#78909c", "#9b59b6", "#2d98da", "#7f8c8d"];
 const ROWS_PER_PAGE = 15;
+const COMPETITOR_SELECTION_STORAGE_KEY = "agromat.competitor-dashboard.selected-competitors.v2";
+const LOCAL_RUNNER_URL = "http://127.0.0.1:8765";
+const LOCAL_BROWSER_ADAPTERS = new Set(["santechshara", "vannaja"]);
+
+function canonicalParserAdapter(adapter: string): string {
+  const normalized = adapter.trim().toLowerCase();
+  if (normalized === "plitka.ua") return "plitka";
+  if (normalized === "leoceramika.com" || normalized === "leo-ceramika") return "leoceramika";
+  return normalized;
+}
 
 const METRICS: Array<{ key: keyof DashboardResponse["overview"]; label: string; symbol: string; tone: string }> = [
   { key: "feed", label: "Товарів у фіді Агромат", symbol: "A", tone: "#118dff" },
@@ -140,6 +201,12 @@ function durationLabel(minutes: number | null): string {
   if (minutes == null) return "тривалість не зафіксована";
   if (minutes < 60) return `${minutes} хв`;
   return `${Math.floor(minutes / 60)} год ${minutes % 60} хв`;
+}
+
+function changeActionLabel(action: DashboardChangeLog["action"]): string {
+  if (action === "competitor_url_add") return "Додав URL";
+  if (action === "competitor_url_edit") return "Відредагував URL";
+  return "Видалив URL і ціну";
 }
 
 function paginationItems(current: number, total: number): Array<number | "ellipsis-left" | "ellipsis-right"> {
@@ -206,12 +273,14 @@ function MetricCard({ label, symbol, tone, value }: {
 
 function PriceValue({ price, ourPrice }: { price: number | null; ourPrice: number | null }) {
   if (price == null) return <span className="text-[#b2b8c0]">—</span>;
-  const delta = ourPrice && ourPrice > 0 ? Math.round(((price - ourPrice) / ourPrice) * 100) : null;
-  const color = delta == null ? "#27313c" : delta < -5 ? "#d14343" : delta > 5 ? "#087a55" : "#66707b";
+  let color = "#66707b";
+  if (ourPrice && ourPrice > 0) {
+    if ((ourPrice - price) / price >= 0.02) color = "#d14343";
+    else if ((price - ourPrice) / ourPrice >= 0.02) color = "#087a55";
+  }
   return (
-    <span className="inline-flex flex-col items-end leading-tight">
+    <span className="inline-flex items-center leading-tight">
       <strong className="whitespace-nowrap text-xs" style={{ color }}>{formatPrice(price)}</strong>
-      {delta != null && <small className="text-[9px] font-bold" style={{ color }}>{delta > 0 ? "+" : ""}{delta}%</small>}
     </span>
   );
 }
@@ -266,7 +335,9 @@ export function CompetitorDashboardV2() {
   const [category, setCategory] = useState("");
   const [brand, setBrand] = useState("");
   const [priceMode, setPriceMode] = useState("all");
+  const [competitorPriceMode, setCompetitorPriceMode] = useState("all");
   const [selectedCompetitors, setSelectedCompetitors] = useState<Set<number>>(new Set());
+  const [competitorSelectionReady, setCompetitorSelectionReady] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -276,12 +347,21 @@ export function CompetitorDashboardV2() {
   const [setDraft, setSetDraft] = useState("");
   const [productIds, setProductIds] = useState("");
   const [notice, setNotice] = useState("");
-  const [localUrls, setLocalUrls] = useState<Record<string, string | null>>({});
+  const [urlEditor, setUrlEditor] = useState<UrlEditorState | null>(null);
+  const [urlSaving, setUrlSaving] = useState(false);
   const [cabinetMode, setCabinetMode] = useState<CabinetMode>(null);
   const [sessions, setSessions] = useState<DashboardSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [changeLogs, setChangeLogs] = useState<DashboardChangeLog[]>([]);
+  const [changeLogsLoading, setChangeLogsLoading] = useState(false);
   const [agromatUpdatedAt, setAgromatUpdatedAt] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState("");
+  const [job, setJob] = useState<ParserJob | null>(null);
+  const [jobSource, setJobSource] = useState<"server" | "local">("server");
+  const [localRunnerHelp, setLocalRunnerHelp] = useState(false);
+  const [cellBusy, setCellBusy] = useState<Record<string, boolean>>({});
+  const [refreshRequest, setRefreshRequest] = useState(0);
+  const handledRefreshRequest = useRef(0);
   const [exporting, setExporting] = useState<ExportKind | null>(null);
   const [hoveredViolation, setHoveredViolation] = useState<number | null>(null);
   const [violationCompetitorId, setViolationCompetitorId] = useState(0);
@@ -290,11 +370,39 @@ export function CompetitorDashboardV2() {
   const selectedKey = [...selectedCompetitors].sort((a, b) => a - b).join(",");
 
   useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(COMPETITOR_SELECTION_STORAGE_KEY);
+      const parsed = stored ? JSON.parse(stored) : [];
+      if (Array.isArray(parsed)) {
+        setSelectedCompetitors(new Set(parsed
+          .map((value) => Number(value))
+          .filter((value) => Number.isSafeInteger(value) && value > 0)));
+      }
+    } catch {
+      // A blocked or malformed localStorage must not prevent the dashboard.
+    } finally {
+      setCompetitorSelectionReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!competitorSelectionReady) return;
+    try {
+      window.localStorage.setItem(COMPETITOR_SELECTION_STORAGE_KEY, JSON.stringify([...selectedCompetitors]));
+    } catch {
+      // Persisting the preference is optional.
+    }
+  }, [competitorSelectionReady, selectedCompetitors]);
+
+  useEffect(() => {
     const controller = new AbortController();
     const query = new URLSearchParams({ page: String(page), limit: String(ROWS_PER_PAGE), view });
+    const forceRefresh = refreshRequest > handledRefreshRequest.current;
+    if (forceRefresh) query.set("refresh", "1");
     if (category) query.set("category", category);
     if (brand) query.set("brand", brand);
     if (priceMode !== "all") query.set("price", priceMode);
+    if (competitorPriceMode !== "all") query.set("competitor_price", competitorPriceMode);
     if (selectedKey) query.set("competitors", selectedKey);
     if (search) query.set("search", search);
     if (productIds) query.set("ids", productIds);
@@ -307,16 +415,27 @@ export function CompetitorDashboardV2() {
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
         return body;
       })
-      .then(setData)
+      .then((body) => {
+        if (forceRefresh) handledRefreshRequest.current = refreshRequest;
+        setData(body);
+      })
       .catch((reason) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
         setError(reason instanceof Error ? reason.message : "Не вдалося завантажити прототип");
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [brand, category, page, priceMode, productIds, search, selectedKey, view, violationCompetitorId]);
+  }, [brand, category, competitorPriceMode, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId]);
 
-  useEffect(() => setPage(1), [brand, category, priceMode, productIds, search, selectedKey, view, violationCompetitorId]);
+  useEffect(() => setPage(1), [brand, category, competitorPriceMode, priceMode, productIds, search, selectedKey, view, violationCompetitorId]);
+
+  useEffect(() => {
+    if (category && data && !data.categories.some((item) => item.value === category)) setCategory("");
+  }, [category, data]);
+
+  useEffect(() => {
+    if (brand && data && !data.brands.some((item) => item.value === brand)) setBrand("");
+  }, [brand, data]);
 
   useEffect(() => {
     const heartbeat = () => fetch("/api/dashboard/sessions", { cache: "no-store" }).catch(() => undefined);
@@ -325,15 +444,14 @@ export function CompetitorDashboardV2() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const defaultCompetitors = useMemo(() => new Set((data?.competitors || []).slice(0, 4).map((item) => item.id)), [data?.competitors]);
-  const visibleCompetitorIds = selectedCompetitors.size ? selectedCompetitors : defaultCompetitors;
+  const visibleCompetitorIds = selectedCompetitors;
   const visibleCompetitors = (data?.competitors || []).filter((competitor) => visibleCompetitorIds.has(competitor.id));
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / ROWS_PER_PAGE));
 
   function toggleCompetitor(id: number) {
     setViolationCompetitorId(0);
     setSelectedCompetitors((current) => {
-      const next = new Set(current.size ? current : defaultCompetitors);
+      const next = new Set(current);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
@@ -343,6 +461,7 @@ export function CompetitorDashboardV2() {
     setCategory("");
     setBrand("");
     setPriceMode("all");
+    setCompetitorPriceMode("all");
     setSelectedCompetitors(new Set());
     setSearchDraft("");
     setSearch("");
@@ -364,17 +483,13 @@ export function CompetitorDashboardV2() {
     setNotice(normalized ? `Застосовано набір з ${normalized.split(",").length} IDD` : "Набір очищено");
   }
 
-  function prototypeUrlAction(productId: number, competitorId: number, nextUrl: string | null) {
-    setLocalUrls((current) => ({ ...current, [`${productId}:${competitorId}`]: nextUrl }));
-    setNotice("Прототип: вигляд URL змінено локально. Запис у БД підключимо після затвердження дизайну.");
-  }
-
   function reportQuery(segmented: boolean): URLSearchParams {
     const query = new URLSearchParams({ view: segmented ? view : "overview" });
     if (!segmented) return query;
     if (category) query.set("category", category);
     if (brand) query.set("brand", brand);
     if (priceMode !== "all") query.set("price", priceMode);
+    if (competitorPriceMode !== "all") query.set("competitor_price", competitorPriceMode);
     if (selectedKey) query.set("competitors", selectedKey);
     if (search) query.set("search", search);
     if (productIds) query.set("ids", productIds);
@@ -501,6 +616,123 @@ export function CompetitorDashboardV2() {
     }
   }
 
+  async function showChangeLogs() {
+    setCabinetMode("logs");
+    setChangeLogsLoading(true);
+    try {
+      const response = await fetch("/api/parser/urls", { cache: "no-store" });
+      const body = await response.json() as { logs?: DashboardChangeLog[]; error?: string };
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      setChangeLogs(body.logs || []);
+    } catch (reason) {
+      setNotice(`Не вдалося отримати логи змін: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setChangeLogsLoading(false);
+    }
+  }
+
+  function makeUrlEditor(row: PriceRow, competitor: Competitor): UrlEditorState {
+    const currentUrl = row.byCompetitor[competitor.id]?.url || null;
+    return {
+      productId: row.productId,
+      competitorId: competitor.id,
+      competitor: competitor.name,
+      product: row.name,
+      originalUrl: currentUrl,
+      value: currentUrl || "",
+    };
+  }
+
+  function openUrlEditor(row: PriceRow, competitor: Competitor) {
+    setUrlEditor(makeUrlEditor(row, competitor));
+  }
+
+  function patchCompetitorCell(editor: UrlEditorState, nextUrl: string | null, deleted = false) {
+    setData((current) => current ? {
+      ...current,
+      rows: current.rows.map((row) => {
+        if (row.productId !== editor.productId) return row;
+        const previous = row.byCompetitor[editor.competitorId];
+        return {
+          ...row,
+          byCompetitor: {
+            ...row.byCompetitor,
+            [editor.competitorId]: {
+              price: deleted ? null : previous?.price ?? null,
+              observedPrice: deleted ? null : previous?.observedPrice ?? null,
+              status: deleted ? "Видалено вручну" : previous?.status ?? null,
+              url: nextUrl,
+              confidence: deleted ? "none" : previous?.confidence ?? null,
+              foundBrand: deleted ? null : previous?.foundBrand ?? null,
+              reviewReason: deleted ? null : previous?.reviewReason ?? null,
+            },
+          },
+        };
+      }),
+    } : current);
+  }
+
+  async function saveCompetitorUrl() {
+    if (!urlEditor || urlSaving) return;
+    const value = urlEditor.value.trim();
+    if (!/^https?:\/\//i.test(value)) {
+      setNotice("URL має починатися з http:// або https://");
+      return;
+    }
+    setUrlSaving(true);
+    try {
+      const response = await fetch("/api/parser/urls", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_id: urlEditor.productId,
+          competitor_id: urlEditor.competitorId,
+          url: value,
+          snapshot_date: data?.currentDate,
+        }),
+      });
+      const body = await response.json() as { ok?: boolean; error?: string; url?: string };
+      if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
+      patchCompetitorCell(urlEditor, body.url || value);
+      setNotice(urlEditor.originalUrl ? "URL конкурента оновлено та записано в лог." : "URL конкурента додано та записано в лог.");
+      setUrlEditor(null);
+      setRefreshRequest((current) => current + 1);
+    } catch (reason) {
+      setNotice(`Не вдалося зберегти URL: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setUrlSaving(false);
+    }
+  }
+
+  async function deleteCompetitorUrl(editorOverride?: UrlEditorState) {
+    const editor = editorOverride || urlEditor;
+    if (!editor || urlSaving) return;
+    if (!window.confirm(`Видалити URL і поточну ціну ${editor.competitor} для цього товару?`)) return;
+    setUrlSaving(true);
+    try {
+      const response = await fetch("/api/parser/urls", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_id: editor.productId,
+          competitor_id: editor.competitorId,
+          url: editor.originalUrl,
+          snapshot_date: data?.currentDate,
+        }),
+      });
+      const body = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
+      patchCompetitorCell(editor, null, true);
+      setNotice("URL і поточну ціну конкурента видалено. Дію записано в лог.");
+      setUrlEditor(null);
+      setRefreshRequest((current) => current + 1);
+    } catch (reason) {
+      setNotice(`Не вдалося видалити URL: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setUrlSaving(false);
+    }
+  }
+
   async function runAgromatUpdate() {
     if (runningAction) return;
     setRunningAction("agromat");
@@ -519,25 +751,138 @@ export function CompetitorDashboardV2() {
 
   async function runCompetitorUpdate(adapter: string, competitor: string) {
     if (runningAction) return;
-    setRunningAction(adapter);
+    const canonicalAdapter = canonicalParserAdapter(adapter);
+    setRunningAction(canonicalAdapter);
+    setLocalRunnerHelp(false);
     try {
-      const response = await fetch(`/api/parser/run/prices-${encodeURIComponent(adapter)}`, { method: "POST" });
-      const body = await response.json() as { ok?: boolean; error?: string; job_id?: string };
-      if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
-      setNotice(`${competitor}: оновлення запущено${body.job_id ? ` · job ${body.job_id}` : ""}.`);
+      const local = LOCAL_BROWSER_ADAPTERS.has(canonicalAdapter);
+      if (local) {
+        const healthResponse = await fetch(`${LOCAL_RUNNER_URL}/health`, { cache: "no-store" });
+        const health = await healthResponse.json().catch(() => ({ ok: false })) as { ok?: boolean; protocol?: number };
+        if (!healthResponse.ok || !health.ok) throw new Error("локальний runner не відповідає");
+        if ((health.protocol || 0) < 2) throw new Error("локальний runner потрібно перезапустити після оновлення dashboard");
+      }
+      const response = local
+        ? await fetch(`${LOCAL_RUNNER_URL}/run/${encodeURIComponent(canonicalAdapter)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source: "agromat-competitor-dashboard" }),
+          })
+        : await fetch(`/api/parser/run/prices-${encodeURIComponent(canonicalAdapter)}`, { method: "POST" });
+      const body = await response.json().catch(() => ({ ok: false, error: "bad_runner_response" })) as ParserJob & { active_job_id?: string };
+      if (!response.ok || body.ok === false) {
+        if (body.error === "busy" && body.active_job_id) {
+          setJob({ ok: true, job_id: body.active_job_id, status: "running", action: `prices-${canonicalAdapter}` });
+          setJobSource(local ? "local" : "server");
+          setNotice(`${competitor}: підключено до вже запущеного оновлення.`);
+          setCabinetMode(null);
+          return;
+        }
+        throw new Error(body.error || `HTTP ${response.status}`);
+      }
+      setJob({ ...body, status: body.status || "starting", action: body.action || `prices-${canonicalAdapter}` });
+      setJobSource(local ? "local" : "server");
+      setNotice(local
+        ? `${competitor}: локальний runner прийняв команду. Відстежуйте прогрес у блоці нижче.`
+        : `${competitor}: оновлення запущено${body.job_id ? ` · job ${body.job_id}` : ""}.`);
       setCabinetMode(null);
     } catch (reason) {
+      if (LOCAL_BROWSER_ADAPTERS.has(canonicalAdapter)) setLocalRunnerHelp(true);
       setNotice(`${competitor}: не вдалося запустити оновлення — ${reason instanceof Error ? reason.message : "невідома помилка"}`);
     } finally {
       setRunningAction("");
     }
   }
 
+  async function reparseCell(productId: number, competitorId: number) {
+    const key = `${productId}:${competitorId}`;
+    if (cellBusy[key]) return;
+    setCellBusy((current) => ({ ...current, [key]: true }));
+    try {
+      const response = await fetch("/api/parser/reparse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product_id: productId, competitor_id: competitorId, snapshot_date: data?.currentDate }),
+      });
+      const body = await response.json() as {
+        ok?: boolean;
+        error?: string;
+        price?: number | null;
+        observed_price?: number | null;
+        status?: string | null;
+        confidence?: string | null;
+        found_brand?: string | null;
+        review_reason?: string | null;
+      };
+      if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
+      setData((current) => current ? {
+        ...current,
+        rows: current.rows.map((row) => row.productId === productId ? {
+          ...row,
+          byCompetitor: {
+            ...row.byCompetitor,
+            [competitorId]: {
+              price: typeof body.price === "number" ? body.price : null,
+              observedPrice: typeof body.observed_price === "number" ? body.observed_price : null,
+              status: body.status ?? row.byCompetitor[competitorId]?.status ?? null,
+              url: row.byCompetitor[competitorId]?.url ?? null,
+              confidence: body.confidence ?? null,
+              foundBrand: body.found_brand ?? null,
+              reviewReason: body.review_reason ?? null,
+            },
+          },
+        } : row),
+      } : current);
+      setNotice("Ціну конкурента оновлено.");
+    } catch (reason) {
+      setNotice(`Не вдалося оновити ціну: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setCellBusy((current) => ({ ...current, [key]: false }));
+    }
+  }
+
+  useEffect(() => {
+    if (!job?.job_id || !["starting", "running"].includes(job.status || "")) return;
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const url = jobSource === "local"
+          ? `${LOCAL_RUNNER_URL}/job/${encodeURIComponent(job.job_id as string)}`
+          : `/api/parser/job/${encodeURIComponent(job.job_id as string)}`;
+        const response = await fetch(url, { cache: "no-store" });
+        const next = await response.json() as ParserJob;
+        if (!response.ok || !next.ok || stopped) return;
+        setJob(next);
+        if (next.status === "done") {
+          stopped = true;
+          setRefreshRequest((value) => value + 1);
+          setNotice(`${next.label || "Оновлення конкурента завершено"}. Дані таблиці оновлюються.`);
+        } else if (next.status === "error" || next.status === "blocked") {
+          stopped = true;
+          setNotice(`Оновлення зупинено: ${next.error || next.label || next.status}.`);
+        }
+      } catch {
+        // A transient poll failure is retried on the next interval.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 3_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [job?.job_id, job?.status, jobSource]);
+
   const latestUpdate = data?.updates.find((update) => update.updatedAt)?.updatedAt || null;
   const progressPct = data?.progress.total ? Math.round((data.progress.completed / data.progress.total) * 100) : 0;
   const activeView = VIEW_ITEMS.find((item) => item.id === view) || VIEW_ITEMS[0];
   const violationTotal = (data?.violations || []).reduce((sum, item) => sum + item.count, 0);
   const hoveredViolationItem = hoveredViolation == null ? null : data?.violations.find((item) => item.competitorId === hoveredViolation);
+  const jobCurrent = job?.current || 0;
+  const jobTotal = job?.total || 0;
+  const jobProgress = jobTotal > 0 ? Math.min(100, Math.round((jobCurrent / jobTotal) * 100)) : 0;
+  const jobFinished = job?.status === "done" || job?.status === "error" || job?.status === "blocked";
+  const jobRunning = job?.status === "starting" || job?.status === "running";
 
   return (
     <div className="min-h-[calc(100dvh-104px)] overflow-hidden rounded-2xl border border-[#dfe4ea] bg-[#f4f5f3] text-[#27313c] shadow-sm">
@@ -605,6 +950,21 @@ export function CompetitorDashboardV2() {
             {notice && (
               <button onClick={() => setNotice("")} className="mb-4 w-full rounded-xl border border-[#9cccf6] bg-[#eef7ff] px-3 py-2 text-left text-xs text-[#175f9f]">{notice} <span className="float-right">×</span></button>
             )}
+            {job && (
+              <section className="mb-4 rounded-xl border border-[#9cccf6] bg-white p-3 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div>
+                    <b className="text-[#26313d]">{job.label || `Оновлення ${(job.action || "").replace(/^prices-/, "")}`}</b>
+                    <div className="mt-1 text-[10px] text-[#71808e]">
+                      {job.status === "done" ? "Завершено" : job.status === "error" || job.status === "blocked" ? `Зупинено: ${job.error || job.status}` : jobSource === "local" ? "Працює локально на цьому комп’ютері" : "Працює на сервері"}
+                      {jobTotal > 0 ? ` · ${jobCurrent}/${jobTotal} товарів` : ""}
+                    </div>
+                  </div>
+                  {jobFinished && <button onClick={() => setJob(null)} className="rounded-lg border-0 bg-[#edf3f8] px-2.5 py-1 text-[10px] font-bold text-[#596571]">Закрити</button>}
+                </div>
+                {!jobFinished && <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#e8edf2]"><div className="h-full rounded-full bg-[#118dff] transition-all" style={{ width: jobTotal > 0 ? `${jobProgress}%` : "18%" }} /></div>}
+              </section>
+            )}
             {error && <div className="mb-4 rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
 
             <section className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3">
@@ -624,23 +984,29 @@ export function CompetitorDashboardV2() {
                     <button onClick={resetFilters} className="rounded-lg border border-[#cbd9e7] bg-[#f3f8fd] px-3 py-2 text-[10px] font-bold text-[#0b6fc2]">Скинути фільтри</button>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
                     <select value={category} onChange={(event) => setCategory(event.target.value)} className="rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-[11px] outline-none focus:border-[#118dff]">
                       <option value="">Усі категорії</option>
-                      {(data?.categories || []).map((value) => <option key={value} value={value}>{value}</option>)}
+                      {(data?.categories || []).map((item) => <option key={item.value} value={item.value}>{item.value} ({formatNumber(item.count)})</option>)}
                     </select>
                     <select value={brand} onChange={(event) => setBrand(event.target.value)} className="rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-[11px] outline-none focus:border-[#118dff]">
                       <option value="">Усі бренди</option>
-                      {(data?.brands || []).map((value) => <option key={value} value={value}>{value}</option>)}
+                      {(data?.brands || []).map((item) => <option key={item.value} value={item.value}>{item.value} ({formatNumber(item.count)})</option>)}
                     </select>
                     <select value={priceMode} onChange={(event) => setPriceMode(event.target.value)} className="rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-[11px] outline-none focus:border-[#118dff]">
                       <option value="all">Будь-яка ціна Агромат</option>
                       <option value="lower">Агромат нижче</option>
                       <option value="higher">Агромат вище</option>
                     </select>
+                    <select value={competitorPriceMode} onChange={(event) => setCompetitorPriceMode(event.target.value)} className="rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-[11px] outline-none focus:border-[#118dff]">
+                      <option value="all">З ціною + без ціни конкурента</option>
+                      <option value="with">З ціною конкурента</option>
+                      <option value="without">Без ціни конкурента</option>
+                    </select>
                     <details className="relative rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-[11px]">
                       <summary className="cursor-pointer list-none font-semibold text-[#56616c]">Конкуренти · {visibleCompetitorIds.size}</summary>
                       <div className="absolute right-0 z-30 mt-3 max-h-64 min-w-56 overflow-auto rounded-xl border border-[#d8dde3] bg-white p-2 shadow-xl">
+                        <button type="button" onClick={() => { setViolationCompetitorId(0); setSelectedCompetitors(new Set()); }} className="mb-1 w-full rounded-lg bg-[#f1f5f8] px-2 py-2 text-left text-[10px] font-bold text-[#52606d]">Зняти всіх конкурентів</button>
                         {(data?.competitors || []).map((competitor) => (
                           <label key={competitor.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 hover:bg-[#f3f7fb]">
                             <input type="checkbox" checked={visibleCompetitorIds.has(competitor.id)} onChange={() => toggleCompetitor(competitor.id)} className="accent-[#118dff]" />
@@ -661,10 +1027,11 @@ export function CompetitorDashboardV2() {
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[980px] border-collapse text-left">
+                  <table className={`w-full border-collapse text-left ${visibleCompetitors.length ? "min-w-[1040px]" : "min-w-[760px]"}`}>
                     <thead className="bg-[#f7f8f8] text-[9px] font-black uppercase tracking-[.12em] text-[#8d969f]">
                       <tr>
-                        <th className="px-3 py-3">Категорія / бренд</th>
+                        <th className="px-3 py-3">Категорія</th>
+                        <th className="px-3 py-3">Бренд</th>
                         <th className="px-3 py-3">Артикул</th>
                         <th className="min-w-64 px-3 py-3">Назва товару</th>
                         <th className="px-3 py-3 text-right">Агромат</th>
@@ -673,16 +1040,18 @@ export function CompetitorDashboardV2() {
                     </thead>
                     <tbody>
                       {loading && !data && (
-                        <tr><td colSpan={4 + visibleCompetitors.length} className="px-4 py-16 text-center text-xs font-semibold text-[#82909d]">Завантаження нового дашборда…</td></tr>
+                        <tr><td colSpan={5 + visibleCompetitors.length} className="px-4 py-16 text-center text-xs font-semibold text-[#82909d]">Завантаження нового дашборда…</td></tr>
                       )}
                       {!loading && data?.rows.length === 0 && (
-                        <tr><td colSpan={4 + visibleCompetitors.length} className="px-4 py-16 text-center text-xs font-semibold text-[#82909d]">За цими фільтрами товарів не знайдено</td></tr>
+                        <tr><td colSpan={5 + visibleCompetitors.length} className="px-4 py-16 text-center text-xs font-semibold text-[#82909d]">За цими фільтрами товарів не знайдено</td></tr>
                       )}
                       {(data?.rows || []).map((row) => (
                         <tr key={row.productId} className="border-t border-[#edf0f2] align-top hover:bg-[#fbfcfd]">
                           <td className="max-w-48 px-3 py-3">
                             <div className="truncate text-[11px] font-bold text-[#34404c]" title={row.category || ""}>{row.category || "Без категорії"}</div>
-                            <div className="mt-1 text-[10px] text-[#8a949e]">{row.brand || "Без бренду"}</div>
+                          </td>
+                          <td className="max-w-40 px-3 py-3">
+                            <div className="truncate text-[10px] font-semibold text-[#6f7983]" title={row.brand || ""}>{row.brand || "Без бренду"}</div>
                           </td>
                           <td className="px-3 py-3 text-[10px] font-semibold text-[#58636f]">
                             {row.sku ? (
@@ -711,24 +1080,31 @@ export function CompetitorDashboardV2() {
                           {visibleCompetitors.map((competitor) => {
                             const cell = row.byCompetitor[competitor.id];
                             const key = `${row.productId}:${competitor.id}`;
-                            const localUrl = Object.prototype.hasOwnProperty.call(localUrls, key) ? localUrls[key] : cell?.url;
+                            const competitorUrl = cell?.url || null;
                             return (
                               <td key={competitor.id} className="px-3 py-3 text-right">
                                 <div className="flex min-h-[50px] flex-col items-end justify-between">
                                   <div className="flex min-h-7 items-start justify-end">
-                                    {cell?.price != null && localUrl ? (
-                                      <a href={localUrl} target="_blank" rel="noreferrer" className="rounded no-underline hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-[#9cccf6]" title={`Відкрити товар на сайті ${competitor.name}`}>
+                                    {cell?.price != null && competitorUrl ? (
+                                      <a href={competitorUrl} target="_blank" rel="noreferrer" className="rounded no-underline hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-[#9cccf6]" title={`Відкрити товар на сайті ${competitor.name}`}>
                                         <PriceValue price={cell.price} ourPrice={row.ourPrice} />
                                       </a>
                                     ) : <PriceValue price={cell?.price ?? null} ourPrice={row.ourPrice} />}
                                   </div>
                                   <div className="flex h-5 items-center justify-end gap-1">
-                                    <button onClick={() => prototypeUrlAction(row.productId, competitor.id, localUrl || "https://")} className="h-5 min-w-[42px] rounded bg-[#edf6ff] px-1.5 text-[9px] font-bold text-[#0b6fc2]">{localUrl ? "URL ✎" : "+ URL"}</button>
                                     <button
-                                      onClick={() => localUrl && prototypeUrlAction(row.productId, competitor.id, null)}
-                                      disabled={!localUrl}
+                                      onClick={() => reparseCell(row.productId, competitor.id)}
+                                      disabled={Boolean(cellBusy[key])}
+                                      className="h-5 w-5 rounded bg-[#eaf5ff] text-[10px] font-bold text-[#0b6fc2] disabled:opacity-50"
+                                      title={`Оновити ціну ${competitor.name} для цього товару зараз`}
+                                      aria-label={`Оновити ціну ${competitor.name}`}
+                                    >{cellBusy[key] ? "…" : "↻"}</button>
+                                    <button onClick={() => openUrlEditor(row, competitor)} className="h-5 min-w-[52px] rounded bg-[#edf6ff] px-1.5 text-[9px] font-bold text-[#0b6fc2]">{competitorUrl ? "Ред. URL" : "+ URL"}</button>
+                                    <button
+                                      onClick={() => void deleteCompetitorUrl(makeUrlEditor(row, competitor))}
+                                      disabled={!competitorUrl && cell?.price == null}
                                       className="h-5 w-5 rounded bg-[#fff0f0] text-[9px] font-bold text-[#c64040] disabled:invisible"
-                                      title="Видалити URL"
+                                      title="Видалити URL і поточну ціну конкурента"
                                       aria-label={`Видалити URL ${competitor.name}`}
                                     >×</button>
                                   </div>
@@ -863,14 +1239,41 @@ export function CompetitorDashboardV2() {
         </div>
       )}
 
+      {urlEditor && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-[#11182799] p-4" onMouseDown={() => !urlSaving && setUrlEditor(null)}>
+          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[9px] font-black uppercase tracking-[.16em] text-[#118dff]">{urlEditor.competitor}</div>
+                <h3 className="mt-1 text-base font-black text-[#26313d]">{urlEditor.originalUrl ? "Редагувати URL конкурента" : "Додати URL конкурента"}</h3>
+                <p className="mt-1 line-clamp-2 text-[10px] text-[#7c8792]">{urlEditor.product}</p>
+              </div>
+              <button disabled={urlSaving} onClick={() => setUrlEditor(null)} className="rounded-lg bg-[#f1f3f5] px-2 py-1 text-sm disabled:opacity-50">×</button>
+            </div>
+            <label className="block text-[10px] font-bold uppercase tracking-[.1em] text-[#68737e]">URL товару конкурента
+              <input autoFocus type="url" value={urlEditor.value} onChange={(event) => setUrlEditor((current) => current ? { ...current, value: event.target.value } : current)} placeholder="https://competitor.ua/product/..." className="mt-1.5 w-full rounded-xl border border-[#d8dde3] px-3 py-2.5 text-xs outline-none focus:border-[#118dff]" />
+            </label>
+            <div className="mt-4 flex flex-wrap justify-between gap-2">
+              <div>
+                {urlEditor.originalUrl && <button disabled={urlSaving} onClick={() => void deleteCompetitorUrl()} className="rounded-lg border border-[#efb5b5] bg-[#fff1f1] px-3 py-2 text-xs font-bold text-[#bd3b3b] disabled:opacity-50">Видалити URL і ціну</button>}
+              </div>
+              <div className="flex gap-2">
+                <button disabled={urlSaving} onClick={() => setUrlEditor(null)} className="rounded-lg border border-[#d8dde3] bg-white px-4 py-2 text-xs font-bold disabled:opacity-50">Скасувати</button>
+                <button disabled={urlSaving || !urlEditor.value.trim()} onClick={() => void saveCompetitorUrl()} className="rounded-lg border-0 bg-[#118dff] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{urlSaving ? "Збереження…" : "Зберегти"}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cabinetMode && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#111827a6] p-4" onMouseDown={() => setCabinetMode(null)}>
           <div className="max-h-[88dvh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <header className="flex items-start justify-between border-b border-[#e4e8ec] px-5 py-4">
               <div>
                 <div className="text-[9px] font-black uppercase tracking-[.18em] text-[#118dff]">Безпечне керування</div>
-                <h3 className="mt-1 text-lg font-black text-[#24303c]">{cabinetMode === "sessions" ? "Актуальні сесії" : "Особистий кабінет"}</h3>
-                <p className="mt-1 text-[10px] text-[#7d8791]">{cabinetMode === "sessions" ? "Пристрої, активні у дашборді протягом останніх 30 хвилин." : "Стан джерел і ручний запуск оновлень."}</p>
+                <h3 className="mt-1 text-lg font-black text-[#24303c]">{cabinetMode === "sessions" ? "Актуальні сесії" : cabinetMode === "logs" ? "Логи змін" : "Особистий кабінет"}</h3>
+                <p className="mt-1 text-[10px] text-[#7d8791]">{cabinetMode === "sessions" ? "Пристрої, активні у дашборді протягом останніх 30 хвилин." : cabinetMode === "logs" ? "Додавання, редагування і видалення URL та цін конкурентів." : "Стан джерел і ручний запуск оновлень."}</p>
               </div>
               <button onClick={() => setCabinetMode(null)} className="rounded-lg bg-[#f0f3f5] px-2.5 py-1.5 text-sm text-[#58636d]">×</button>
             </header>
@@ -891,18 +1294,55 @@ export function CompetitorDashboardV2() {
                   ))}
                 </div>
               </div>
+            ) : cabinetMode === "logs" ? (
+              <div className="p-5">
+                <button onClick={() => setCabinetMode("menu")} className="mb-4 rounded-lg border border-[#cbd9e7] bg-[#f3f8fd] px-3 py-2 text-[10px] font-bold text-[#0b6fc2]">← Назад до кабінету</button>
+                <div className="max-h-[58dvh] overflow-auto rounded-xl border border-[#dfe4ea]">
+                  <div className="sticky top-0 grid min-w-[900px] grid-cols-[1.15fr_.7fr_1fr_1fr_1.2fr_1.3fr] gap-3 bg-[#f5f7f9] px-4 py-2 text-[9px] font-black uppercase tracking-[.1em] text-[#8a949e]"><span>Пристрій</span><span>IP</span><span>Час</span><span>Конкурент</span><span>Дія</span><span>Посилання</span></div>
+                  {changeLogsLoading && <div className="p-8 text-center text-xs text-[#7d8791]">Завантаження логів…</div>}
+                  {!changeLogsLoading && changeLogs.length === 0 && <div className="p-8 text-center text-xs text-[#7d8791]">Змін URL ще не зафіксовано</div>}
+                  {!changeLogsLoading && changeLogs.map((item) => (
+                    <div key={item.id} className="grid min-w-[900px] grid-cols-[1.15fr_.7fr_1fr_1fr_1.2fr_1.3fr] gap-3 border-t border-[#edf0f2] px-4 py-3 text-[10px]">
+                      <span className="font-semibold text-[#34404c]">{item.device}</span>
+                      <span className="font-mono text-[#596571]">{item.ip}</span>
+                      <span className="text-[#596571]">{formatDateTime(item.at)}</span>
+                      <span className="font-semibold text-[#34404c]">{item.competitor}</span>
+                      <span className="text-[#596571]">{changeActionLabel(item.action)}</span>
+                      <span className="flex flex-col items-start gap-1">
+                        {item.productUrl && <a href={item.productUrl} target="_blank" rel="noreferrer" className="max-w-44 truncate text-[#118dff] no-underline" title={item.product}>Товар AGROMAT ↗</a>}
+                        {item.competitorUrl && <a href={item.competitorUrl} target="_blank" rel="noreferrer" className="max-w-44 truncate text-[#7c3aed] no-underline" title={`${item.competitor}: ${item.product}`}>Товар конкурента ↗</a>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : (
               <div className="max-h-[70dvh] space-y-3 overflow-auto p-5">
                 <button onClick={showSessions} className="flex w-full items-center justify-between rounded-xl border border-[#cfe1f2] bg-[#f2f8fe] px-4 py-3 text-left">
                   <span><b className="block text-xs text-[#23415d]">Актуальні сесії</b><small className="mt-1 block text-[9px] text-[#71808e]">Пристрій · IP · час входу</small></span><span className="text-[#118dff]">→</span>
                 </button>
-                <button disabled={Boolean(runningAction)} onClick={runAgromatUpdate} className="flex w-full items-center justify-between rounded-xl border border-[#dfe4ea] bg-white px-4 py-3 text-left disabled:opacity-55">
+                <button onClick={showChangeLogs} className="flex w-full items-center justify-between rounded-xl border border-[#d9d0f2] bg-[#f7f3ff] px-4 py-3 text-left">
+                  <span><b className="block text-xs text-[#49326d]">Логи змін</b><small className="mt-1 block text-[9px] text-[#7c6c93]">URL і ціни конкурентів · пристрій · IP · час</small></span><span className="text-[#7c3aed]">→</span>
+                </button>
+                {localRunnerHelp && (
+                  <div className="rounded-xl border border-[#f2c66d] bg-[#fff9e8] p-4 text-[10px] leading-5 text-[#6f5311]">
+                    <b className="block text-xs text-[#5b430e]">Для Vannaja потрібен локальний runner</b>
+                    <ol className="mt-2 list-decimal pl-4">
+                      <li>Якщо runner уже працював, зупиніть його у старому Terminal через <b>Ctrl+C</b>.</li>
+                      <li>Відкрийте Terminal у папці <b>agromat-content-analytics</b> і запустіть <code className="rounded bg-white px-1.5 py-0.5 font-mono">npm run local-parser-runner</code>.</li>
+                      <li>Не закривайте це вікно Terminal і ще раз натисніть «Оновити Vannaja».</li>
+                    </ol>
+                    <div className="mt-2 text-[9px] text-[#8a6b1e]">Після успішного запуску прогрес з’явиться у верхній частині основного дашборда; дані оновляться автоматично після завершення.</div>
+                    <button onClick={() => copyValue("npm run local-parser-runner", "local-runner-command")} className="mt-2 rounded-lg border border-[#e5bd65] bg-white px-2.5 py-1 text-[9px] font-bold text-[#6f5311]">{copiedKey === "local-runner-command" ? "Скопійовано ✓" : "Скопіювати команду"}</button>
+                  </div>
+                )}
+                <button disabled={Boolean(runningAction) || Boolean(jobRunning)} onClick={runAgromatUpdate} className="flex w-full items-center justify-between rounded-xl border border-[#dfe4ea] bg-white px-4 py-3 text-left disabled:opacity-55">
                   <span><b className="block text-xs text-[#34404c]">Оновити API Agromat</b><small className="mt-1 block text-[9px] text-[#87919b]">Останнє оновлення: {formatDateTime(agromatUpdatedAt)}</small></span><span className="rounded-lg bg-[#eaf5ff] px-2.5 py-1.5 text-[10px] font-bold text-[#0b6fc2]">{runningAction === "agromat" ? "Оновлення…" : "Оновити"}</span>
                 </button>
                 <div className="pt-2 text-[9px] font-black uppercase tracking-[.15em] text-[#8a949e]">Конкуренти</div>
                 {(data?.updates || []).map((update) => (
-                  <button key={update.competitorId} disabled={Boolean(runningAction)} onClick={() => runCompetitorUpdate(update.adapter, update.competitor)} className="flex w-full items-center justify-between rounded-xl border border-[#dfe4ea] bg-white px-4 py-3 text-left disabled:opacity-55">
-                    <span><b className="block text-xs text-[#34404c]">Оновити {update.competitor}</b><small className="mt-1 block text-[9px] text-[#87919b]">Останнє оновлення: {formatDateTime(update.updatedAt)}</small></span><span className="rounded-lg bg-[#eaf5ff] px-2.5 py-1.5 text-[10px] font-bold text-[#0b6fc2]">{runningAction === update.adapter ? "Запуск…" : "Оновити"}</span>
+                  <button key={update.competitorId} disabled={Boolean(runningAction) || Boolean(jobRunning)} onClick={() => runCompetitorUpdate(update.adapter, update.competitor)} className="flex w-full items-center justify-between rounded-xl border border-[#dfe4ea] bg-white px-4 py-3 text-left disabled:opacity-55">
+                    <span><b className="block text-xs text-[#34404c]">Оновити {update.competitor}</b><small className="mt-1 block text-[9px] text-[#87919b]">Останнє оновлення: {formatDateTime(update.updatedAt)}</small></span><span className="rounded-lg bg-[#eaf5ff] px-2.5 py-1.5 text-[10px] font-bold text-[#0b6fc2]">{runningAction === canonicalParserAdapter(update.adapter) ? "Запуск…" : "Оновити"}</span>
                   </button>
                 ))}
               </div>

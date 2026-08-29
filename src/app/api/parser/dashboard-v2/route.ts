@@ -21,7 +21,7 @@ const VTM_TILE = new Set([
 ]);
 
 type Segment = "tile" | "sanitary";
-type ViewMode = "overview" | "changed" | "vtm-changed" | "below-median" | "vtm-below-median";
+type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median";
 
 interface Competitor {
   id: number;
@@ -85,6 +85,11 @@ interface SegmentValues {
 interface MetricValues extends SegmentValues {
   deltaTile: number;
   deltaSanitary: number;
+}
+
+interface FacetValue {
+  value: string;
+  count: number;
 }
 
 interface DashboardBase {
@@ -188,10 +193,13 @@ function median(values: number[]): number | null {
     : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function agromatIsBelowMedian(row: PriceRow): boolean {
+// The Excel competitor report treats AGROMAT as "in the median" while our
+// price does not exceed the median of quality-checked competitor prices.
+// Keep the dashboard filter identical to that established report logic.
+function agromatIsNotInMedian(row: PriceRow): boolean {
   if (row.ourPrice == null || row.ourPrice <= 0) return false;
   const competitorMedian = median(validCompetitorPrices(row));
-  return competitorMedian != null && row.ourPrice < competitorMedian;
+  return competitorMedian != null && row.ourPrice > competitorMedian;
 }
 
 function previousDate(date: string | null): string | null {
@@ -201,12 +209,18 @@ function previousDate(date: string | null): string | null {
   return value.toISOString().slice(0, 10);
 }
 
-async function loadPrices(snapshotDate?: string): Promise<PricesPayload> {
+async function loadPrices(
+  snapshotDate?: string,
+  includeAllProducts = false,
+  forceRefresh = false,
+): Promise<PricesPayload> {
   async function loadPage(page: number): Promise<PricesPayload> {
     const url = new URL("http://internal/api/parser/prices");
     url.searchParams.set("page", String(page));
     url.searchParams.set("limit", "200");
     if (snapshotDate) url.searchParams.set("snapshot_date", snapshotDate);
+    if (includeAllProducts) url.searchParams.set("include_all", "1");
+    if (forceRefresh && page === 1) url.searchParams.set("refresh", "1");
     const response = await parserPricesGet(new Request(url));
     if (!response.ok) {
       const body = await response.text();
@@ -277,8 +291,8 @@ function changedProducts(currentRows: PriceRow[], previousRows: PriceRow[]): Set
   return changed;
 }
 
-async function buildDashboardBase(): Promise<DashboardBase> {
-  const current = await loadPrices();
+async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> {
+  const current = await loadPrices(undefined, true, forceRefresh);
   const priorDate = previousDate(current.snapshotDate);
   const [prior, products, auditRows] = await Promise.all([
     priorDate ? loadPrices(priorDate) : Promise.resolve({ rows: [] } as unknown as PricesPayload),
@@ -394,9 +408,20 @@ function parseIdSet(value: string | null): Set<number> {
 function rowMatchesView(row: PriceRow, view: ViewMode, changedIds: Set<number>): boolean {
   if (view === "changed") return changedIds.has(row.productId);
   if (view === "vtm-changed") return isVtm(row) && changedIds.has(row.productId);
-  if (view === "below-median") return agromatIsBelowMedian(row);
-  if (view === "vtm-below-median") return isVtm(row) && agromatIsBelowMedian(row);
+  if (view === "not-median") return agromatIsNotInMedian(row);
+  if (view === "vtm-not-median") return isVtm(row) && agromatIsNotInMedian(row);
   return true;
+}
+
+function facetValues(rows: PriceRow[], field: "category" | "brand"): FacetValue[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const value = row[field]?.trim();
+    if (value) counts.set(value, (counts.get(value) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => a.value.localeCompare(b.value, "uk"));
 }
 
 export async function GET(request: Request) {
@@ -406,7 +431,7 @@ export async function GET(request: Request) {
     let base: DashboardBase;
     let cacheStatus: string = "miss";
     if (forceRefresh) {
-      base = await buildDashboardBase();
+      base = await buildDashboardBase(true);
       putServerResult({
         namespace: "parser-dashboard-v2",
         key: "base",
@@ -431,18 +456,24 @@ export async function GET(request: Request) {
     const category = query.get("category") || "";
     const brand = query.get("brand") || "";
     const price = query.get("price") || "all";
+    const competitorPrice = query.get("competitor_price") || "all";
     const selectedCompetitors = parseIdSet(query.get("competitors"));
     const violationCompetitorId = Number(query.get("violation_competitor")) || 0;
     const ids = parseIdSet(query.get("ids"));
     const requestedView = query.get("view") || "overview";
-    const view: ViewMode = ["changed", "vtm-changed", "below-median", "vtm-below-median"].includes(requestedView)
-      ? requestedView as ViewMode
+    const legacyView = requestedView === "below-median"
+      ? "not-median"
+      : requestedView === "vtm-below-median"
+        ? "vtm-not-median"
+        : requestedView;
+    const view: ViewMode = ["changed", "vtm-changed", "not-median", "vtm-not-median"].includes(legacyView)
+      ? legacyView as ViewMode
       : "overview";
 
-    const filtered = base.currentRows.filter((row) => {
+    const matchesFilters = (row: PriceRow, omit?: "category" | "brand") => {
       if (!rowMatchesView(row, view, base.changedProductIds)) return false;
-      if (category && row.category !== category) return false;
-      if (brand && row.brand !== brand) return false;
+      if (omit !== "category" && category && row.category !== category) return false;
+      if (omit !== "brand" && brand && row.brand !== brand) return false;
       if (ids.size && !ids.has(row.productId) && !ids.has(row.code || -1) && !ids.has(row.goodsRef || -1)) return false;
       if (search && ![
         row.name,
@@ -453,7 +484,9 @@ export async function GET(request: Request) {
         String(row.code || ""),
         String(row.goodsRef || ""),
       ].some((value) => value.toLowerCase().includes(search))) return false;
-      if (selectedCompetitors.size && validCompetitorPrices(row, selectedCompetitors).length === 0) return false;
+      const scopedCompetitorPrices = validCompetitorPrices(row, selectedCompetitors.size ? selectedCompetitors : undefined);
+      if (competitorPrice === "with" && scopedCompetitorPrices.length === 0) return false;
+      if (competitorPrice === "without" && scopedCompetitorPrices.length > 0) return false;
       if (violationCompetitorId) {
         const competitorPrice = row.byCompetitor[violationCompetitorId]?.price;
         if (row.ourPrice == null || competitorPrice == null || competitorPrice >= row.ourPrice * PRICE_VIOLATION_RATIO) return false;
@@ -461,7 +494,11 @@ export async function GET(request: Request) {
       if (price === "lower" && !agromatIsLower(row)) return false;
       if (price === "higher" && !agromatIsHigher(row)) return false;
       return true;
-    });
+    };
+
+    const filtered = base.currentRows.filter((row) => matchesFilters(row));
+    const categories = facetValues(base.currentRows.filter((row) => matchesFilters(row, "category")), "category");
+    const brands = facetValues(base.currentRows.filter((row) => matchesFilters(row, "brand")), "brand");
     const violationRows = filtered;
     const violations = base.competitors.map((competitor) => ({
       competitorId: competitor.id,
@@ -480,8 +517,8 @@ export async function GET(request: Request) {
       previousDate: base.previousDate,
       overview: base.overview,
       competitors: base.competitors,
-      categories: base.categories,
-      brands: base.brands,
+      categories,
+      brands,
       updates: base.updates,
       progress: base.progress,
       violations,

@@ -2,7 +2,7 @@
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,7 @@ const ALLOWED_ORIGIN_RE = process.env.AGROMAT_LOCAL_RUNNER_ORIGIN_RE
   : null;
 
 const jobs = new Map();
+const JOB_DIR = path.join(ROOT, "data", "parser-jobs");
 
 function json(res, status, payload, origin = "") {
   if (origin && (!ALLOWED_ORIGIN_RE || ALLOWED_ORIGIN_RE.test(origin))) {
@@ -159,6 +160,17 @@ function start(adapter) {
   return jobs.get(jobId);
 }
 
+async function readJob(jobId) {
+  try {
+    const raw = await fs.readFile(path.join(JOB_DIR, `${jobId}.json`), "utf8");
+    const job = JSON.parse(raw);
+    jobs.set(jobId, job);
+    return job;
+  } catch {
+    return jobs.get(jobId) || null;
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || "";
   if (req.method === "OPTIONS") {
@@ -168,7 +180,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
   if (url.pathname === "/health") {
-    return json(res, 200, { ok: true, name: "agromat-local-parser-runner", port: PORT, platform: os.platform() }, origin);
+    return json(res, 200, { ok: true, name: "agromat-local-parser-runner", protocol: 2, port: PORT, platform: os.platform() }, origin);
   }
 
   const runMatch = url.pathname.match(/^\/run\/(santechshara|vannaja)$/);
@@ -181,7 +193,7 @@ const server = http.createServer(async (req, res) => {
 
   const jobMatch = url.pathname.match(/^\/job\/([a-z0-9-]+)$/i);
   if (req.method === "GET" && jobMatch) {
-    const job = jobs.get(jobMatch[1]);
+    const job = await readJob(jobMatch[1]);
     return json(res, job ? 200 : 404, job || { ok: false, error: "not_found" }, origin);
   }
 

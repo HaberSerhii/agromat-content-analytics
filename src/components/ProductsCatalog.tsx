@@ -84,7 +84,7 @@ interface FilterCategory {
 }
 
 type PresetTab = "all" | "new7" | "changed7" | "noImg" | "noAttr" | "noRev";
-type CatalogMode = "catalog" | "analytics" | "timeline" | "prices";
+type CatalogMode = "catalog" | "analytics" | "timeline";
 // Bulk-id filter: a pasted list of identifiers matched against BOTH `code` and
 // `goods_ref` (parser-style — no field toggle). `matchedCount` is the number of
 // catalog products the set resolves to, resolved once at save time.
@@ -2344,9 +2344,8 @@ export function ProductsCatalog() {
   const [catalogStatsFrom, setCatalogStatsFrom] = useState("");
   const [catalogStatsTo, setCatalogStatsTo] = useState("");
   const skipEffectiveStatsReload = useRef(false);
-  // View mode — "catalog" (table of products) vs "timeline" (cross-product
-  // change history grouped by Фото/Атрибути/Відгуки/Артикул/Ціни) vs
-  // "prices" (Vencon/Теплорадість/Сантехшара side-by-side from parser DB).
+  // View mode — competitor prices and their update controls live exclusively
+  // in the main "Аналіз цін конкурентів" dashboard.
   const [mode, setMode] = useState<CatalogMode>("catalog");
 
   useEffect(() => {
@@ -2693,16 +2692,15 @@ export function ProductsCatalog() {
       <Card style={{ borderColor: "#118dff44" }} className="mb-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>
-            Картка товару. {mode === "catalog" ? "Каталог." : mode === "analytics" ? "Аналітика." : mode === "timeline" ? "Хронологія змін." : "Ціни конкурентів."}
+            Картка товару. {mode === "catalog" ? "Каталог." : mode === "analytics" ? "Аналітика." : "Хронологія змін."}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Mode toggle: Каталог / Хронологія змін / Ціни конкурентів */}
+            {/* Competitor prices are managed from the dedicated main dashboard. */}
             <div className="flex gap-1 rounded-xl p-0.5" style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}>
               {([
                 ["catalog",  "Каталог"],
                 ["analytics", "Аналітика"],
                 ["timeline", "Хронологія змін"],
-                ["prices",   "Ціни конкурентів"],
               ] as [CatalogMode, string][]).map(([m, l]) => (
                 <button
                   key={m}
