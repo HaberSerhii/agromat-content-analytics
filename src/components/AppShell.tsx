@@ -57,32 +57,30 @@ const LOCAL_PARCER_URL = "http://127.0.0.1:5001/";
 // JS nor its API requests fire.
 export function AppShell() {
   const pathname = usePathname();
-  const [mounted, setMounted] = useState(false);
-  const [parserFrameReady, setParserFrameReady] = useState(false);
   const isCompetitors = pathname === "/";
   const isCatalog = pathname === "/catalog";
   const isPromotions = pathname === "/promotions";
   const isSales = pathname === "/sales";
-  const [isLocalHost, setIsLocalHost] = useState(
-    () => typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"),
-  );
+  // Keep the server and first client render identical so the visible parser
+  // iframe can be emitted in the initial HTML instead of waiting for hydration.
+  const [isLocalHost, setIsLocalHost] = useState(false);
   useEffect(() => {
-    setMounted(true);
     setIsLocalHost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   }, []);
   const parserUrl = process.env.NEXT_PUBLIC_PARCER_URL || (isLocalHost ? LOCAL_PARCER_URL : PARCER_URL);
 
+  // Like the other dashboards, the parser is mounted only after its first
+  // visit. Once mounted it stays alive across tab switches, preserving its
+  // filters, scroll position and already-rendered report.
+  const [competitorsVisited, setCompetitorsVisited] = useState(isCompetitors);
+  const [parserFrameLoaded, setParserFrameLoaded] = useState(false);
   useEffect(() => {
-    if (!isCompetitors || !parserUrl) {
-      setParserFrameReady(false);
-      return;
-    }
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    timeoutId = setTimeout(() => setParserFrameReady(true), 1200);
-    return () => {
-      if (timeoutId != null) clearTimeout(timeoutId);
-    };
-  }, [isCompetitors, parserUrl]);
+    if (isCompetitors) setCompetitorsVisited(true);
+  }, [isCompetitors]);
+
+  useEffect(() => {
+    setParserFrameLoaded(false);
+  }, [parserUrl]);
 
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
@@ -99,34 +97,36 @@ export function AppShell() {
     if (isSales) setSalesVisited(true);
   }, [isSales]);
 
-  if (!mounted) {
-    return null;
-  }
-
   return (
     <>
-      {parserUrl && (
+      {parserUrl && competitorsVisited && (
         <div
           className="rounded-2xl overflow-hidden border"
+          aria-busy={isCompetitors && !parserFrameLoaded}
           style={{
             display: isCompetitors ? "block" : "none",
+            position: "relative",
             borderColor: "var(--border)",
             background: "var(--bg-card)",
             boxShadow: "var(--shadow-sm)",
             height: "calc(100dvh - 118px)",
           }}
         >
-          {parserFrameReady ? (
-            <iframe
-              src={parserUrl}
-              title="Аналіз цін конкурентів"
-              loading="lazy"
-              className="w-full h-full block"
-              style={{ border: 0 }}
-            />
-          ) : (
-            <div className="h-full w-full flex items-center justify-center bg-white">
-              <div className="text-sm font-semibold" style={{ color: "var(--text-dim)" }}>
+          <iframe
+            src={parserUrl}
+            title="Аналіз цін конкурентів"
+            loading="eager"
+            onLoad={() => setParserFrameLoaded(true)}
+            className="w-full h-full block"
+            style={{ border: 0 }}
+          />
+          {!parserFrameLoaded && isCompetitors && (
+            <div
+              className="absolute inset-0 flex h-full w-full items-center justify-center bg-white"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="animate-pulse text-sm font-semibold" style={{ color: "var(--text-dim)" }}>
                 Завантаження аналізу цін…
               </div>
             </div>
