@@ -70,6 +70,11 @@ read -r promotion_week_from promotion_week_to < <(node -e '
   warm_url \
     "products_catalog_default" \
     "http://127.0.0.1:${APP_PORT}/api/products?page=1&limit=50&status_ids=5%2C3&sort_by=firstSeenAt&sort_dir=desc"
+  # Keep the legacy comparison report warm too. Its 15-minute server cache is
+  # invalidated immediately by parser jobs and manual report mutations.
+  warm_url \
+    "parser_comparison_default" \
+    "http://127.0.0.1:5000/"
   warm_url \
     "parser_prices_default" \
     "http://127.0.0.1:${APP_PORT}/api/parser/prices?page=1&limit=50&refresh=1"

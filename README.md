@@ -334,6 +334,7 @@ APP_DIR=/path/to/Agromat-Analytics ./scripts/setup-vps-storage.sh
 - щогодини `scripts/run-products-sync.sh` для каталогу карток;
 - щогодини на 10-й хвилині `scripts/run-agromat-price-sync.sh` для цін Агромата в аналізі конкурентів (`products.actual_price` у Supabase);
 - щогодини на 17-й хвилині Supabase `pg_cron` виконує `public.cleanup_analytics_retention()`: у `price_snapshots` і `parse_errors` лишаються сьогодні та вчора за `Europe/Kyiv`, `audit_log` зберігається 30 днів, а дублікати `sync_price_change` прибираються на користь канонічної `agromat_price_history`;
+- prewarm дашбордів також прогріває головний Flask-звіт порівняння цін; його 15-хвилинний RAM-кеш скидається одразу після parser job або ручної зміни даних;
 - окремий cron о 09:30 та 13:30 запускає LeoCeramika, потім Plitka.ua; повторна
   спроба пропускає вже успішно опублікований за поточну дату snapshot.
 
