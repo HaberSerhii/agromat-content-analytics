@@ -3,27 +3,56 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 
-// Heavy catalog component (≈2.4K lines + xlsx, etc.) — loaded on demand.
-// Until the user opens tab 2, none of its JS ships. `ssr: false` keeps it out
-// of the server render so the initial HTML stays lean.
-const ProductsCatalog = dynamic(
-  () => import("@/components/ProductsCatalog").then((m) => m.ProductsCatalog),
+// The refreshed product-card dashboard is the production default. The legacy
+// catalog remains available only as an explicit rollback while real-data
+// validation is in progress; it is not rendered or loaded otherwise.
+const ProductCardsDashboardV2 = dynamic(
+  () =>
+    import("@/components/ProductCardsDashboardV2").then(
+      (m) => m.ProductCardsDashboardV2,
+    ),
   {
     ssr: false,
     loading: () => (
-      <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>
+      <div
+        className="text-xs py-6 text-center"
+        style={{ color: "var(--text-dim)" }}
+      >
         Завантаження каталога…
       </div>
     ),
   },
 );
 
+const LegacyProductsCatalog = dynamic(
+  () => import("@/components/ProductsCatalog").then((m) => m.ProductsCatalog),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="text-xs py-6 text-center"
+        style={{ color: "var(--text-dim)" }}
+      >
+        Завантаження каталога…
+      </div>
+    ),
+  },
+);
+
+const ProductCardsDashboard =
+  process.env.NEXT_PUBLIC_PRODUCT_CARDS_DASHBOARD === "legacy"
+    ? LegacyProductsCatalog
+    : ProductCardsDashboardV2;
+
 const SalesDashboard = dynamic(
   () => import("@/components/SalesDashboard").then((m) => m.SalesDashboard),
   {
     ssr: false,
     loading: () => (
-      <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>
+      <div
+        className="text-xs py-6 text-center"
+        style={{ color: "var(--text-dim)" }}
+      >
         Завантаження продажів…
       </div>
     ),
@@ -31,11 +60,17 @@ const SalesDashboard = dynamic(
 );
 
 const PromotionsDashboard = dynamic(
-  () => import("@/components/PromotionsDashboard").then((m) => m.PromotionsDashboard),
+  () =>
+    import("@/components/PromotionsDashboard").then(
+      (m) => m.PromotionsDashboard,
+    ),
   {
     ssr: false,
     loading: () => (
-      <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>
+      <div
+        className="text-xs py-6 text-center"
+        style={{ color: "var(--text-dim)" }}
+      >
         Завантаження акційних пропозицій…
       </div>
     ),
@@ -43,11 +78,17 @@ const PromotionsDashboard = dynamic(
 );
 
 const CompetitorDashboard = dynamic(
-  () => import("@/components/CompetitorDashboardV2").then((m) => m.CompetitorDashboardV2),
+  () =>
+    import("@/components/CompetitorDashboardV2").then(
+      (m) => m.CompetitorDashboardV2,
+    ),
   {
     ssr: false,
     loading: () => (
-      <div className="text-xs py-6 text-center" style={{ color: "var(--text-dim)" }}>
+      <div
+        className="text-xs py-6 text-center"
+        style={{ color: "var(--text-dim)" }}
+      >
         Завантаження аналізу цін…
       </div>
     ),
@@ -88,7 +129,7 @@ export function AppShell() {
 
       {catalogVisited && (
         <div style={{ display: isCatalog ? "block" : "none" }}>
-          <ProductsCatalog />
+          <ProductCardsDashboard />
         </div>
       )}
 

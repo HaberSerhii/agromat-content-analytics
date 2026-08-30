@@ -70,6 +70,12 @@ read -r promotion_week_from promotion_week_to < <(node -e '
   warm_url \
     "products_catalog_default" \
     "http://127.0.0.1:${APP_PORT}/api/products?page=1&limit=50&status_ids=5%2C3&sort_by=firstSeenAt&sort_dir=desc"
+  warm_url \
+    "product_cards_v2_products" \
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=products&page=1&limit=25"
+  warm_url \
+    "product_cards_v2_categories" \
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=categories&page=1&limit=25"
   # Keep the legacy comparison report warm too. Its 15-minute server cache is
   # invalidated immediately by parser jobs and manual report mutations.
   warm_url \
