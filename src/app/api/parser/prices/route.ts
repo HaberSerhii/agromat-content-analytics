@@ -34,9 +34,15 @@ interface CacheEntry {
   storedAt: number;
 }
 
+interface PreparedResponse {
+  body: CacheableBody;
+  status: number;
+  headers?: HeadersInit;
+}
+
 declare global {
   var _parserPricesCache: Map<string, CacheEntry> | undefined;
-  var _parserPricesInflight: Map<string, Promise<NextResponse>> | undefined;
+  var _parserPricesInflight: Map<string, Promise<PreparedResponse>> | undefined;
 }
 
 interface Competitor {
@@ -122,7 +128,7 @@ function parserPricesCache(): Map<string, CacheEntry> {
   return global._parserPricesCache;
 }
 
-function parserPricesInflight(): Map<string, Promise<NextResponse>> {
+function parserPricesInflight(): Map<string, Promise<PreparedResponse>> {
   if (!global._parserPricesInflight) global._parserPricesInflight = new Map();
   return global._parserPricesInflight;
 }
@@ -765,13 +771,15 @@ async function cachedPricesResponse(q: URLSearchParams) {
 
   const inflight = parserPricesInflight();
   const pending = inflight.get(key);
-  if (pending) return pending;
+  if (pending) {
+    const prepared = await pending;
+    return NextResponse.json(prepared.body, { status: prepared.status, headers: prepared.headers });
+  }
 
   const work = (async () => {
     const response = await pricesResponse(canonicalQuery, 200, forceRefresh);
-    if (response.status !== 200) return response;
-
-    const body = await response.clone().json() as CacheableBody;
+    const body = await response.json() as CacheableBody;
+    if (response.status !== 200) return { body, status: response.status };
     const entry: CacheEntry = {
       body,
       expiresAt: Math.min(nextKyivMidnightMs(), Date.now() + CACHE_TTL_MS),
@@ -779,13 +787,14 @@ async function cachedPricesResponse(q: URLSearchParams) {
     };
     cache.set(key, entry);
     pruneCache(cache);
-    return NextResponse.json(body, { headers: cacheHeaders(entry, "MISS") });
+    return { body, status: 200, headers: cacheHeaders(entry, "MISS") };
   })().finally(() => {
     inflight.delete(key);
   });
 
   inflight.set(key, work);
-  return work;
+  const prepared = await work;
+  return NextResponse.json(prepared.body, { status: prepared.status, headers: prepared.headers });
 }
 
 export async function GET(request: Request) {
