@@ -58,6 +58,22 @@ interface PriceRow {
   status: string | null;
   byCompetitor: Record<number, PriceCell>;
   matchChange?: MatchChange | null;
+  newProductSearch?: NewProductSearchState | null;
+}
+
+interface NewProductSearchState {
+  status: "pending" | "searching" | "ready" | "failed";
+  queuedAt: string;
+  startedAt: string | null;
+  jobId: string | null;
+  error: string | null;
+  results: Array<{
+    competitorId: number;
+    competitor: string;
+    url: string;
+    price: number | null;
+    status: string | null;
+  }>;
 }
 
 interface PricesPayload {
@@ -108,7 +124,7 @@ interface DashboardBase {
   currentRows: PriceRow[];
   previousRows: PriceRow[];
   changedProductIds: Set<number>;
-  newFeedProductIds: Set<number>;
+  newProductQueue: Map<number, NewProductSearchState>;
   matchChanges: Map<number, MatchChange>;
   overview: {
     feed: MetricValues;
@@ -335,6 +351,23 @@ async function fetchAuditForDate(snapshotDate: string | null): Promise<AuditRow[
   return rows;
 }
 
+async function fetchOpenNewProductQueue(): Promise<Map<number, NewProductSearchState>> {
+  const { data, error } = await getSupabase()
+    .from("new_product_search_queue")
+    .select("product_id, status, queued_at, started_at, search_job_id, last_error, results")
+    .is("completed_at", null)
+    .order("queued_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return new Map((data || []).map((row) => [Number(row.product_id), {
+    status: row.status as NewProductSearchState["status"],
+    queuedAt: row.queued_at,
+    startedAt: row.started_at || null,
+    jobId: row.search_job_id || null,
+    error: row.last_error || null,
+    results: Array.isArray(row.results) ? row.results : [],
+  }]));
+}
+
 function changedProducts(currentRows: PriceRow[], previousRows: PriceRow[]): Set<number> {
   const previousByProduct = new Map(previousRows.map((row) => [row.productId, row]));
   const changed = new Set<number>();
@@ -356,10 +389,11 @@ function changedProducts(currentRows: PriceRow[], previousRows: PriceRow[]): Set
 async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> {
   const current = await loadPrices(undefined, true, forceRefresh);
   const priorDate = previousDate(current.snapshotDate);
-  const [prior, products, auditRows] = await Promise.all([
+  const [prior, products, auditRows, newProductQueue] = await Promise.all([
     priorDate ? loadPrices(priorDate) : Promise.resolve({ rows: [] } as unknown as PricesPayload),
     fetchAllProducts(),
     fetchAuditForDate(current.snapshotDate),
+    fetchOpenNewProductQueue(),
   ]);
   const activeProducts = products.filter((product) => product.is_active !== false);
   const productById = new Map(products.map((product) => [product.id, product]));
@@ -394,9 +428,6 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
   const previousLower = countBySegment(prior.rows || [], agromatIsLower, (row) => row.category);
   const currentHigher = countBySegment(current.rows, agromatIsHigher, (row) => row.category);
   const previousHigher = countBySegment(prior.rows || [], agromatIsHigher, (row) => row.category);
-  const newFeedProductIds = new Set(auditRows
-    .filter((row) => row.action === "sync_added" && row.product_id)
-    .map((row) => row.product_id as number));
   const currentMatchChanges = matchChanges(current.rows, prior.rows || []);
 
   const parserRuns = auditRows.filter((row) => row.action === "parser_run");
@@ -445,7 +476,7 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
     currentRows: current.rows,
     previousRows: prior.rows || [],
     changedProductIds: changedProducts(current.rows, prior.rows || []),
-    newFeedProductIds,
+    newProductQueue,
     matchChanges: currentMatchChanges,
     overview: {
       feed: metric(feedNow, feedBefore),
@@ -478,7 +509,7 @@ function rowMatchesView(row: PriceRow, view: ViewMode, base: DashboardBase): boo
   if (view === "vtm-changed") return isVtm(row) && base.changedProductIds.has(row.productId);
   if (view === "not-median") return agromatIsNotInMedian(row);
   if (view === "vtm-not-median") return isVtm(row) && agromatIsNotInMedian(row);
-  if (view === "new-feed") return base.newFeedProductIds.has(row.productId);
+  if (view === "new-feed") return base.newProductQueue.has(row.productId);
   if (view === "match-changed") return base.matchChanges.has(row.productId);
   return true;
 }
@@ -567,6 +598,10 @@ export async function GET(request: Request) {
     };
 
     const filtered = base.currentRows.filter((row) => matchesFilters(row));
+    if (view === "new-feed") {
+      filtered.sort((left, right) => String(base.newProductQueue.get(left.productId)?.queuedAt || "")
+        .localeCompare(String(base.newProductQueue.get(right.productId)?.queuedAt || "")));
+    }
     const categories = facetValues(base.currentRows.filter((row) => matchesFilters(row, "category")), "category");
     const brands = facetValues(base.currentRows.filter((row) => matchesFilters(row, "brand")), "brand");
     const violationRows = filtered;
@@ -583,9 +618,12 @@ export async function GET(request: Request) {
     const responseRows = filtered.slice(start, start + limit).map((row) => {
       const before = previousByProduct.get(row.productId);
       const withMatchChanges = annotateMatchChanges(row, before, base.matchChanges.get(row.productId));
-      return view === "changed" || view === "vtm-changed"
+      const annotated = view === "changed" || view === "vtm-changed"
         ? annotatePriceChanges(withMatchChanges, before)
         : withMatchChanges;
+      return view === "new-feed"
+        ? { ...annotated, newProductSearch: base.newProductQueue.get(row.productId) || null }
+        : annotated;
     });
 
     const responseBody = {

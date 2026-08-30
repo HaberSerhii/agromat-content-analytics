@@ -49,6 +49,16 @@ interface PriceRow {
   status: string | null;
   byCompetitor: Record<number, PriceCell>;
   matchChange?: MatchChange | null;
+  newProductSearch?: NewProductSearchState | null;
+}
+
+interface NewProductSearchState {
+  status: "pending" | "searching" | "ready" | "failed";
+  queuedAt: string;
+  startedAt: string | null;
+  jobId: string | null;
+  error: string | null;
+  results: ProductSearchMatch[];
 }
 
 interface FacetValue {
@@ -133,10 +143,19 @@ interface CompactDashboardResponse {
 interface ParserJobResult {
   total?: number;
   found?: number;
-  errors?: number;
-  new_finds?: number;
-  price_changes?: number;
+  errors?: number | Array<unknown>;
+  new_finds?: number | Array<unknown>;
+  price_changes?: number | Array<unknown>;
   blocked?: number;
+  matches?: ProductSearchMatch[];
+}
+
+interface ProductSearchMatch {
+  competitorId: number;
+  competitor: string;
+  url: string;
+  price: number | null;
+  status: string | null;
 }
 
 interface ParserJob {
@@ -151,6 +170,15 @@ interface ParserJob {
   finished_at?: number | null;
   error?: string | null;
   result?: ParserJobResult | null;
+  product_id?: number;
+}
+
+interface ProductSearchResults {
+  productId: number;
+  product: string;
+  productUrl: string | null;
+  matches: ProductSearchMatch[];
+  errors: number;
 }
 
 const VIEW_ITEMS: Array<{ id: ViewMode; label: string; hint: string }> = [
@@ -388,6 +416,8 @@ export function CompetitorDashboardV2() {
   const [agromatUpdatedAt, setAgromatUpdatedAt] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState("");
   const [job, setJob] = useState<ParserJob | null>(null);
+  const [productSearchResults, setProductSearchResults] = useState<ProductSearchResults | null>(null);
+  const [productSearchClosing, setProductSearchClosing] = useState(false);
   const [localRunnerHelp, setLocalRunnerHelp] = useState(false);
   const [cellBusy, setCellBusy] = useState<Record<string, boolean>>({});
   const [refreshRequest, setRefreshRequest] = useState(0);
@@ -466,6 +496,32 @@ export function CompetitorDashboardV2() {
   useEffect(() => {
     if (brand && data && !data.brands.some((item) => item.value === brand)) setBrand("");
   }, [brand, data]);
+
+  useEffect(() => {
+    if (view !== "new-feed" || productSearchResults) return;
+    const ready = data?.rows.find((row) => row.newProductSearch?.status === "ready");
+    if (ready?.newProductSearch) {
+      setProductSearchResults({
+        productId: ready.productId,
+        product: ready.name,
+        productUrl: ready.ourUrl,
+        matches: ready.newProductSearch.results,
+        errors: 0,
+      });
+      return;
+    }
+    if (job) return;
+    const active = data?.rows.find((row) => row.newProductSearch?.status === "searching" && row.newProductSearch.jobId);
+    if (!active?.newProductSearch?.jobId) return;
+    setJob({
+      ok: true,
+      job_id: active.newProductSearch.jobId,
+      action: "product-search",
+      product_id: active.productId,
+      status: "running",
+      label: `Пошук конкурентів: ${active.name}`,
+    });
+  }, [data, job, productSearchResults, view]);
 
   useEffect(() => {
     const heartbeat = () => fetch("/api/dashboard/sessions", { cache: "no-store" }).catch(() => undefined);
@@ -821,6 +877,90 @@ export function CompetitorDashboardV2() {
     }
   }
 
+  async function runNewProductSearch(row: PriceRow) {
+    if (runningAction || jobRunning) return;
+    setRunningAction(`product-search:${row.productId}`);
+    setNotice("");
+    try {
+      const response = await fetch("/api/parser/new-product-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product_id: row.productId }),
+      });
+      const body = await response.json().catch(() => ({ ok: false, error: "bad_runner_response" })) as ParserJob;
+      if (!response.ok || body.ok === false || !body.job_id) throw new Error(body.error || `HTTP ${response.status}`);
+      setJob({
+        ...body,
+        action: "product-search",
+        product_id: row.productId,
+        status: body.status || "starting",
+        label: `Пошук конкурентів: ${row.name}`,
+      });
+      setData((current) => current ? {
+        ...current,
+        rows: current.rows.map((item) => item.productId === row.productId ? {
+          ...item,
+          newProductSearch: {
+            status: "searching",
+            queuedAt: item.newProductSearch?.queuedAt || new Date().toISOString(),
+            startedAt: new Date().toISOString(),
+            jobId: body.job_id || null,
+            error: null,
+            results: [],
+          },
+        } : item),
+      } : current);
+      setNotice("Пошук URL цього товару запущено по всіх доступних конкурентах.");
+    } catch (reason) {
+      setNotice(`Не вдалося запустити пошук: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setRunningAction("");
+    }
+  }
+
+  async function markProductSearchFailed(productId: number, message: string) {
+    await fetch("/api/parser/new-product-search", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ product_id: productId, state: "failed", error: message }),
+    }).catch(() => undefined);
+    setData((current) => current ? {
+      ...current,
+      rows: current.rows.map((row) => row.productId === productId && row.newProductSearch ? {
+        ...row,
+        newProductSearch: { ...row.newProductSearch, status: "failed", error: message },
+      } : row),
+    } : current);
+  }
+
+  async function closeProductSearchResults() {
+    if (!productSearchResults || productSearchClosing) return;
+    setProductSearchClosing(true);
+    try {
+      const response = await fetch("/api/parser/new-product-search", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product_id: productSearchResults.productId, state: "completed" }),
+      });
+      const body = await response.json().catch(() => ({ ok: false, error: "bad_response" })) as { ok?: boolean; error?: string };
+      if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
+      const productId = productSearchResults.productId;
+      setProductSearchResults(null);
+      setJob(null);
+      setData((current) => current ? {
+        ...current,
+        rows: current.rows.filter((row) => row.productId !== productId),
+        total: Math.max(0, current.total - 1),
+      } : current);
+      setRefreshRequest((current) => current + 1);
+      setNotice("Пошук завершено. Товар прибрано з черги нових товарів.");
+    } catch (reason) {
+      setNotice(`Не вдалося завершити обробку: ${reason instanceof Error ? reason.message : "невідома помилка"}`);
+    } finally {
+      setProductSearchClosing(false);
+    }
+  }
+
   async function reparseCell(productId: number, competitorId: number) {
     const key = `${productId}:${competitorId}`;
     if (cellBusy[key]) return;
@@ -879,14 +1019,38 @@ export function CompetitorDashboardV2() {
         const url = `/api/parser/job/${encodeURIComponent(job.job_id as string)}`;
         const response = await fetch(url, { cache: "no-store" });
         const next = await response.json() as ParserJob;
-        if (!response.ok || !next.ok || stopped) return;
+        if (!response.ok || !next.ok || stopped) {
+          if (!stopped && job.action === "product-search" && job.product_id && response.status === 404) {
+            stopped = true;
+            void markProductSearchFailed(job.product_id, "search_job_not_found");
+            setJob((current) => current ? { ...current, status: "error", error: "search_job_not_found" } : current);
+            setNotice("Попередній процес пошуку вже недоступний. Товар лишився в черзі — пошук можна запустити повторно.");
+          }
+          return;
+        }
         setJob(next);
         if (next.status === "done") {
           stopped = true;
-          setRefreshRequest((value) => value + 1);
-          setNotice(`${next.label || "Оновлення конкурента завершено"}. Дані таблиці оновлюються.`);
+          if (next.action === "product-search" && next.product_id) {
+            const product = data?.rows.find((row) => row.productId === next.product_id);
+            const errors = Array.isArray(next.result?.errors) ? next.result.errors.length : Number(next.result?.errors || 0);
+            setProductSearchResults({
+              productId: next.product_id,
+              product: product?.name || `Товар #${next.product_id}`,
+              productUrl: product?.ourUrl || null,
+              matches: next.result?.matches || [],
+              errors,
+            });
+            setNotice("Пошук завершено. Перевірте знайдені посилання у вікні результатів.");
+          } else {
+            setRefreshRequest((value) => value + 1);
+            setNotice(`${next.label || "Оновлення конкурента завершено"}. Дані таблиці оновлюються.`);
+          }
         } else if (next.status === "error" || next.status === "blocked") {
           stopped = true;
+          if (next.action === "product-search" && next.product_id) {
+            void markProductSearchFailed(next.product_id, next.error || next.status || "search_failed");
+          }
           setNotice(`Оновлення зупинено: ${next.error || next.label || next.status}.`);
         }
       } catch {
@@ -899,7 +1063,7 @@ export function CompetitorDashboardV2() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [job?.job_id, job?.status]);
+  }, [job?.action, job?.job_id, job?.product_id, job?.status, data?.rows]);
 
   const latestUpdate = data?.updates.find((update) => update.updatedAt)?.updatedAt || null;
   const progressPct = data?.progress.total ? Math.round((data.progress.completed / data.progress.total) * 100) : 0;
@@ -1123,6 +1287,30 @@ export function CompetitorDashboardV2() {
                                 {row.matchChange === "added" ? "Співпадіння знайдено" : "Співпадіння втрачено"}
                               </span>
                             )}
+                            {view === "new-feed" && row.newProductSearch && (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void runNewProductSearch(row)}
+                                  disabled={row.newProductSearch.status === "searching" || Boolean(runningAction) || Boolean(jobRunning)}
+                                  className="rounded-lg border border-[#9cccf6] bg-[#eef7ff] px-2.5 py-1.5 text-[9px] font-black text-[#0b6fc2] disabled:cursor-not-allowed disabled:opacity-55"
+                                >
+                                  {row.newProductSearch.status === "searching"
+                                    ? "Пошук конкурентів…"
+                                    : row.newProductSearch.status === "failed"
+                                      ? "Повторити пошук URL"
+                                      : "Знайти URL у конкурентів"}
+                                </button>
+                                {row.newProductSearch.status === "failed" && (
+                                  <p className="mt-1 max-w-64 text-[8px] leading-3 text-[#bd3b3b]" title={row.newProductSearch.error || ""}>
+                                    Попередня спроба не завершилась. Товар лишився в черзі.
+                                  </p>
+                                )}
+                                {row.newProductSearch.status === "pending" && (
+                                  <p className="mt-1 text-[8px] text-[#8b949e]">У черзі з {formatDateTime(row.newProductSearch.queuedAt)}</p>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-3 text-right text-xs font-black text-[#26313d]">{formatPrice(row.ourPrice)}</td>
                           {visibleCompetitors.map((competitor) => {
@@ -1313,6 +1501,54 @@ export function CompetitorDashboardV2() {
                 <button disabled={urlSaving || !urlEditor.value.trim()} onClick={() => void saveCompetitorUrl()} className="rounded-lg border-0 bg-[#118dff] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{urlSaving ? "Збереження…" : "Зберегти"}</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {productSearchResults && (
+        <div className="fixed inset-0 z-[58] flex items-center justify-center bg-[#111827a6] p-4" onMouseDown={() => void closeProductSearchResults()}>
+          <div className="max-h-[88dvh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="flex items-start justify-between gap-4 border-b border-[#e4e8ec] px-5 py-4">
+              <div>
+                <div className="text-[9px] font-black uppercase tracking-[.18em] text-[#087a55]">Пошук завершено</div>
+                <h3 className="mt-1 text-lg font-black text-[#24303c]">Знайдені товари конкурентів</h3>
+                {productSearchResults.productUrl ? (
+                  <a href={productSearchResults.productUrl} target="_blank" rel="noreferrer" className="mt-1 block text-[10px] font-semibold text-[#118dff] no-underline hover:underline">{productSearchResults.product} ↗</a>
+                ) : <p className="mt-1 text-[10px] font-semibold text-[#596571]">{productSearchResults.product}</p>}
+              </div>
+              <button disabled={productSearchClosing} onClick={() => void closeProductSearchResults()} className="rounded-lg bg-[#f0f3f5] px-2.5 py-1.5 text-sm text-[#58636d] disabled:opacity-50">×</button>
+            </header>
+            <div className="max-h-[62dvh] overflow-auto p-5">
+              {productSearchResults.matches.length ? (
+                <div className="space-y-2">
+                  {productSearchResults.matches.map((match) => (
+                    <a key={match.competitorId} href={match.url} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-4 rounded-xl border border-[#dfe4ea] bg-[#f8fafb] px-4 py-3 no-underline transition hover:border-[#9cccf6] hover:bg-[#f2f8fe]">
+                      <span>
+                        <b className="block text-xs text-[#34404c]">{match.competitor}</b>
+                        <span className="mt-1 block max-w-[420px] truncate text-[9px] text-[#71808e]">{match.url}</span>
+                        {match.status && <span className="mt-1 block text-[9px] text-[#87919b]">{match.status}</span>}
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <b className="block text-xs text-[#26313d]">{formatPrice(match.price)}</b>
+                        <span className="mt-1 block text-[9px] font-bold text-[#118dff]">Перевірити ↗</span>
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-[#e3e7eb] bg-[#f7f9fb] p-8 text-center">
+                  <b className="text-sm text-[#44515e]">Точних співпадінь не знайдено</b>
+                  <p className="mt-2 text-[10px] leading-4 text-[#7d8791]">Пошук пройшов по доступних конкурентних джерелах. Товар можна завершити без знайдених URL.</p>
+                </div>
+              )}
+              {productSearchResults.errors > 0 && (
+                <p className="mt-3 rounded-lg bg-[#fff8e7] px-3 py-2 text-[9px] text-[#7b5b14]">{productSearchResults.errors} джерел не вдалося перевірити; знайдені вище посилання доступні для ручної перевірки.</p>
+              )}
+              <p className="mt-4 text-[9px] leading-4 text-[#87919b]">Після закриття цього вікна обробка вважається завершеною, а товар зникне з блока «Нові товари Агромат».</p>
+            </div>
+            <footer className="flex justify-end border-t border-[#e4e8ec] px-5 py-4">
+              <button disabled={productSearchClosing} onClick={() => void closeProductSearchResults()} className="rounded-xl border-0 bg-[#118dff] px-5 py-2.5 text-xs font-bold text-white disabled:opacity-50">{productSearchClosing ? "Завершення…" : "Закрити й завершити"}</button>
+            </footer>
           </div>
         </div>
       )}
