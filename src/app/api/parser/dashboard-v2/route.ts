@@ -21,7 +21,8 @@ const VTM_TILE = new Set([
 ]);
 
 type Segment = "tile" | "sanitary";
-type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median";
+type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median" | "new-feed" | "match-changed";
+type MatchChange = "added" | "removed";
 
 interface Competitor {
   id: number;
@@ -37,6 +38,7 @@ interface PriceCell {
   confidence: string | null;
   foundBrand: string | null;
   reviewReason: string | null;
+  matchChange?: MatchChange | null;
 }
 
 interface PriceRow {
@@ -51,6 +53,7 @@ interface PriceRow {
   ourUrl: string | null;
   status: string | null;
   byCompetitor: Record<number, PriceCell>;
+  matchChange?: MatchChange | null;
 }
 
 interface PricesPayload {
@@ -101,6 +104,8 @@ interface DashboardBase {
   currentRows: PriceRow[];
   previousRows: PriceRow[];
   changedProductIds: Set<number>;
+  newFeedProductIds: Set<number>;
+  matchChanges: Map<number, MatchChange>;
   overview: {
     feed: MetricValues;
     matched: MetricValues;
@@ -170,6 +175,38 @@ function validCompetitorPrices(row: PriceRow, competitorIds?: Set<number>): numb
 
 function hasMatch(row: PriceRow): boolean {
   return validCompetitorPrices(row).length > 0;
+}
+
+function hasValidCellPrice(cell: PriceCell | undefined): boolean {
+  return typeof cell?.price === "number" && Number.isFinite(cell.price) && cell.price > 0;
+}
+
+function matchChanges(currentRows: PriceRow[], previousRows: PriceRow[]): Map<number, MatchChange> {
+  const previousByProduct = new Map(previousRows.map((row) => [row.productId, row]));
+  const result = new Map<number, MatchChange>();
+  for (const row of currentRows) {
+    const before = previousByProduct.get(row.productId);
+    const matchedNow = hasMatch(row);
+    const matchedBefore = before ? hasMatch(before) : false;
+    if (matchedNow !== matchedBefore) result.set(row.productId, matchedNow ? "added" : "removed");
+  }
+  return result;
+}
+
+function annotateMatchChanges(row: PriceRow, before: PriceRow | undefined, change: MatchChange | undefined): PriceRow {
+  if (!change) return row;
+  return {
+    ...row,
+    matchChange: change,
+    byCompetitor: Object.fromEntries(Object.entries(row.byCompetitor).map(([competitorId, cell]) => {
+      const currentHasPrice = hasValidCellPrice(cell);
+      const previousHasPrice = hasValidCellPrice(before?.byCompetitor[Number(competitorId)]);
+      const cellChange: MatchChange | null = currentHasPrice === previousHasPrice
+        ? null
+        : currentHasPrice ? "added" : "removed";
+      return [competitorId, { ...cell, matchChange: cellChange }];
+    })),
+  };
 }
 
 function agromatIsLower(row: PriceRow): boolean {
@@ -332,6 +369,10 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
   const previousLower = countBySegment(prior.rows || [], agromatIsLower, (row) => row.category);
   const currentHigher = countBySegment(current.rows, agromatIsHigher, (row) => row.category);
   const previousHigher = countBySegment(prior.rows || [], agromatIsHigher, (row) => row.category);
+  const newFeedProductIds = new Set(auditRows
+    .filter((row) => row.action === "sync_added" && row.product_id)
+    .map((row) => row.product_id as number));
+  const currentMatchChanges = matchChanges(current.rows, prior.rows || []);
 
   const parserRuns = auditRows.filter((row) => row.action === "parser_run");
   const latestRunByAdapter = new Map<string, AuditRow>();
@@ -379,6 +420,8 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
     currentRows: current.rows,
     previousRows: prior.rows || [],
     changedProductIds: changedProducts(current.rows, prior.rows || []),
+    newFeedProductIds,
+    matchChanges: currentMatchChanges,
     overview: {
       feed: metric(feedNow, feedBefore),
       matched: metric(currentMatched, previousMatched),
@@ -405,11 +448,13 @@ function parseIdSet(value: string | null): Set<number> {
     .filter((item) => Number.isSafeInteger(item) && item > 0));
 }
 
-function rowMatchesView(row: PriceRow, view: ViewMode, changedIds: Set<number>): boolean {
-  if (view === "changed") return changedIds.has(row.productId);
-  if (view === "vtm-changed") return isVtm(row) && changedIds.has(row.productId);
+function rowMatchesView(row: PriceRow, view: ViewMode, base: DashboardBase): boolean {
+  if (view === "changed") return base.changedProductIds.has(row.productId);
+  if (view === "vtm-changed") return isVtm(row) && base.changedProductIds.has(row.productId);
   if (view === "not-median") return agromatIsNotInMedian(row);
   if (view === "vtm-not-median") return isVtm(row) && agromatIsNotInMedian(row);
+  if (view === "new-feed") return base.newFeedProductIds.has(row.productId);
+  if (view === "match-changed") return base.matchChanges.has(row.productId);
   return true;
 }
 
@@ -466,12 +511,12 @@ export async function GET(request: Request) {
       : requestedView === "vtm-below-median"
         ? "vtm-not-median"
         : requestedView;
-    const view: ViewMode = ["changed", "vtm-changed", "not-median", "vtm-not-median"].includes(legacyView)
+    const view: ViewMode = ["changed", "vtm-changed", "not-median", "vtm-not-median", "new-feed", "match-changed"].includes(legacyView)
       ? legacyView as ViewMode
       : "overview";
 
     const matchesFilters = (row: PriceRow, omit?: "category" | "brand") => {
-      if (!rowMatchesView(row, view, base.changedProductIds)) return false;
+      if (!rowMatchesView(row, view, base)) return false;
       if (omit !== "category" && category && row.category !== category) return false;
       if (omit !== "brand" && brand && row.brand !== brand) return false;
       if (ids.size && !ids.has(row.productId) && !ids.has(row.code || -1) && !ids.has(row.goodsRef || -1)) return false;
@@ -508,7 +553,13 @@ export async function GET(request: Request) {
         return count + (row.ourPrice != null && competitorPrice != null && competitorPrice < row.ourPrice * PRICE_VIOLATION_RATIO ? 1 : 0);
       }, 0),
     })).sort((a, b) => b.count - a.count);
+    const previousByProduct = new Map(base.previousRows.map((row) => [row.productId, row]));
     const start = (page - 1) * limit;
+    const responseRows = filtered.slice(start, start + limit).map((row) => annotateMatchChanges(
+      row,
+      previousByProduct.get(row.productId),
+      base.matchChanges.get(row.productId),
+    ));
 
     const responseBody = {
       prototype: true,
@@ -522,7 +573,7 @@ export async function GET(request: Request) {
       updates: base.updates,
       progress: base.progress,
       violations,
-      rows: filtered.slice(start, start + limit),
+      rows: responseRows,
       total: filtered.length,
       page,
       limit,

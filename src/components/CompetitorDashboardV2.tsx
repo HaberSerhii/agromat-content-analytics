@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median";
+type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median" | "new-feed" | "match-changed";
+type MatchChange = "added" | "removed";
 type CabinetMode = "menu" | "sessions" | "logs" | null;
 type ExportKind = "general-xlsx" | "segment-xlsx" | "general-pdf" | "segment-pdf";
 
@@ -28,6 +29,7 @@ interface PriceCell {
   confidence: string | null;
   foundBrand: string | null;
   reviewReason: string | null;
+  matchChange?: MatchChange | null;
 }
 
 interface PriceRow {
@@ -42,6 +44,7 @@ interface PriceRow {
   ourUrl: string | null;
   status: string | null;
   byCompetitor: Record<number, PriceCell>;
+  matchChange?: MatchChange | null;
 }
 
 interface FacetValue {
@@ -152,6 +155,8 @@ const VIEW_ITEMS: Array<{ id: ViewMode; label: string; hint: string }> = [
   { id: "vtm-changed", label: "Змінили ціну", hint: "Тільки ВТМ" },
   { id: "not-median", label: "Ціна не в медіані", hint: "Усі товари" },
   { id: "vtm-not-median", label: "Ціна не в медіані", hint: "Тільки ВТМ" },
+  { id: "new-feed", label: "Нові товари Агромат", hint: "Вперше додані у фід" },
+  { id: "match-changed", label: "Нові співпадіння", hint: "Знайдені та втрачені" },
 ];
 
 const CHART_COLORS = ["#118dff", "#4a6ee0", "#6d5bd0", "#16a085", "#f39c4a", "#e05c68", "#38a3a5", "#78909c", "#9b59b6", "#2d98da", "#7f8c8d"];
@@ -663,6 +668,7 @@ export function CompetitorDashboardV2() {
               confidence: deleted ? "none" : previous?.confidence ?? null,
               foundBrand: deleted ? null : previous?.foundBrand ?? null,
               reviewReason: deleted ? null : previous?.reviewReason ?? null,
+              matchChange: previous?.matchChange ?? null,
             },
           },
         };
@@ -821,6 +827,7 @@ export function CompetitorDashboardV2() {
               confidence: body.confidence ?? null,
               foundBrand: body.found_brand ?? null,
               reviewReason: body.review_reason ?? null,
+              matchChange: row.byCompetitor[competitorId]?.matchChange ?? null,
             },
           },
         } : row),
@@ -1066,6 +1073,11 @@ export function CompetitorDashboardV2() {
                           </td>
                           <td className="px-3 py-3">
                             {row.ourUrl ? <a href={row.ourUrl} target="_blank" rel="noreferrer" className="line-clamp-2 text-[11px] font-semibold leading-4 text-[#26313d] no-underline hover:text-[#118dff]">{row.name}</a> : <span className="line-clamp-2 text-[11px] font-semibold leading-4">{row.name}</span>}
+                            {view === "match-changed" && row.matchChange && (
+                              <span className="mt-1 inline-flex rounded-full bg-[#fff4c7] px-2 py-0.5 text-[8px] font-black uppercase tracking-[.08em] text-[#8a6715]">
+                                {row.matchChange === "added" ? "Співпадіння знайдено" : "Співпадіння втрачено"}
+                              </span>
+                            )}
                           </td>
                           <td className="px-3 py-3 text-right text-xs font-black text-[#26313d]">{formatPrice(row.ourPrice)}</td>
                           {visibleCompetitors.map((competitor) => {
@@ -1075,7 +1087,14 @@ export function CompetitorDashboardV2() {
                             return (
                               <td key={competitor.id} className="px-3 py-3 text-right">
                                 <div className="flex min-h-[50px] flex-col items-end justify-between">
-                                  <div className="flex min-h-7 items-start justify-end">
+                                  <div
+                                    className={`flex min-h-7 items-start justify-end rounded-lg ${view === "match-changed" && cell?.matchChange ? "bg-[#fff4c7] px-2 py-1" : ""}`}
+                                    title={view === "match-changed" && cell?.matchChange
+                                      ? cell.matchChange === "added"
+                                        ? `У ${competitor.name} з'явилася ціна`
+                                        : `У ${competitor.name} зникла ціна`
+                                      : undefined}
+                                  >
                                     {cell?.price != null && competitorUrl ? (
                                       <a href={competitorUrl} target="_blank" rel="noreferrer" className="rounded no-underline hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-[#9cccf6]" title={`Відкрити товар на сайті ${competitor.name}`}>
                                         <PriceValue price={cell.price} ourPrice={row.ourPrice} />
