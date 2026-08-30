@@ -23,6 +23,7 @@ const VTM_TILE = new Set([
 type Segment = "tile" | "sanitary";
 type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median" | "new-feed" | "match-changed";
 type MatchChange = "added" | "removed";
+type CompetitorPriceChange = "increased" | "decreased";
 
 interface Competitor {
   id: number;
@@ -40,6 +41,8 @@ interface PriceCell {
   foundBrand: string | null;
   reviewReason: string | null;
   matchChange?: MatchChange | null;
+  priceChange?: CompetitorPriceChange | null;
+  previousPrice?: number | null;
 }
 
 interface PriceRow {
@@ -206,6 +209,27 @@ function annotateMatchChanges(row: PriceRow, before: PriceRow | undefined, chang
         ? null
         : currentHasPrice ? "added" : "removed";
       return [competitorId, { ...cell, matchChange: cellChange }];
+    })),
+  };
+}
+
+function annotatePriceChanges(row: PriceRow, before: PriceRow | undefined): PriceRow {
+  if (!before) return row;
+  return {
+    ...row,
+    byCompetitor: Object.fromEntries(Object.entries(row.byCompetitor).map(([competitorId, cell]) => {
+      const currentPrice = cell?.price;
+      const previousPrice = before.byCompetitor[Number(competitorId)]?.price;
+      const changed = typeof currentPrice === "number"
+        && typeof previousPrice === "number"
+        && Number.isFinite(currentPrice)
+        && Number.isFinite(previousPrice)
+        && currentPrice !== previousPrice;
+      return [competitorId, {
+        ...cell,
+        priceChange: changed ? (currentPrice > previousPrice ? "increased" : "decreased") : null,
+        previousPrice: changed ? previousPrice : null,
+      }];
     })),
   };
 }
@@ -556,11 +580,13 @@ export async function GET(request: Request) {
     })).sort((a, b) => b.count - a.count);
     const previousByProduct = new Map(base.previousRows.map((row) => [row.productId, row]));
     const start = (page - 1) * limit;
-    const responseRows = filtered.slice(start, start + limit).map((row) => annotateMatchChanges(
-      row,
-      previousByProduct.get(row.productId),
-      base.matchChanges.get(row.productId),
-    ));
+    const responseRows = filtered.slice(start, start + limit).map((row) => {
+      const before = previousByProduct.get(row.productId);
+      const withMatchChanges = annotateMatchChanges(row, before, base.matchChanges.get(row.productId));
+      return view === "changed" || view === "vtm-changed"
+        ? annotatePriceChanges(withMatchChanges, before)
+        : withMatchChanges;
+    });
 
     const responseBody = {
       prototype: true,

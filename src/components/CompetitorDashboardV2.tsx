@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 
 type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median" | "new-feed" | "match-changed";
 type MatchChange = "added" | "removed";
+type CompetitorPriceChange = "increased" | "decreased";
 type CabinetMode = "menu" | "sessions" | "logs" | null;
 type ExportKind = "general-xlsx" | "segment-xlsx" | "general-pdf" | "segment-pdf";
 
@@ -31,6 +32,8 @@ interface PriceCell {
   foundBrand: string | null;
   reviewReason: string | null;
   matchChange?: MatchChange | null;
+  priceChange?: CompetitorPriceChange | null;
+  previousPrice?: number | null;
 }
 
 interface PriceRow {
@@ -188,6 +191,29 @@ function formatNumber(value: number): string {
 function formatPrice(value: number | null): string {
   if (value == null) return "—";
   return `${new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 }).format(value)} ₴`;
+}
+
+function competitorPriceChangeClass(view: ViewMode, cell: PriceCell | undefined): string {
+  if (view === "match-changed" && cell?.matchChange) return "bg-[#fff4c7] px-2 py-1";
+  if ((view === "changed" || view === "vtm-changed") && cell?.priceChange === "increased") {
+    return "bg-[#e4f7ed] px-2 py-1";
+  }
+  if ((view === "changed" || view === "vtm-changed") && cell?.priceChange === "decreased") {
+    return "bg-[#fde9e9] px-2 py-1";
+  }
+  return "";
+}
+
+function competitorPriceChangeTitle(view: ViewMode, cell: PriceCell | undefined, competitor: string): string | undefined {
+  if (view === "match-changed" && cell?.matchChange) {
+    return cell.matchChange === "added"
+      ? `У ${competitor} з'явилася ціна`
+      : `У ${competitor} зникла ціна`;
+  }
+  if ((view === "changed" || view === "vtm-changed") && cell?.priceChange && cell.previousPrice != null && cell.price != null) {
+    return `${competitor}: ціна ${cell.priceChange === "increased" ? "зросла" : "знизилася"} з ${formatPrice(cell.previousPrice)} до ${formatPrice(cell.price)}`;
+  }
+  return undefined;
 }
 
 function formatDateTime(value: string | null): string {
@@ -670,6 +696,8 @@ export function CompetitorDashboardV2() {
               foundBrand: deleted ? null : previous?.foundBrand ?? null,
               reviewReason: deleted ? null : previous?.reviewReason ?? null,
               matchChange: previous?.matchChange ?? null,
+              priceChange: previous?.priceChange ?? null,
+              previousPrice: previous?.previousPrice ?? null,
             },
           },
         };
@@ -829,6 +857,8 @@ export function CompetitorDashboardV2() {
               foundBrand: body.found_brand ?? null,
               reviewReason: body.review_reason ?? null,
               matchChange: row.byCompetitor[competitorId]?.matchChange ?? null,
+              priceChange: row.byCompetitor[competitorId]?.priceChange ?? null,
+              previousPrice: row.byCompetitor[competitorId]?.previousPrice ?? null,
             },
           },
         } : row),
@@ -1103,15 +1133,11 @@ export function CompetitorDashboardV2() {
                               <td key={competitor.id} className="px-3 py-3 text-right">
                                 <div className="flex min-h-[50px] flex-col items-end justify-between">
                                   <div
-                                    className={`flex min-h-7 items-start justify-end rounded-lg ${view === "match-changed" && cell?.matchChange ? "bg-[#fff4c7] px-2 py-1" : ""}`}
-                                    title={view === "match-changed" && cell?.matchChange
-                                      ? cell.matchChange === "added"
-                                        ? `У ${competitor.name} з'явилася ціна`
-                                        : `У ${competitor.name} зникла ціна`
-                                      : undefined}
+                                    className={`flex min-h-7 items-start justify-end rounded-lg ${competitorPriceChangeClass(view, cell)}`}
+                                    title={competitorPriceChangeTitle(view, cell, competitor.name)}
                                   >
                                     {cell?.price != null && competitorUrl ? (
-                                      <a href={competitorUrl} target="_blank" rel="noreferrer" className="rounded no-underline hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-[#9cccf6]" title={`Відкрити товар на сайті ${competitor.name}`}>
+                                      <a href={competitorUrl} target="_blank" rel="noreferrer" className="rounded no-underline hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-[#9cccf6]" title={competitorPriceChangeTitle(view, cell, competitor.name) || `Відкрити товар на сайті ${competitor.name}`}>
                                         <PriceValue price={cell.price} ourPrice={row.ourPrice} />
                                       </a>
                                     ) : <PriceValue price={cell?.price ?? null} ourPrice={row.ourPrice} />}
