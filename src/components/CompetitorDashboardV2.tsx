@@ -19,6 +19,7 @@ interface Competitor {
   id: number;
   name: string;
   adapter_name: string;
+  base_url: string | null;
 }
 
 interface PriceCell {
@@ -1033,7 +1034,21 @@ export function CompetitorDashboardV2() {
                         <th className="px-3 py-3">Артикул</th>
                         <th className="min-w-64 px-3 py-3">Назва товару</th>
                         <th className="px-3 py-3 text-right">Агромат</th>
-                        {visibleCompetitors.map((competitor) => <th key={competitor.id} className="min-w-36 px-3 py-3 text-right text-[#0b6fc2]">{competitor.name}</th>)}
+                        {visibleCompetitors.map((competitor) => (
+                          <th key={competitor.id} className="min-w-36 px-3 py-3 text-right text-[#0b6fc2]">
+                            {competitor.base_url ? (
+                              <a
+                                href={competitor.base_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded no-underline hover:underline focus:outline-none focus:ring-2 focus:ring-[#9cccf6]"
+                                title={`Відкрити головну сторінку ${competitor.name}`}
+                              >
+                                {competitor.name}
+                              </a>
+                            ) : competitor.name}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>

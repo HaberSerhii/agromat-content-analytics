@@ -28,6 +28,7 @@ interface Competitor {
   id: number;
   name: string;
   adapter_name: string;
+  base_url: string | null;
 }
 
 interface PriceCell {

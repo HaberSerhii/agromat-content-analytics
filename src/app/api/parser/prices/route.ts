@@ -43,6 +43,7 @@ interface Competitor {
   id: number;
   name: string;
   adapter_name: string;
+  base_url: string | null;
 }
 
 interface SnapshotRow {
@@ -470,7 +471,7 @@ async function countPriceChanges(
 async function loadParserPricesMetadata(db: SupabaseClient): Promise<ParserPricesMetadata> {
   const { data: competitorsRaw, error: cErr } = await db
     .from("competitors")
-    .select("id, name, adapter_name")
+    .select("id, name, adapter_name, base_url")
     .order("id", { ascending: true });
   if (cErr) throw new Error(cErr.message);
 
