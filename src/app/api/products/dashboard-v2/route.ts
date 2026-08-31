@@ -1,6 +1,8 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
+import { listAssignedNewProductCodes } from "@/lib/new-product-assignments-store";
+import { NEW_PRODUCT_TRACKING_START } from "@/lib/new-product-types";
 import {
   listSnapshotDates,
   readAllLite,
@@ -714,15 +716,25 @@ async function buildDashboard(input: DashboardFilters) {
   const filters = normalizeFilters(input);
   const today = dateInKyiv();
   const ranges = monthRanges(today);
-  const [products, syncedAt, syncState, snapshots, attrIndex, requiredAttrs] =
-    await Promise.all([
-      readAllLite(),
-      readLiteSyncedAt(),
-      readSyncState(),
-      listSnapshotDates(),
-      readProductAttributeIndex(),
-      readRequiredAttrs(),
-    ]);
+  const [
+    products,
+    syncedAt,
+    syncState,
+    snapshots,
+    attrIndex,
+    requiredAttrs,
+    assignedNewProductCodes,
+  ] = await Promise.all([
+    readAllLite(),
+    readLiteSyncedAt(),
+    readSyncState(),
+    listSnapshotDates(),
+    readProductAttributeIndex(),
+    readRequiredAttrs(),
+    filters.view === "new"
+      ? listAssignedNewProductCodes()
+      : Promise.resolve(new Set<number>()),
+  ]);
   const comparisonDate =
     snapshots.find((snapshot) => snapshot.date < today)?.date || null;
   const comparisonSnapshot = comparisonDate
@@ -774,7 +786,8 @@ async function buildDashboard(input: DashboardFilters) {
       if (!matchesFacetFilters(product)) return false;
       if (
         filters.view === "new" &&
-        !inDateRange(product.firstSeenAt, ranges.currentFrom, ranges.currentTo)
+        (!inDateRange(product.firstSeenAt, NEW_PRODUCT_TRACKING_START, today) ||
+          assignedNewProductCodes.has(product.code))
       )
         return false;
       if (filters.view === "categories") return true;

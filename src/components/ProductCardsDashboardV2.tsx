@@ -10,6 +10,7 @@ import {
   type ContentReviewManager,
   type ContentReviewMetrics,
 } from "@/lib/content-review-types";
+import type { NewProductAnalysisRow } from "@/lib/new-product-types";
 
 type FacetRow = { key: string; name: string; count: number };
 type ProductRow = {
@@ -194,7 +195,14 @@ type DashboardResponse = {
 };
 
 type ChartMode = "categories" | "brands" | "statuses";
-type DashboardView = "overview" | "new" | "categories" | "products" | "results";
+type DashboardView =
+  | "overview"
+  | "new"
+  | "categories"
+  | "products"
+  | "search"
+  | "results";
+type ResultMode = "new-products" | "merchandising" | "search";
 type ProductSignal = "highImpressions" | "lowCtr" | "lowAtc" | "poorContent";
 type MetricKey = "newProducts" | "inactiveProducts" | "promoProducts" | "ctr";
 type ContentManager = ContentReviewManager;
@@ -217,6 +225,11 @@ const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
     id: "products",
     label: "Аналіз товарів",
     hint: "CTR, ATC та Content Score",
+  },
+  {
+    id: "search",
+    label: "Аналіз пошукової системи",
+    hint: "Логіка буде додана пізніше",
   },
   {
     id: "results",
@@ -1392,6 +1405,82 @@ function ProcessProductModal({
   );
 }
 
+function AssignNewProductModal({
+  product,
+  saving,
+  error,
+  onAssign,
+  onClose,
+}: {
+  product: ProductRow;
+  saving: boolean;
+  error: string;
+  onAssign: (manager: ContentManager) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-[#111827a6] p-4"
+      onMouseDown={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-2xl border border-[#dfe4ea] bg-white shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-[#e4e8ec] px-5 py-4">
+          <div className="min-w-0">
+            <div className="text-[9px] font-black uppercase tracking-[.18em] text-[#118dff]">
+              Новий товар
+            </div>
+            <h2 className="mt-1 line-clamp-2 text-base font-black text-[#26313d]">
+              {product.name}
+            </h2>
+            <p className="mt-1 text-[9px] text-[#87919b]">
+              IDD {product.code} · goods_ref {product.goodsRef}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg bg-[#f0f3f5] px-3 py-2 text-[10px] font-bold text-[#58636d]"
+          >
+            × Закрити
+          </button>
+        </header>
+        <div className="p-5">
+          <h3 className="text-xs font-black text-[#34404c]">
+            Оберіть відповідального менеджера
+          </h3>
+          <p className="mt-1 text-[9px] leading-4 text-[#7d8892]">
+            Після призначення товар зникне зі списку нових задач і з’явиться в
+            «Контроль результату → Аналіз нових товарів».
+          </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {CONTENT_MANAGERS.map((manager) => (
+              <button
+                key={manager}
+                type="button"
+                disabled={saving}
+                onClick={() => void onAssign(manager)}
+                className="rounded-xl border border-[#cfe0ed] bg-[#f5faff] px-4 py-4 text-left text-xs font-black text-[#296b9d] transition hover:border-[#78b9e8] hover:bg-[#eaf6ff] disabled:cursor-wait disabled:opacity-50"
+              >
+                <span className="mr-2 text-[#118dff]">+</span>
+                {manager}
+              </button>
+            ))}
+          </div>
+          {error && (
+            <div className="mt-4 rounded-xl border border-[#f0b6b6] bg-[#fff1f1] px-4 py-3 text-[10px] font-bold text-[#b73535]">
+              {error}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReviewChange({
   value,
   suffix = "",
@@ -1501,6 +1590,406 @@ function ReviewMetricsCard({
   );
 }
 
+function NewProductsAnalysisPanel({
+  assignments,
+  loading,
+  error,
+  onRefresh,
+}: {
+  assignments: NewProductAnalysisRow[];
+  loading: boolean;
+  error: string;
+  onRefresh: () => void | Promise<void>;
+}) {
+  const [chartMode, setChartMode] = useState<"sales" | "stock">("sales");
+  const segmentCount = (
+    predicate: (item: NewProductAnalysisRow) => boolean = () => true,
+  ) => ({
+    tile: assignments.filter(
+      (item) => item.segment === "tile" && predicate(item),
+    ).length,
+    sanitary: assignments.filter(
+      (item) => item.segment === "sanitary" && predicate(item),
+    ).length,
+  });
+  const published = segmentCount();
+  const sold = segmentCount((item) => (item.measurement?.salesQty || 0) > 0);
+  const measured = segmentCount((item) => Boolean(item.measurement));
+  const waiting = {
+    tile: published.tile - measured.tile,
+    sanitary: published.sanitary - measured.sanitary,
+  };
+  const statusRows = [
+    ...assignments
+      .reduce((map, item) => {
+        const row = map.get(item.statusName) || {
+          status: item.statusName,
+          tile: 0,
+          sanitary: 0,
+        };
+        row[item.segment]++;
+        map.set(item.statusName, row);
+        return map;
+      }, new Map<string, { status: string; tile: number; sanitary: number }>())
+      .values(),
+  ].sort(
+    (left, right) => right.tile + right.sanitary - (left.tile + left.sanitary),
+  );
+  const managerChart = CONTENT_MANAGERS.map((manager) => {
+    const checked = assignments.filter(
+      (item) => item.manager === manager && item.measurement,
+    );
+    const positive = checked.filter((item) =>
+      chartMode === "sales"
+        ? (item.measurement?.salesQty || 0) > 0
+        : (item.measurement?.stockQty || 0) > 0,
+    ).length;
+    return {
+      manager,
+      positive,
+      negative: checked.length - positive,
+    };
+  });
+  const chartMax = Math.max(
+    1,
+    ...managerChart.map((item) => item.positive + item.negative),
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+        <div className="flex flex-col gap-3 border-b border-[#e8edf1] bg-[#fbfcfd] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#118dff]">
+              Нові товари з 01.09.2026
+            </div>
+            <h2 className="mt-1 text-sm font-black text-[#27313c]">
+              Ефективність нових публікацій
+            </h2>
+            <p className="mt-1 text-[10px] text-[#7d8892]">
+              Для товарів, опублікованих у вересні, контрольний замір
+              відбудеться 01.11.2026 — після одного повного календарного місяця.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void onRefresh()}
+            disabled={loading}
+            className="self-start rounded-xl border border-[#bcd8f1] bg-[#edf6ff] px-3 py-2 text-[10px] font-black text-[#0b6fc2] disabled:opacity-50"
+          >
+            {loading ? "Оновлюємо…" : "Оновити"}
+          </button>
+        </div>
+        {error && (
+          <div className="border-b border-[#f0b6b6] bg-[#fff1f1] px-4 py-2.5 text-[10px] font-bold text-[#b73535]">
+            {error}
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          {
+            label: "Опубліковано",
+            value: published,
+            note: "призначено менеджерам",
+            color: "#118dff",
+          },
+          {
+            label: "Мали продажі",
+            value: sold,
+            note: "хоча б 1 продаж",
+            color: "#23a875",
+          },
+          {
+            label: "Без продажів",
+            value: {
+              tile: measured.tile - sold.tile,
+              sanitary: measured.sanitary - sold.sanitary,
+            },
+            note: "серед перевірених",
+            color: "#e05c68",
+          },
+          {
+            label: "Очікують заміру",
+            value: waiting,
+            note: "контрольна дата попереду",
+            color: "#d58a16",
+          },
+        ].map((item) => (
+          <article
+            key={item.label}
+            className="rounded-2xl border border-[#dfe4ea] bg-white p-4"
+          >
+            <div className="text-[9px] font-black uppercase tracking-[.12em] text-[#8a949e]">
+              {item.label}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-xl bg-[#f7f9fb] p-2.5">
+                <div className="text-[8px] font-bold text-[#7d8892]">
+                  Плитка
+                </div>
+                <div
+                  className="mt-1 text-2xl font-black"
+                  style={{ color: item.color }}
+                >
+                  {formatNumber(item.value.tile)}
+                </div>
+              </div>
+              <div className="rounded-xl bg-[#f7f9fb] p-2.5">
+                <div className="text-[8px] font-bold text-[#7d8892]">
+                  Сантехніка
+                </div>
+                <div
+                  className="mt-1 text-2xl font-black"
+                  style={{ color: item.color }}
+                >
+                  {formatNumber(item.value.sanitary)}
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 text-[8px] text-[#8b949e]">{item.note}</div>
+          </article>
+        ))}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,.9fr)]">
+        <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+          <header className="border-b border-[#e5e8eb] px-4 py-3">
+            <h3 className="text-xs font-black text-[#26313d]">
+              Кількість за статусами
+            </h3>
+            <p className="mt-0.5 text-[9px] text-[#8b949e]">
+              Поточний статус окремо для плитки та сантехніки
+            </p>
+          </header>
+          <div className="p-4">
+            {statusRows.length ? (
+              <div className="space-y-2">
+                {statusRows.map((row) => (
+                  <div
+                    key={row.status}
+                    className="grid grid-cols-[minmax(0,1fr)_80px_80px] items-center gap-2 rounded-xl bg-[#f7f9fb] px-3 py-2.5 text-[10px]"
+                  >
+                    <b className="truncate text-[#45515d]">{row.status}</b>
+                    <span className="text-right text-[#118dff]">
+                      Плитка: <b>{row.tile}</b>
+                    </span>
+                    <span className="text-right text-[#6556d8]">
+                      Сант.: <b>{row.sanitary}</b>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-[10px] text-[#8b949e]">
+                Поки немає призначених нових товарів
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+          <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e5e8eb] px-4 py-3">
+            <div>
+              <h3 className="text-xs font-black text-[#26313d]">
+                Результат за менеджерами
+              </h3>
+              <p className="mt-0.5 text-[9px] text-[#8b949e]">
+                Тільки товари після контрольного заміру
+              </p>
+            </div>
+            <div className="flex rounded-xl bg-[#f0f3f5] p-1">
+              {(
+                [
+                  ["sales", "Продажі"],
+                  ["stock", "Залишки"],
+                ] as const
+              ).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setChartMode(mode)}
+                  className="rounded-lg px-3 py-1.5 text-[9px] font-black"
+                  style={
+                    chartMode === mode
+                      ? { background: "#fff", color: "#118dff" }
+                      : { color: "#78838d" }
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </header>
+          <div className="space-y-4 p-4">
+            {managerChart.map((item) => (
+              <div key={item.manager}>
+                <div className="mb-1.5 flex items-center justify-between text-[10px]">
+                  <b className="text-[#45515d]">{item.manager}</b>
+                  <span className="text-[#8b949e]">
+                    {item.positive + item.negative} перевірено
+                  </span>
+                </div>
+                <div className="flex h-7 overflow-hidden rounded-lg bg-[#edf0f3]">
+                  <div
+                    className="flex items-center justify-center bg-[#23a875] text-[9px] font-black text-white"
+                    style={{ width: `${(item.positive / chartMax) * 100}%` }}
+                    title={`${chartMode === "sales" ? "З продажами" : "Із залишком"}: ${item.positive}`}
+                  >
+                    {item.positive || ""}
+                  </div>
+                  <div
+                    className="flex items-center justify-center bg-[#e05c68] text-[9px] font-black text-white"
+                    style={{ width: `${(item.negative / chartMax) * 100}%` }}
+                    title={`${chartMode === "sales" ? "Без продажів" : "Без залишку"}: ${item.negative}`}
+                  >
+                    {item.negative || ""}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-4 border-t border-[#edf0f2] pt-3 text-[9px] font-bold text-[#68737e]">
+              <span>
+                <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded bg-[#23a875]" />
+                {chartMode === "sales" ? "Є продажі" : "Є залишок"}
+              </span>
+              <span>
+                <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded bg-[#e05c68]" />
+                {chartMode === "sales" ? "Без продажів" : "Без залишку"}
+              </span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1480px] border-collapse text-left">
+            <thead>
+              <tr className="border-b border-[#e3e7eb] bg-[#f7f9fb] text-[8px] font-black uppercase tracking-[.08em] text-[#77828d]">
+                <th className="px-3 py-3">Товар</th>
+                <th className="px-3 py-3">Категорія / бренд</th>
+                <th className="px-3 py-3">Менеджер</th>
+                <th className="px-3 py-3">CTR / ATC / Content Score</th>
+                <th className="px-3 py-3">Залишок через місяць</th>
+                <th className="px-3 py-3">Продажі через місяць</th>
+                <th className="px-3 py-3">Опубліковано</th>
+                <th className="px-3 py-3">Дата заміру</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && !assignments.length && (
+                <tr>
+                  <td
+                    colSpan={8}
+                    className="p-12 text-center text-xs text-[#82909d]"
+                  >
+                    Завантажуємо аналітику нових товарів…
+                  </td>
+                </tr>
+              )}
+              {assignments.map((item) => (
+                <tr
+                  key={item.id}
+                  className="border-b border-[#edf0f2] align-top last:border-0 hover:bg-[#fbfcfd]"
+                >
+                  <td className="min-w-[300px] px-3 py-3">
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] font-black leading-4 text-[#27313c] hover:text-[#118dff]"
+                    >
+                      {item.name} ↗
+                    </a>
+                    <div className="mt-1 text-[8px] text-[#8b949e]">
+                      IDD: {item.code} · goods_ref: {item.goodsRef}
+                    </div>
+                  </td>
+                  <td className="min-w-[220px] px-3 py-3 text-[9px] text-[#68737e]">
+                    <b className="block text-[#45515d]">{item.categoryName}</b>
+                    <span className="mt-1 block">{item.brand}</span>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-[10px] font-black text-[#34404c]">
+                    {item.manager}
+                  </td>
+                  <td className="px-3 py-3">
+                    {item.measurement ? (
+                      <ReviewMetricsCard metrics={item.measurement.metrics} />
+                    ) : (
+                      <span className="inline-flex rounded-full bg-[#fff4df] px-2.5 py-1 text-[9px] font-black text-[#a36b0e]">
+                        Очікує заміру
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-center text-[11px] font-black text-[#45515d]">
+                    {item.measurement
+                      ? (item.measurement.stockQty ?? "—")
+                      : "Очікує"}
+                  </td>
+                  <td
+                    className="px-3 py-3 text-center text-[11px] font-black"
+                    style={{
+                      color:
+                        (item.measurement?.salesQty || 0) > 0
+                          ? "#087a55"
+                          : "#bd3b3b",
+                    }}
+                  >
+                    {item.measurement ? item.measurement.salesQty : "Очікує"}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-[10px] font-semibold text-[#596571]">
+                    {formatDate(item.publishedAt)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3">
+                    <b className="text-[10px] text-[#34404c]">
+                      {formatDate(item.checkAt)}
+                    </b>
+                    <div className="mt-1 text-[8px] text-[#8b949e]">
+                      {item.measurement ? "Виконано" : "Заплановано"}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!loading && !error && assignments.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={8}
+                    className="p-12 text-center text-xs text-[#82909d]"
+                  >
+                    Нові товари ще не призначені менеджерам
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SearchAnalyticsPlaceholder() {
+  return (
+    <section className="rounded-2xl border border-[#dfe4ea] bg-white p-8 text-center">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#edf6ff] text-2xl text-[#118dff]">
+        ⌕
+      </div>
+      <h2 className="mt-4 text-lg font-black text-[#27313c]">
+        Аналіз пошукової системи
+      </h2>
+      <p className="mx-auto mt-2 max-w-xl text-[11px] leading-5 text-[#7d8892]">
+        Розділ створено. Логіку, показники та джерела даних додамо після
+        отримання наступних вимог.
+      </p>
+      <span className="mt-4 inline-flex rounded-full bg-[#fff4df] px-3 py-1.5 text-[9px] font-black text-[#a36b0e]">
+        Очікує налаштування логіки
+      </span>
+    </section>
+  );
+}
+
 export function ProductCardsDashboardV2() {
   const [view, setView] = useState<DashboardView>("overview");
   const [data, setData] = useState<DashboardResponse | null>(null);
@@ -1537,6 +2026,16 @@ export function ProductCardsDashboardV2() {
   const [processingProduct, setProcessingProduct] = useState<ProductRow | null>(
     null,
   );
+  const [assigningNewProduct, setAssigningNewProduct] =
+    useState<ProductRow | null>(null);
+  const [newAssignmentSaving, setNewAssignmentSaving] = useState(false);
+  const [newAssignmentError, setNewAssignmentError] = useState("");
+  const [newAssignments, setNewAssignments] = useState<NewProductAnalysisRow[]>(
+    [],
+  );
+  const [newAssignmentsLoading, setNewAssignmentsLoading] = useState(true);
+  const [newAssignmentsError, setNewAssignmentsError] = useState("");
+  const [resultMode, setResultMode] = useState<ResultMode>("merchandising");
   const [interventions, setInterventions] = useState<ProductIntervention[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [reviewsError, setReviewsError] = useState("");
@@ -1560,7 +2059,7 @@ export function ProductCardsDashboardV2() {
           headers: { "Content-Type": "application/json" },
           signal,
           body: JSON.stringify({
-            view: view === "results" ? "overview" : view,
+            view: view === "results" || view === "search" ? "overview" : view,
             page,
             limit: PAGE_SIZE,
             search,
@@ -1632,6 +2131,31 @@ export function ProductCardsDashboardV2() {
     }
   }, []);
 
+  const loadNewAssignments = useCallback(async () => {
+    setNewAssignmentsLoading(true);
+    setNewAssignmentsError("");
+    try {
+      const response = await fetch("/api/products/new-product-assignments", {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        assignments?: NewProductAnalysisRow[];
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      setNewAssignments(payload.assignments || []);
+    } catch (cause) {
+      setNewAssignmentsError(
+        cause instanceof Error
+          ? cause.message
+          : "Не вдалося завантажити нові товари",
+      );
+    } finally {
+      setNewAssignmentsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
@@ -1640,6 +2164,9 @@ export function ProductCardsDashboardV2() {
   useEffect(() => {
     void loadInterventions();
   }, [loadInterventions]);
+  useEffect(() => {
+    void loadNewAssignments();
+  }, [loadNewAssignments]);
   useEffect(() => {
     setPage(1);
   }, [
@@ -1892,6 +2419,35 @@ export function ProductCardsDashboardV2() {
       );
     } finally {
       setReviewSaving(false);
+    }
+  };
+  const assignNewProduct = async (
+    product: ProductRow,
+    manager: ContentManager,
+  ) => {
+    setNewAssignmentSaving(true);
+    setNewAssignmentError("");
+    try {
+      const response = await fetch("/api/products/new-product-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: product.code, manager }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      setAssigningNewProduct(null);
+      await Promise.all([loadNewAssignments(), load()]);
+    } catch (cause) {
+      setNewAssignmentError(
+        cause instanceof Error
+          ? cause.message
+          : "Не вдалося призначити менеджера",
+      );
+    } finally {
+      setNewAssignmentSaving(false);
     }
   };
   const toggleCategoryFilter = (value: string | number) => {
@@ -2263,7 +2819,7 @@ export function ProductCardsDashboardV2() {
         <div>
           <h2 className="text-sm font-black text-[#26313d]">
             {view === "new"
-              ? "Нові товари поточного місяця"
+              ? "Нові задачі з 01.09.2026"
               : view === "categories"
                 ? "Зріз за категоріями"
                 : view === "products"
@@ -2496,14 +3052,16 @@ export function ProductCardsDashboardV2() {
               </h1>
               <p className="mt-1 text-xs text-[#737d87]">
                 {view === "new"
-                  ? "Товари, які вперше з’явилися на сайті у поточному місяці."
+                  ? "Нові товари з 01.09.2026, які ще не призначені контент-менеджеру."
                   : view === "categories"
                     ? "Поточний стан контенту категорій та динаміка CTR Каталог → PDP."
                     : view === "products"
                       ? "Пошук точок зростання за видимістю, конверсією та якістю контенту."
-                      : view === "results"
-                        ? "Контроль ефекту контентних змін після завершення контрольного періоду."
-                        : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
+                      : view === "search"
+                        ? "Майбутня аналітика внутрішнього пошуку та пошукових запитів."
+                        : view === "results"
+                          ? "Контроль ефекту контентних змін після завершення контрольного періоду."
+                          : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
               </p>
             </section>
             {error && (
@@ -2925,9 +3483,45 @@ export function ProductCardsDashboardV2() {
                   {pager}
                 </div>
               </section>
+            ) : view === "search" ? (
+              <SearchAnalyticsPlaceholder />
             ) : view === "results" ? (
               <section className="space-y-4">
-                <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                <div className="grid gap-2 rounded-2xl border border-[#dfe4ea] bg-white p-2 md:grid-cols-3">
+                  {(
+                    [
+                      ["new-products", "Аналіз нових товарів"],
+                      ["merchandising", "Аналіз мерчандайзингу товарів"],
+                      ["search", "Аналіз пошукової системи"],
+                    ] as Array<[ResultMode, string]>
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setResultMode(mode)}
+                      className="rounded-xl px-3 py-3 text-[10px] font-black transition"
+                      style={
+                        resultMode === mode
+                          ? { background: "#118dff", color: "white" }
+                          : { background: "#f5f7f9", color: "#68737e" }
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {resultMode === "new-products" && (
+                  <NewProductsAnalysisPanel
+                    assignments={newAssignments}
+                    loading={newAssignmentsLoading}
+                    error={newAssignmentsError}
+                    onRefresh={loadNewAssignments}
+                  />
+                )}
+                {resultMode === "search" && <SearchAnalyticsPlaceholder />}
+                <div
+                  className={`${resultMode === "merchandising" ? "" : "hidden"} overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white`}
+                >
                   <div className="border-b border-[#e8edf1] bg-[#fbfcfd] p-4">
                     <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                       <div>
@@ -3037,7 +3631,9 @@ export function ProductCardsDashboardV2() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(340px,.7fr)]">
+                <div
+                  className={`${resultMode === "merchandising" ? "" : "hidden"} grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(340px,.7fr)]`}
+                >
                   <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                     {[
                       {
@@ -3692,7 +4288,7 @@ export function ProductCardsDashboardV2() {
                   <table className="w-full min-w-[1180px] border-collapse text-left">
                     <thead className="bg-[#f7f8f8] text-[9px] font-black uppercase tracking-[.11em] text-[#8d969f]">
                       <tr>
-                        <th className="px-3 py-3">IDD / goods_ref</th>
+                        <th className="px-3 py-3">IDD / goods_ref / дія</th>
                         <th className="px-3 py-3">Артикул</th>
                         <th className="min-w-64 px-3 py-3">Назва товару</th>
                         <th className="min-w-48 px-3 py-3">
@@ -3725,7 +4321,22 @@ export function ProductCardsDashboardV2() {
                             key={row.id}
                             className="border-t border-[#edf0f2] hover:bg-[#fbfcfd]"
                           >
-                            <td className="px-3 py-3">{idCell(row)}</td>
+                            <td className="px-3 py-3">
+                              <div className="flex items-start gap-2">
+                                {idCell(row)}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setNewAssignmentError("");
+                                    setAssigningNewProduct(row);
+                                  }}
+                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#23a875] text-sm font-black text-white shadow-sm transition hover:bg-[#168a5e]"
+                                  title="Призначити менеджера"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </td>
                             <td className="px-3 py-3">{skuCell(row)}</td>
                             <td className="px-3 py-3">
                               <a
@@ -3792,7 +4403,7 @@ export function ProductCardsDashboardV2() {
                             colSpan={9}
                             className="p-12 text-center text-xs text-[#82909d]"
                           >
-                            Нових товарів у поточному місяці не знайдено
+                            Нових непризначених товарів з 01.09.2026 немає
                           </td>
                         </tr>
                       )}
@@ -4048,6 +4659,19 @@ export function ProductCardsDashboardV2() {
           onSave={(manager, actions) =>
             saveIntervention(processingProduct, manager, actions)
           }
+        />
+      )}
+      {assigningNewProduct && (
+        <AssignNewProductModal
+          product={assigningNewProduct}
+          saving={newAssignmentSaving}
+          error={newAssignmentError}
+          onClose={() => {
+            if (newAssignmentSaving) return;
+            setNewAssignmentError("");
+            setAssigningNewProduct(null);
+          }}
+          onAssign={(manager) => assignNewProduct(assigningNewProduct, manager)}
         />
       )}
       {copied && (
