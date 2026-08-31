@@ -68,6 +68,39 @@ type ProductPerformanceRow = {
   add_to_cart: number | string | null;
 };
 
+type ProductMetric = {
+  impressions: number;
+  clicks: number;
+  productViews: number;
+  addToCart: number;
+};
+
+type ProductAnalysisRow = ProductLite & {
+  missingRequiredAttrsCount: number;
+  missingRequiredAttrs: string[];
+  requiredAttrsConfigured: boolean;
+  impressions: number;
+  pdpViews: number;
+  ctr: number | null;
+  atc: number | null;
+  contentScore: number | null;
+  photoScore: number;
+  attributeScore: number | null;
+  reviewScore: number;
+  categoryP75Impressions: number;
+  categoryMedianCtr: number;
+  categoryMedianAtc: number;
+  categoryMedianContent: number | null;
+};
+
+type ProductAnalysisDataset = {
+  rows: ProductAnalysisRow[];
+  monthlyByRef: Map<string, ProductMetric>;
+  available: boolean;
+  error: string;
+  contentAvailable: boolean;
+};
+
 const CHART_COLORS = [
   "#118dff",
   "#4a6ee0",
@@ -84,6 +117,7 @@ const CTR_MIN_IMPRESSIONS = 20;
 const CATEGORY_FORECAST_MIN_IMPRESSIONS = 200;
 const CATEGORY_FORECAST_MIN_ATC = 10;
 const CTR_CACHE_TTL_MS = 15 * 60_000;
+const BIGQUERY_FAILURE_CACHE_TTL_MS = 60_000;
 
 let ctrCache: { key: string; expiresAt: number; value: CtrSummary } | null =
   null;
@@ -91,11 +125,20 @@ let monthlyCtrCache: {
   key: string;
   expiresAt: number;
   rows: MonthlyCtrRow[];
+  available: boolean;
+  error?: string;
 } | null = null;
 let productPerformanceCache: {
   key: string;
   expiresAt: number;
   rows: ProductPerformanceRow[];
+  available: boolean;
+  error?: string;
+} | null = null;
+let productAnalysisCache: {
+  key: string;
+  expiresAt: number;
+  value: ProductAnalysisDataset;
 } | null = null;
 
 type CtrSummary = {
@@ -309,7 +352,8 @@ async function readMonthlyCtr(
   ) {
     return {
       rows: monthlyCtrCache.rows,
-      available: monthlyCtrCache.rows.length > 0,
+      available: monthlyCtrCache.available,
+      error: monthlyCtrCache.error,
     };
   }
   try {
@@ -322,15 +366,26 @@ async function readMonthlyCtr(
       maximumBytesBilled: "50000000000",
     });
     const rows = rawRows as MonthlyCtrRow[];
-    monthlyCtrCache = { key, expiresAt: Date.now() + CTR_CACHE_TTL_MS, rows };
+    monthlyCtrCache = {
+      key,
+      expiresAt: Date.now() + CTR_CACHE_TTL_MS,
+      rows,
+      available: rows.length > 0,
+    };
     return { rows, available: rows.length > 0 };
   } catch (error) {
-    return {
+    const failed = {
       rows: [],
       available: false,
       error:
         error instanceof Error ? error.message : "BigQuery monthly CTR failed",
     };
+    monthlyCtrCache = {
+      key,
+      expiresAt: Date.now() + BIGQUERY_FAILURE_CACHE_TTL_MS,
+      ...failed,
+    };
+    return failed;
   }
 }
 
@@ -382,7 +437,8 @@ async function readProductPerformance(today: string): Promise<{
   ) {
     return {
       rows: productPerformanceCache.rows,
-      available: productPerformanceCache.rows.length > 0,
+      available: productPerformanceCache.available,
+      error: productPerformanceCache.error,
     };
   }
   try {
@@ -403,10 +459,11 @@ async function readProductPerformance(today: string): Promise<{
       key,
       expiresAt: Date.now() + CTR_CACHE_TTL_MS,
       rows,
+      available: rows.length > 0,
     };
     return { rows, available: rows.length > 0 };
   } catch (error) {
-    return {
+    const failed = {
       rows: [],
       available: false,
       error:
@@ -414,6 +471,12 @@ async function readProductPerformance(today: string): Promise<{
           ? error.message
           : "BigQuery product performance failed",
     };
+    productPerformanceCache = {
+      key,
+      expiresAt: Date.now() + BIGQUERY_FAILURE_CACHE_TTL_MS,
+      ...failed,
+    };
+    return failed;
   }
 }
 
@@ -566,7 +629,7 @@ async function readCtr(
     ctrCache = { key, expiresAt: Date.now() + CTR_CACHE_TTL_MS, value };
     return value;
   } catch (error) {
-    return {
+    const value: CtrSummary = {
       available: false,
       benchmark: null,
       tile: null,
@@ -579,6 +642,12 @@ async function readCtr(
       declinedSanitary: 0,
       error: error instanceof Error ? error.message : "CTR unavailable",
     };
+    ctrCache = {
+      key,
+      expiresAt: Date.now() + BIGQUERY_FAILURE_CACHE_TTL_MS,
+      value,
+    };
+    return value;
   }
 }
 
@@ -1087,23 +1156,6 @@ async function buildDashboard(input: DashboardFilters) {
     };
   }
 
-  type ProductAnalysisRow = ProductLite & {
-    missingRequiredAttrsCount: number;
-    missingRequiredAttrs: string[];
-    requiredAttrsConfigured: boolean;
-    impressions: number;
-    pdpViews: number;
-    ctr: number | null;
-    atc: number | null;
-    contentScore: number | null;
-    photoScore: number;
-    attributeScore: number | null;
-    reviewScore: number;
-    categoryP75Impressions: number;
-    categoryMedianCtr: number;
-    categoryMedianAtc: number;
-    categoryMedianContent: number | null;
-  };
   let productRows: ProductAnalysisRow[] = [];
   let productAnalysis = {
     available: false,
@@ -1127,157 +1179,178 @@ async function buildDashboard(input: DashboardFilters) {
     },
   };
   if (filters.view === "products") {
-    const [performanceDataset, monthlyDataset] = await Promise.all([
-      readProductPerformance(today),
-      readMonthlyCtr(today),
-    ]);
-    const performanceByRef = new Map<
-      number,
-      {
-        impressions: number;
-        clicks: number;
-        productViews: number;
-        addToCart: number;
-      }
-    >();
-    for (const row of performanceDataset.rows) {
-      performanceByRef.set(scalar(row.goods_ref), {
-        impressions: scalar(row.impressions),
-        clicks: scalar(row.clicks),
-        productViews: scalar(row.product_views),
-        addToCart: scalar(row.add_to_cart),
-      });
-    }
-    const monthlyByRef = new Map<
-      string,
-      {
-        impressions: number;
-        clicks: number;
-        productViews: number;
-        addToCart: number;
-      }
-    >();
-    for (const row of monthlyDataset.rows) {
-      const key = `${scalar(row.goods_ref)}:${monthScalar(row.month)}`;
-      const metric = monthlyByRef.get(key) || {
-        impressions: 0,
-        clicks: 0,
-        productViews: 0,
-        addToCart: 0,
-      };
-      metric.impressions += scalar(row.impressions);
-      metric.clicks += scalar(row.clicks);
-      metric.productViews += scalar(row.product_views);
-      metric.addToCart += scalar(row.add_to_cart);
-      monthlyByRef.set(key, metric);
-    }
-    const contentFor = (product: ProductLite) => {
-      const required = requiredAttrs[String(product.categoryId)] || [];
-      const requiredAttrsConfigured = required.length > 0;
-      const missingNames = requiredAttrsConfigured
-        ? missingRequiredAttributes(product)
-        : [];
-      const missing = missingNames.length;
-      const photoScore = Math.min(100, (product.imagesCount / 6) * 100);
-      const attributeScore = requiredAttrsConfigured
-        ? Math.max(0, ((required.length - missing) / required.length) * 100)
+    const analysisCacheKey = `${today}:${syncedAt || ""}:${products.length}:${JSON.stringify(requiredAttrs)}`;
+    let analysisDataset =
+      productAnalysisCache?.key === analysisCacheKey &&
+      productAnalysisCache.expiresAt > Date.now()
+        ? productAnalysisCache.value
         : null;
-      const reviewScore = product.reviewsCount > 0 ? 100 : 0;
-      return {
-        missing,
-        missingNames,
-        requiredAttrsConfigured,
-        photoScore,
-        attributeScore,
-        reviewScore,
-        contentScore:
-          attributeScore == null
-            ? null
-            : Math.round(
-                (photoScore * 0.4 + attributeScore * 0.4 + reviewScore * 0.2) *
-                  10,
-              ) / 10,
-      };
-    };
-    const baseRows = products.map((product) => {
-      const metric = performanceByRef.get(product.goodsRef) || {
-        impressions: 0,
-        clicks: 0,
-        productViews: 0,
-        addToCart: 0,
-      };
-      const content = contentFor(product);
-      return {
-        ...product,
-        missingRequiredAttrsCount: content.missing,
-        missingRequiredAttrs: content.missingNames,
-        requiredAttrsConfigured: content.requiredAttrsConfigured,
-        impressions: metric.impressions,
-        pdpViews: metric.productViews,
-        ctr:
-          metric.impressions > 0
-            ? (metric.clicks / metric.impressions) * 100
-            : null,
-        atc:
-          metric.productViews > 0
-            ? (metric.addToCart / metric.productViews) * 100
-            : null,
-        contentScore: content.contentScore,
-        photoScore: content.photoScore,
-        attributeScore: content.attributeScore,
-        reviewScore: content.reviewScore,
-      };
-    });
-    const byCategory = new Map<number, typeof baseRows>();
-    for (const row of baseRows) {
-      const rows = byCategory.get(row.categoryId) || [];
-      rows.push(row);
-      byCategory.set(row.categoryId, rows);
-    }
-    const benchmarks = new Map<
-      number,
-      {
-        p75Impressions: number;
-        medianCtr: number;
-        medianAtc: number;
-        medianContent: number | null;
+    if (!analysisDataset) {
+      const [performanceDataset, monthlyDataset] = await Promise.all([
+        readProductPerformance(today),
+        readMonthlyCtr(today),
+      ]);
+      const performanceByRef = new Map<
+        number,
+        {
+          impressions: number;
+          clicks: number;
+          productViews: number;
+          addToCart: number;
+        }
+      >();
+      for (const row of performanceDataset.rows) {
+        performanceByRef.set(scalar(row.goods_ref), {
+          impressions: scalar(row.impressions),
+          clicks: scalar(row.clicks),
+          productViews: scalar(row.product_views),
+          addToCart: scalar(row.add_to_cart),
+        });
       }
-    >();
-    for (const [categoryId, rows] of byCategory) {
-      benchmarks.set(categoryId, {
-        p75Impressions: percentile(
-          rows.map((row) => row.impressions),
-          0.75,
-        ),
-        medianCtr: median(
-          rows
-            .filter((row) => row.impressions >= 500 && row.ctr != null)
-            .map((row) => row.ctr || 0),
-        ),
-        medianAtc: median(
-          rows
-            .filter((row) => row.pdpViews >= 50 && row.atc != null)
-            .map((row) => row.atc || 0),
-        ),
-        medianContent: rows.some((row) => row.contentScore != null)
-          ? median(
-              rows
-                .filter((row) => row.contentScore != null)
-                .map((row) => row.contentScore || 0),
-            )
-          : null,
-      });
-    }
-    const enriched = baseRows.map((row) => {
-      const benchmark = benchmarks.get(row.categoryId)!;
-      return {
-        ...row,
-        categoryP75Impressions: benchmark.p75Impressions,
-        categoryMedianCtr: benchmark.medianCtr,
-        categoryMedianAtc: benchmark.medianAtc,
-        categoryMedianContent: benchmark.medianContent,
+      const monthlyByRef = new Map<string, ProductMetric>();
+      for (const row of monthlyDataset.rows) {
+        const key = `${scalar(row.goods_ref)}:${monthScalar(row.month)}`;
+        const metric = monthlyByRef.get(key) || {
+          impressions: 0,
+          clicks: 0,
+          productViews: 0,
+          addToCart: 0,
+        };
+        metric.impressions += scalar(row.impressions);
+        metric.clicks += scalar(row.clicks);
+        metric.productViews += scalar(row.product_views);
+        metric.addToCart += scalar(row.add_to_cart);
+        monthlyByRef.set(key, metric);
+      }
+      const contentFor = (product: ProductLite) => {
+        const required = requiredAttrs[String(product.categoryId)] || [];
+        const requiredAttrsConfigured = required.length > 0;
+        const missingNames = requiredAttrsConfigured
+          ? missingRequiredAttributes(product)
+          : [];
+        const missing = missingNames.length;
+        const photoScore = Math.min(100, (product.imagesCount / 6) * 100);
+        const attributeScore = requiredAttrsConfigured
+          ? Math.max(0, ((required.length - missing) / required.length) * 100)
+          : null;
+        const reviewScore = product.reviewsCount > 0 ? 100 : 0;
+        return {
+          missing,
+          missingNames,
+          requiredAttrsConfigured,
+          photoScore,
+          attributeScore,
+          reviewScore,
+          contentScore:
+            attributeScore == null
+              ? null
+              : Math.round(
+                  (photoScore * 0.4 +
+                    attributeScore * 0.4 +
+                    reviewScore * 0.2) *
+                    10,
+                ) / 10,
+        };
       };
-    });
+      const baseRows = products.map((product) => {
+        const metric = performanceByRef.get(product.goodsRef) || {
+          impressions: 0,
+          clicks: 0,
+          productViews: 0,
+          addToCart: 0,
+        };
+        const content = contentFor(product);
+        return {
+          ...product,
+          missingRequiredAttrsCount: content.missing,
+          missingRequiredAttrs: content.missingNames,
+          requiredAttrsConfigured: content.requiredAttrsConfigured,
+          impressions: metric.impressions,
+          pdpViews: metric.productViews,
+          ctr:
+            metric.impressions > 0
+              ? (metric.clicks / metric.impressions) * 100
+              : null,
+          atc:
+            metric.productViews > 0
+              ? (metric.addToCart / metric.productViews) * 100
+              : null,
+          contentScore: content.contentScore,
+          photoScore: content.photoScore,
+          attributeScore: content.attributeScore,
+          reviewScore: content.reviewScore,
+        };
+      });
+      const byCategory = new Map<number, typeof baseRows>();
+      for (const row of baseRows) {
+        const rows = byCategory.get(row.categoryId) || [];
+        rows.push(row);
+        byCategory.set(row.categoryId, rows);
+      }
+      const benchmarks = new Map<
+        number,
+        {
+          p75Impressions: number;
+          medianCtr: number;
+          medianAtc: number;
+          medianContent: number | null;
+        }
+      >();
+      for (const [categoryId, rows] of byCategory) {
+        benchmarks.set(categoryId, {
+          p75Impressions: percentile(
+            rows.map((row) => row.impressions),
+            0.75,
+          ),
+          medianCtr: median(
+            rows
+              .filter((row) => row.impressions >= 500 && row.ctr != null)
+              .map((row) => row.ctr || 0),
+          ),
+          medianAtc: median(
+            rows
+              .filter((row) => row.pdpViews >= 50 && row.atc != null)
+              .map((row) => row.atc || 0),
+          ),
+          medianContent: rows.some((row) => row.contentScore != null)
+            ? median(
+                rows
+                  .filter((row) => row.contentScore != null)
+                  .map((row) => row.contentScore || 0),
+              )
+            : null,
+        });
+      }
+      const enriched = baseRows.map((row) => {
+        const benchmark = benchmarks.get(row.categoryId)!;
+        return {
+          ...row,
+          categoryP75Impressions: benchmark.p75Impressions,
+          categoryMedianCtr: benchmark.medianCtr,
+          categoryMedianAtc: benchmark.medianAtc,
+          categoryMedianContent: benchmark.medianContent,
+        };
+      });
+      analysisDataset = {
+        rows: enriched,
+        monthlyByRef,
+        available: performanceDataset.available && monthlyDataset.available,
+        error: [performanceDataset.error, monthlyDataset.error]
+          .filter(Boolean)
+          .join(" · "),
+        contentAvailable: baseRows.some((row) => row.requiredAttrsConfigured),
+      };
+      productAnalysisCache = {
+        key: analysisCacheKey,
+        expiresAt:
+          Date.now() +
+          (analysisDataset.available
+            ? CTR_CACHE_TTL_MS
+            : BIGQUERY_FAILURE_CACHE_TTL_MS),
+        value: analysisDataset,
+      };
+    }
+    const { rows: enriched, monthlyByRef } = analysisDataset;
     const filteredIds = new Set(filtered.map((product) => product.id));
     const selected = enriched.filter((row) => filteredIds.has(row.id));
     const isHighImpressions = (row: ProductAnalysisRow) =>
@@ -1343,11 +1416,9 @@ async function buildDashboard(input: DashboardFilters) {
     };
     productAnalysis = {
       ...productAnalysis,
-      available: performanceDataset.available && monthlyDataset.available,
-      error: [performanceDataset.error, monthlyDataset.error]
-        .filter(Boolean)
-        .join(" · "),
-      contentAvailable: baseRows.some((row) => row.requiredAttrsConfigured),
+      available: analysisDataset.available,
+      error: analysisDataset.error,
+      contentAvailable: analysisDataset.contentAvailable,
       currentThree: monthConfig.currentThree.map(aggregateMonth),
       lastYear: monthConfig.lastYear.map(aggregateMonth),
     };

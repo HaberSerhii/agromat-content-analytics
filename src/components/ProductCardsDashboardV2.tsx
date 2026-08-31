@@ -1532,57 +1532,65 @@ export function ProductCardsDashboardV2() {
   const [resultBrand, setResultBrand] = useState("");
   const [resultManager, setResultManager] = useState<ContentManager | "">("");
   const [resultMonth, setResultMonth] = useState("");
+  const loadRequestRef = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch("/api/products/dashboard-v2", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          view: view === "results" ? "overview" : view,
-          page,
-          limit: PAGE_SIZE,
-          search,
-          bulkIds,
-          categoryId: categoryId ? Number(categoryId) : null,
-          brandId: brandId ? Number(brandId) : null,
-          statusId: statusId ? Number(statusId) : null,
-          minPrice: minPrice ? Number(minPrice) : null,
-          maxPrice: maxPrice ? Number(maxPrice) : null,
-          minStock: minStock ? Number(minStock) : null,
-          maxStock: maxStock ? Number(maxStock) : null,
-          productSignal: productSignal || null,
-        }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const next = (await response.json()) as DashboardResponse;
-      setData(next);
-      setAllFacets((current) => current || next.facets);
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Не вдалося завантажити дашборд",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [
-    view,
-    page,
-    search,
-    bulkIds,
-    categoryId,
-    brandId,
-    statusId,
-    minPrice,
-    maxPrice,
-    minStock,
-    maxStock,
-    productSignal,
-  ]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestId = ++loadRequestRef.current;
+      setLoading(true);
+      setError("");
+      try {
+        const response = await fetch("/api/products/dashboard-v2", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal,
+          body: JSON.stringify({
+            view: view === "results" ? "overview" : view,
+            page,
+            limit: PAGE_SIZE,
+            search,
+            bulkIds,
+            categoryId: categoryId ? Number(categoryId) : null,
+            brandId: brandId ? Number(brandId) : null,
+            statusId: statusId ? Number(statusId) : null,
+            minPrice: minPrice ? Number(minPrice) : null,
+            maxPrice: maxPrice ? Number(maxPrice) : null,
+            minStock: minStock ? Number(minStock) : null,
+            maxStock: maxStock ? Number(maxStock) : null,
+            productSignal: productSignal || null,
+          }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const next = (await response.json()) as DashboardResponse;
+        if (requestId !== loadRequestRef.current) return;
+        setData(next);
+        setAllFacets((current) => current || next.facets);
+      } catch (cause) {
+        if (signal?.aborted || requestId !== loadRequestRef.current) return;
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Не вдалося завантажити дашборд",
+        );
+      } finally {
+        if (requestId === loadRequestRef.current) setLoading(false);
+      }
+    },
+    [
+      view,
+      page,
+      search,
+      bulkIds,
+      categoryId,
+      brandId,
+      statusId,
+      minPrice,
+      maxPrice,
+      minStock,
+      maxStock,
+      productSignal,
+    ],
+  );
 
   const loadInterventions = useCallback(async () => {
     setReviewsLoading(true);
@@ -1610,7 +1618,9 @@ export function ProductCardsDashboardV2() {
   }, []);
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [load]);
   useEffect(() => {
     void loadInterventions();
