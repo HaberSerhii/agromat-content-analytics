@@ -11,6 +11,7 @@ import {
   type ContentReviewMetrics,
 } from "@/lib/content-review-types";
 import type { NewProductAnalysisRow } from "@/lib/new-product-types";
+import { SearchAnalyticsPanel } from "@/components/SearchAnalyticsPanel";
 
 type FacetRow = { key: string; name: string; count: number };
 type ProductRow = {
@@ -229,7 +230,7 @@ const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
   {
     id: "search",
     label: "Аналіз пошукової системи",
-    hint: "Логіка буде додана пізніше",
+    hint: "BigQuery, Multisearch та Google Sheets",
   },
   {
     id: "results",
@@ -1970,26 +1971,6 @@ function NewProductsAnalysisPanel({
   );
 }
 
-function SearchAnalyticsPlaceholder() {
-  return (
-    <section className="rounded-2xl border border-[#dfe4ea] bg-white p-8 text-center">
-      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#edf6ff] text-2xl text-[#118dff]">
-        ⌕
-      </div>
-      <h2 className="mt-4 text-lg font-black text-[#27313c]">
-        Аналіз пошукової системи
-      </h2>
-      <p className="mx-auto mt-2 max-w-xl text-[11px] leading-5 text-[#7d8892]">
-        Розділ створено. Логіку, показники та джерела даних додамо після
-        отримання наступних вимог.
-      </p>
-      <span className="mt-4 inline-flex rounded-full bg-[#fff4df] px-3 py-1.5 text-[9px] font-black text-[#a36b0e]">
-        Очікує налаштування логіки
-      </span>
-    </section>
-  );
-}
-
 export function ProductCardsDashboardV2() {
   const [view, setView] = useState<DashboardView>("overview");
   const [data, setData] = useState<DashboardResponse | null>(null);
@@ -3057,8 +3038,8 @@ export function ProductCardsDashboardV2() {
                     ? "Поточний стан контенту категорій та динаміка CTR Каталог → PDP."
                     : view === "products"
                       ? "Пошук точок зростання за видимістю, конверсією та якістю контенту."
-                      : view === "search"
-                        ? "Майбутня аналітика внутрішнього пошуку та пошукових запитів."
+                    : view === "search"
+                        ? "Єдина черга пошукових запитів з BigQuery, Multisearch та Google Sheets."
                         : view === "results"
                           ? "Контроль ефекту контентних змін після завершення контрольного періоду."
                           : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
@@ -3484,7 +3465,7 @@ export function ProductCardsDashboardV2() {
                 </div>
               </section>
             ) : view === "search" ? (
-              <SearchAnalyticsPlaceholder />
+              <SearchAnalyticsPanel />
             ) : view === "results" ? (
               <section className="space-y-4">
                 <div className="grid gap-2 rounded-2xl border border-[#dfe4ea] bg-white p-2 md:grid-cols-3">
@@ -3518,7 +3499,7 @@ export function ProductCardsDashboardV2() {
                     onRefresh={loadNewAssignments}
                   />
                 )}
-                {resultMode === "search" && <SearchAnalyticsPlaceholder />}
+                {resultMode === "search" && <SearchAnalyticsPanel />}
                 <div
                   className={`${resultMode === "merchandising" ? "" : "hidden"} overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white`}
                 >

@@ -1,0 +1,434 @@
+import { BigQuery } from "@google-cloud/bigquery";
+import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
+import {
+  ensureSearchQueryDiscovery,
+  listSearchQueryProcessing,
+} from "@/lib/search-query-processing-store";
+import type {
+  SearchAnalyticsRow,
+  SearchQueryProcessing,
+  SearchQueryProduct,
+} from "@/lib/search-analytics-types";
+import { readAllLite, type ProductLite } from "@/lib/products-store";
+
+type SourceQuery = {
+  query: string;
+  count: number;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+};
+
+type SheetMapping = {
+  queryUk: string;
+  queryRu: string;
+  goodsRefs: number[];
+};
+
+type MutableRow = SearchAnalyticsRow & { aliasSet: Set<string> };
+
+const MULTISEARCH_BASE = "https://multisearch.io/app/analytics/report";
+const GOOGLE_SHEET_ID =
+  process.env.MULTISEARCH_GOOGLE_SHEET_ID ||
+  "12LQc7_q7ok9pufQJCNC-rtIYTc4OCdZwsdww_l_xrJc";
+const DAY_MS = 24 * 60 * 60_000;
+
+export function normalizeSearchQuery(value: string): string {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase("uk")
+    .replace(/[’`]/g, "'")
+    .replace(/\s+/g, " ");
+}
+
+function dateInKyiv(date = new Date()): string {
+  return date.toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" });
+}
+
+function periodRange(today = dateInKyiv()): { from: string; to: string } {
+  const toDate = new Date(`${today}T12:00:00Z`);
+  toDate.setUTCDate(toDate.getUTCDate() - 1);
+  const fromDate = new Date(toDate);
+  fromDate.setUTCDate(fromDate.getUTCDate() - 29);
+  return {
+    from: fromDate.toISOString().slice(0, 10),
+    to: toDate.toISOString().slice(0, 10),
+  };
+}
+
+function csvRows(input: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < input.length; index++) {
+    const char = input[index];
+    if (char === '"') {
+      if (quoted && input[index + 1] === '"') {
+        value += '"';
+        index++;
+      } else quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(value);
+      value = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && input[index + 1] === "\n") index++;
+      row.push(value);
+      if (row.some((cell) => cell.trim())) rows.push(row);
+      row = [];
+      value = "";
+    } else value += char;
+  }
+  row.push(value);
+  if (row.some((cell) => cell.trim())) rows.push(row);
+  return rows;
+}
+
+async function loadSheetMappings(cacheDay: string): Promise<SheetMapping[]> {
+  return readThroughBigQueryCache({
+    namespace: "multisearch-google-sheet",
+    key: cacheDay,
+    load: async () => {
+      const response = await fetch(
+        `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&gid=0`,
+        { signal: AbortSignal.timeout(20_000) },
+      );
+      if (!response.ok) throw new Error(`Google Sheets HTTP ${response.status}`);
+      return csvRows(await response.text())
+        .slice(1)
+        .map((row) => ({
+          queryUk: String(row[0] || "").trim(),
+          queryRu: String(row[1] || "").trim(),
+          goodsRefs: String(row[2] || "")
+            .split(",")
+            .map((item) => Number(item.trim()))
+            .filter(Number.isSafeInteger),
+        }))
+        .filter((row) => row.queryUk || row.queryRu);
+    },
+  });
+}
+
+async function loadMultisearchQueries(
+  kind: "found" | "no-results",
+  from: string,
+  to: string,
+  cacheDay: string,
+): Promise<SourceQuery[]> {
+  const key = process.env.MULTISEARCH_ANALYTICS_KEY;
+  if (!key) throw new Error("MULTISEARCH_ANALYTICS_KEY is not configured");
+  return readThroughBigQueryCache({
+    namespace: `multisearch-${kind}`,
+    key: `${cacheDay}:${from}:${to}`,
+    load: async () => {
+      const rows: SourceQuery[] = [];
+      const chunk = 10_000;
+      for (let offset = 0; offset < 50_000; offset += chunk) {
+        const url = new URL(MULTISEARCH_BASE);
+        url.searchParams.set("key", key);
+        url.searchParams.set("start_date", from);
+        url.searchParams.set("end_date", to);
+        url.searchParams.set("dimensions", "queries");
+        url.searchParams.set(
+          "filters",
+          kind === "no-results"
+            ? "name=noresults"
+            : "name[]=find&name[]=keyboard&name[]=spellcheck",
+        );
+        url.searchParams.set("offset", String(offset));
+        url.searchParams.set("limit", String(chunk));
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok)
+          throw new Error(`Multisearch HTTP ${response.status}`);
+        const payload = (await response.json()) as {
+          rows?: Array<[unknown, unknown]>;
+        };
+        const batch = payload.rows || [];
+        for (const item of batch) {
+          const query = String(item[0] || "").trim();
+          const count = Number(item[1]) || 0;
+          if (query) rows.push({ query, count, firstSeenAt: from, lastSeenAt: to });
+        }
+        if (batch.length < chunk) break;
+      }
+      return rows;
+    },
+  });
+}
+
+async function loadBigQueryQueries(
+  from: string,
+  to: string,
+  cacheDay: string,
+): Promise<SourceQuery[]> {
+  const project = process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413";
+  const dataset = process.env.BIGQUERY_DATASET_ID || "analytics_321347682";
+  const fromSuffix = from.replaceAll("-", "");
+  const toSuffix = to.replaceAll("-", "");
+  return readThroughBigQueryCache({
+    namespace: "search-queries-ga4",
+    key: `${cacheDay}:${from}:${to}`,
+    load: async () => {
+      const client = new BigQuery({ projectId: project });
+      const [rows] = await client.query({
+        query: `
+          SELECT
+            LOWER(TRIM((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'search_term'))) AS query,
+            COUNT(*) AS search_count,
+            MIN(PARSE_DATE('%Y%m%d', event_date)) AS first_seen,
+            MAX(PARSE_DATE('%Y%m%d', event_date)) AS last_seen
+          FROM \`${project}.${dataset}.events_*\`
+          WHERE _TABLE_SUFFIX BETWEEN @fromSuffix AND @toSuffix
+            AND event_name IN ('view_search_result', 'view_search_results')
+          GROUP BY query
+          HAVING query IS NOT NULL AND query != ''
+          ORDER BY search_count DESC
+        `,
+        params: { fromSuffix, toSuffix },
+      });
+      return rows.map((row) => ({
+        query: String(row.query || "").trim(),
+        count: Number(row.search_count) || 0,
+        firstSeenAt: String(row.first_seen?.value || row.first_seen || from),
+        lastSeenAt: String(row.last_seen?.value || row.last_seen || to),
+      }));
+    },
+  });
+}
+
+function productProjection(product: ProductLite): SearchQueryProduct {
+  return {
+    code: product.code,
+    goodsRef: product.goodsRef,
+    name: product.name,
+    url: product.url,
+    stockQty: product.stockQty,
+    statusName: product.statusName,
+  };
+}
+
+function classifyGarbage(
+  query: string,
+  products: ProductLite[],
+  codeSet: Set<string>,
+  goodsRefSet: Set<string>,
+  skuSet: Set<string>,
+): string | null {
+  const normalized = normalizeSearchQuery(query);
+  if (codeSet.has(normalized)) return "IDD товару";
+  if (goodsRefSet.has(normalized)) return "goods_ref товару";
+  if (skuSet.has(normalized)) return "Артикул товару";
+  if (/^\d{4,}$/.test(normalized)) return "Числовий ідентифікатор";
+  if (
+    normalized.length >= 6 &&
+    !normalized.includes(" ") &&
+    /\d/.test(normalized) &&
+    /^[\p{L}\d._/-]+$/u.test(normalized)
+  )
+    return "Схоже на артикул";
+  if (normalized.length < 2 || !/[\p{L}\d]/u.test(normalized))
+    return "Некорисний запит";
+  void products;
+  return null;
+}
+
+function emptyRow(key: string, query: string): MutableRow {
+  return {
+    key,
+    query,
+    queryUk: query,
+    queryRu: query,
+    aliases: [query],
+    aliasSet: new Set([normalizeSearchQuery(query)]),
+    sources: [],
+    bigQueryCount: 0,
+    multisearchFoundCount: 0,
+    multisearchNoResultsCount: 0,
+    totalSearches: 0,
+    firstSeenAt: null,
+    lastSeenAt: null,
+    status: "new",
+    manager: null,
+    garbageReason: null,
+    products: [],
+    sheetSynced: false,
+    processedAt: null,
+  };
+}
+
+function addSource(
+  row: MutableRow,
+  source: SearchAnalyticsRow["sources"][number],
+  item: SourceQuery,
+) {
+  if (!row.sources.includes(source)) row.sources.push(source);
+  if (!row.aliasSet.has(normalizeSearchQuery(item.query))) {
+    row.aliasSet.add(normalizeSearchQuery(item.query));
+    row.aliases.push(item.query);
+  }
+  if (source === "bigquery") row.bigQueryCount += item.count;
+  if (source === "multisearch-found") row.multisearchFoundCount += item.count;
+  if (source === "multisearch-no-results")
+    row.multisearchNoResultsCount += item.count;
+  row.totalSearches =
+    Math.max(
+      row.bigQueryCount,
+      row.multisearchFoundCount + row.multisearchNoResultsCount,
+    );
+  if (item.firstSeenAt && (!row.firstSeenAt || item.firstSeenAt < row.firstSeenAt))
+    row.firstSeenAt = item.firstSeenAt;
+  if (item.lastSeenAt && (!row.lastSeenAt || item.lastSeenAt > row.lastSeenAt))
+    row.lastSeenAt = item.lastSeenAt;
+}
+
+export async function buildSearchAnalyticsDataset(): Promise<{
+  rows: SearchAnalyticsRow[];
+  from: string;
+  to: string;
+  warnings: string[];
+  sourceStats: {
+    bigQueryQueries: number;
+    bigQueryEvents: number;
+    multisearchFoundQueries: number;
+    multisearchFoundEvents: number;
+    multisearchNoResultsQueries: number;
+    multisearchNoResultsEvents: number;
+    sheetMappings: number;
+  };
+}> {
+  const cacheDay = dateInKyiv();
+  const { from, to } = periodRange(cacheDay);
+  const warnings: string[] = [];
+  const settled = await Promise.allSettled([
+    loadBigQueryQueries(from, to, cacheDay),
+    loadMultisearchQueries("found", from, to, cacheDay),
+    loadMultisearchQueries("no-results", from, to, cacheDay),
+    loadSheetMappings(cacheDay),
+  ]);
+  const value = <T>(index: number, label: string): T[] => {
+    const result = settled[index];
+    if (result.status === "fulfilled") return result.value as T[];
+    warnings.push(`${label}: ${result.reason instanceof Error ? result.reason.message : "помилка"}`);
+    return [];
+  };
+  const bigQuery = value<SourceQuery>(0, "BigQuery");
+  const found = value<SourceQuery>(1, "Multisearch з результатами");
+  const noResults = value<SourceQuery>(2, "Multisearch без результатів");
+  const sheet = value<SheetMapping>(3, "Google Sheets");
+  const [products, processing] = await Promise.all([
+    readAllLite(),
+    listSearchQueryProcessing(),
+  ]);
+  const byGoodsRef = new Map(products.map((item) => [item.goodsRef, item]));
+  const codeSet = new Set(products.map((item) => String(item.code)));
+  const goodsRefSet = new Set(products.map((item) => String(item.goodsRef)));
+  const skuSet = new Set(
+    products
+      .map((item) => normalizeSearchQuery(item.sku || ""))
+      .filter(Boolean),
+  );
+  const rows = new Map<string, MutableRow>();
+  const aliasToKey = new Map<string, string>();
+
+  sheet.forEach((mapping, index) => {
+    const key = `sheet:${index + 2}`;
+    const query = mapping.queryUk || mapping.queryRu;
+    const row = emptyRow(key, query);
+    row.queryUk = mapping.queryUk;
+    row.queryRu = mapping.queryRu;
+    row.aliases = [...new Set([mapping.queryUk, mapping.queryRu].filter(Boolean))];
+    row.aliasSet = new Set(row.aliases.map(normalizeSearchQuery));
+    row.sources.push("google-sheet");
+    row.status = "processed";
+    row.sheetSynced = true;
+    row.products = mapping.goodsRefs
+      .map((goodsRef) => byGoodsRef.get(goodsRef))
+      .filter((item): item is ProductLite => Boolean(item))
+      .map(productProjection);
+    rows.set(key, row);
+    for (const alias of row.aliasSet) if (!aliasToKey.has(alias)) aliasToKey.set(alias, key);
+  });
+
+  const merge = (
+    items: SourceQuery[],
+    source: SearchAnalyticsRow["sources"][number],
+  ) => {
+    for (const item of items) {
+      const normalized = normalizeSearchQuery(item.query);
+      if (!normalized) continue;
+      const key = aliasToKey.get(normalized) || `query:${normalized}`;
+      let row = rows.get(key);
+      if (!row) {
+        row = emptyRow(key, item.query);
+        rows.set(key, row);
+        aliasToKey.set(normalized, key);
+      }
+      addSource(row, source, item);
+    }
+  };
+  merge(bigQuery, "bigquery");
+  merge(found, "multisearch-found");
+  merge(noResults, "multisearch-no-results");
+
+  const discovery = await ensureSearchQueryDiscovery(
+    [...rows.values()].map((row) => normalizeSearchQuery(row.query)),
+    cacheDay,
+  );
+
+  for (const row of rows.values()) {
+    row.firstSeenAt = discovery[normalizeSearchQuery(row.query)] || cacheDay;
+    const stored = processing[normalizeSearchQuery(row.query)];
+    if (stored) applyProcessing(row, stored);
+    if (row.status === "new") {
+      row.garbageReason = classifyGarbage(
+        row.query,
+        products,
+        codeSet,
+        goodsRefSet,
+        skuSet,
+      );
+      if (row.garbageReason) row.status = "garbage";
+    }
+    row.aliases = [...row.aliasSet].map(
+      (alias) => row.aliases.find((item) => normalizeSearchQuery(item) === alias) || alias,
+    );
+  }
+
+  return {
+    rows: [...rows.values()].map((row) => {
+      const finalRow = { ...row } as Partial<MutableRow>;
+      delete finalRow.aliasSet;
+      return finalRow as SearchAnalyticsRow;
+    }),
+    from,
+    to,
+    warnings,
+    sourceStats: {
+      bigQueryQueries: bigQuery.length,
+      bigQueryEvents: bigQuery.reduce((sum, item) => sum + item.count, 0),
+      multisearchFoundQueries: found.length,
+      multisearchFoundEvents: found.reduce((sum, item) => sum + item.count, 0),
+      multisearchNoResultsQueries: noResults.length,
+      multisearchNoResultsEvents: noResults.reduce((sum, item) => sum + item.count, 0),
+      sheetMappings: sheet.length,
+    },
+  };
+}
+
+function applyProcessing(row: MutableRow, stored: SearchQueryProcessing) {
+  row.status = "processed";
+  row.manager = stored.manager;
+  row.queryUk = stored.queryUk;
+  row.queryRu = stored.queryRu;
+  row.products = stored.products;
+  row.sheetSynced = stored.sheetSynced;
+  row.processedAt = stored.processedAt;
+}
+
+export function searchAnalyticsPeriod(): { from: string; to: string } {
+  return periodRange();
+}
+
+export const SEARCH_ANALYTICS_CACHE_TTL_MS = DAY_MS;
