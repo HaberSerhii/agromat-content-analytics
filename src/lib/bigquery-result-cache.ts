@@ -12,6 +12,8 @@ type CacheEnvelope<T> = {
 
 const memoryCache = new Map<string, unknown>();
 const inFlight = new Map<string, Promise<unknown>>();
+const DEFAULT_RETENTION_DAYS = 35;
+const MAX_FILES_PER_NAMESPACE = 500;
 
 export function bigQueryCacheDay(date = new Date()): string {
   return date.toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" });
@@ -35,6 +37,41 @@ function safeNamespace(namespace: string): string {
 function cacheFile(namespace: string, key: string): string {
   const digest = createHash("sha256").update(key).digest("hex");
   return path.join(cacheRoot(), safeNamespace(namespace), `${digest}.json.gz`);
+}
+
+function retentionMs(): number {
+  const configured = Number(
+    process.env.BIGQUERY_RESULT_CACHE_RETENTION_DAYS ||
+      DEFAULT_RETENTION_DAYS,
+  );
+  const days = Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_RETENTION_DAYS;
+  return days * 24 * 60 * 60_000;
+}
+
+function pruneNamespace(directory: string): void {
+  try {
+    const now = Date.now();
+    const files = fs
+      .readdirSync(directory)
+      .filter((name) => name.endsWith(".json.gz"))
+      .map((name) => {
+        const file = path.join(directory, name);
+        return { file, modifiedAt: fs.statSync(file).mtimeMs };
+      })
+      .sort((left, right) => right.modifiedAt - left.modifiedAt);
+    for (const entry of files) {
+      if (now - entry.modifiedAt > retentionMs()) fs.unlinkSync(entry.file);
+    }
+    const remaining = files.filter(
+      (entry) => now - entry.modifiedAt <= retentionMs(),
+    );
+    for (const entry of remaining.slice(MAX_FILES_PER_NAMESPACE))
+      fs.unlinkSync(entry.file);
+  } catch (error) {
+    console.error("[bigquery-cache] prune failed:", error);
+  }
 }
 
 function readDisk<T>(namespace: string, key: string): T | null {
@@ -67,6 +104,7 @@ function writeDisk<T>(namespace: string, key: string, value: T): void {
       zlib.gzipSync(JSON.stringify(envelope), { level: 6 }),
     );
     fs.renameSync(temporary, file);
+    pruneNamespace(path.dirname(file));
   } catch (error) {
     console.error(`[bigquery-cache] ${namespace} write failed:`, error);
   }
