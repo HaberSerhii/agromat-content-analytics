@@ -280,6 +280,15 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
 
   CURRENT_STEP="pm2 restart"
   echo "▸ $CURRENT_STEP"
+  # The standalone Next.js server does not load .env files at runtime. Export
+  # the deployment environment before `pm2 restart --update-env` so newly
+  # added integrations become available without a separate manual restart.
+  if [ -f "$APP_DIR/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$APP_DIR/.env"
+    set +a
+  fi
   if [ -z "$PM2_NAME" ]; then
     PM2_NAME=$(pm2 jlist 2>/dev/null \
       | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const a=JSON.parse(d||'[]');const m=a.find(p=>p.pm2_env&&p.pm2_env.pm_cwd&&p.pm2_env.pm_cwd.startsWith('$APP_DIR'));if(m)console.log(m.name)}catch(e){}})" \
