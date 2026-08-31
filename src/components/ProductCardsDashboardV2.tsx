@@ -204,6 +204,7 @@ type ProductIntervention = ContentProductReview;
 type ReviewOutcome = "growth" | "flat" | "decline" | "waiting";
 
 const PAGE_SIZE = 25;
+const DEFAULT_STATUS_ID = "5";
 const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "Головна сторінка" },
   { id: "new", label: "Нові товари", hint: "Уперше з’явилися на сайті" },
@@ -355,6 +356,20 @@ function formatMonth(value: string): string {
 function formatGrowth(value: number | null): string {
   if (value == null) return "—";
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function formatYears(value: number): string {
+  const lastTwo = value % 100;
+  const last = value % 10;
+  const suffix =
+    lastTwo >= 11 && lastTwo <= 14
+      ? "років"
+      : last === 1
+        ? "рік"
+        : last >= 2 && last <= 4
+          ? "роки"
+          : "років";
+  return `${value} ${suffix}`;
 }
 
 function reviewOutcome(item: ProductIntervention): ReviewOutcome {
@@ -1503,7 +1518,7 @@ export function ProductCardsDashboardV2() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [categoryId, setCategoryId] = useState("");
   const [brandId, setBrandId] = useState("");
-  const [statusId, setStatusId] = useState("");
+  const [statusId, setStatusId] = useState(DEFAULT_STATUS_ID);
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [minStock, setMinStock] = useState("");
@@ -1647,7 +1662,7 @@ export function ProductCardsDashboardV2() {
     setBulkIds([]);
     setCategoryId("");
     setBrandId("");
-    setStatusId("");
+    setStatusId(DEFAULT_STATUS_ID);
     setMinPrice("");
     setMaxPrice("");
     setMinStock("");
@@ -1667,7 +1682,7 @@ export function ProductCardsDashboardV2() {
     bulkIds.length ||
     categoryId ||
     brandId ||
-    statusId ||
+    statusId !== DEFAULT_STATUS_ID ||
     minPrice ||
     maxPrice ||
     minStock ||
@@ -1879,9 +1894,13 @@ export function ProductCardsDashboardV2() {
       setReviewSaving(false);
     }
   };
+  const toggleCategoryFilter = (value: string | number) => {
+    const key = String(value);
+    setCategoryId((current) => (current === key ? "" : key));
+    setPage(1);
+  };
   const selectChartItem = (item: FacetRow) => {
-    if (chartMode === "categories")
-      setCategoryId((current) => (current === item.key ? "" : item.key));
+    if (chartMode === "categories") toggleCategoryFilter(item.key);
     else if (chartMode === "brands")
       setBrandId((current) => (current === item.key ? "" : item.key));
     else setStatusId((current) => (current === item.key ? "" : item.key));
@@ -3454,17 +3473,18 @@ export function ProductCardsDashboardV2() {
                             </h3>
                             <p className="mt-1 text-[10px] text-[#77828d]">
                               Найсильніший сукупний сигнал серед категорій ·
-                              історія за {trendLeader.historyYears} роки
+                              історія за {formatYears(trendLeader.historyYears)}
                             </p>
                             <button
                               type="button"
-                              onClick={() => {
-                                setCategoryId(String(trendLeader.categoryId));
-                                setPage(1);
-                              }}
+                              onClick={() =>
+                                toggleCategoryFilter(trendLeader.categoryId)
+                              }
                               className="mt-3 rounded-lg border border-[#efc58d] bg-white px-3 py-2 text-[9px] font-black text-[#9a550b] hover:bg-[#fff7e8]"
                             >
-                              Показати категорію →
+                              {categoryId === String(trendLeader.categoryId)
+                                ? "Показати всі категорії ←"
+                                : "Показати категорію →"}
                             </button>
                           </div>
                         </div>
@@ -3473,7 +3493,7 @@ export function ProductCardsDashboardV2() {
                             {
                               label: "Історична сезонність",
                               value: formatGrowth(trendLeader.seasonalityPct),
-                              note: `${trendLeader.historyYears} роки`,
+                              note: formatYears(trendLeader.historyYears),
                             },
                             {
                               label: "Свіжий тренд трафіку",
@@ -3523,10 +3543,9 @@ export function ProductCardsDashboardV2() {
                                 <button
                                   key={candidate.categoryId}
                                   type="button"
-                                  onClick={() => {
-                                    setCategoryId(String(candidate.categoryId));
-                                    setPage(1);
-                                  }}
+                                  onClick={() =>
+                                    toggleCategoryFilter(candidate.categoryId)
+                                  }
                                   className="grid w-full grid-cols-[26px_minmax(0,1fr)_54px] items-center gap-2 rounded-xl border border-[#e5eaee] bg-white px-2.5 py-2 text-left transition hover:border-[#efc58d] hover:bg-[#fffaf2]"
                                 >
                                   <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#f0f3f5] text-[9px] font-black text-[#697580]">
@@ -3557,8 +3576,9 @@ export function ProductCardsDashboardV2() {
                     </div>
                   ) : (
                     <div className="rounded-xl border border-[#e1e6ea] bg-[#f8fafb] px-4 py-5 text-center text-[10px] text-[#7f8a94]">
-                      Недостатньо історії для прогнозу: потрібні щонайменше 2
-                      сезонні порівняння та 200 impressions у базовому місяці.
+                      Недостатньо даних для прогнозу: потрібне щонайменше 1
+                      сезонне порівняння, починаючи з 2025 року, та 200
+                      impressions у базовому місяці.
                     </div>
                   )}
                 </div>
@@ -3596,10 +3616,26 @@ export function ProductCardsDashboardV2() {
                       {(data?.categoryAnalysis || []).map((row) => (
                         <tr
                           key={row.categoryId}
-                          className="border-t border-[#edf0f2] align-top hover:bg-[#fbfcfd]"
+                          className={`border-t border-[#edf0f2] align-top hover:bg-[#fbfcfd] ${categoryId === String(row.categoryId) ? "bg-[#eef7ff]" : ""}`}
                         >
                           <td className="px-3 py-3 text-[11px] font-bold text-[#34404c]">
-                            {row.categoryName}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                toggleCategoryFilter(row.categoryId)
+                              }
+                              className="text-left font-bold text-[#34404c] hover:text-[#118dff]"
+                              title={
+                                categoryId === String(row.categoryId)
+                                  ? "Зняти фільтр категорії"
+                                  : "Відфільтрувати за категорією"
+                              }
+                            >
+                              {row.categoryName}
+                              {categoryId === String(row.categoryId) && (
+                                <span className="ml-1.5 text-[#118dff]">×</span>
+                              )}
+                            </button>
                           </td>
                           <td className="px-3 py-3">
                             <div className="flex items-center gap-2 text-xs font-black text-[#26313d]">

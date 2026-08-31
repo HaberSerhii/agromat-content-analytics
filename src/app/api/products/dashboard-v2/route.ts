@@ -845,7 +845,9 @@ async function buildDashboard(input: DashboardFilters) {
   const categoryMap = new Map<number, { name: string; count: number }>();
   const brandMap = new Map<number, { name: string; count: number }>();
   const statusMap = new Map<number, { name: string; count: number }>();
-  for (const product of filtered) {
+  // Keep selectors complete even when the dashboard starts with a default
+  // status filter. The selected dataset is still filtered below.
+  for (const product of products) {
     const category = categoryMap.get(product.categoryId) || {
       name: product.categoryName || product.categoryPath || "Без категорії",
       count: 0,
@@ -1101,7 +1103,7 @@ async function buildDashboard(input: DashboardFilters) {
         recentPrevious.addToCart >= CATEGORY_FORECAST_MIN_ATC
           ? recent.addToCart / recentPrevious.addToCart
           : null;
-      if (seasonalRatios.length >= 2 && recentTrafficRatio != null) {
+      if (seasonalRatios.length >= 1 && recentTrafficRatio != null) {
         const seasonalityRatio = median(seasonalRatios);
         const weightedSignals = [
           { weight: 0.5, score: trendSignalScore(seasonalityRatio) },
