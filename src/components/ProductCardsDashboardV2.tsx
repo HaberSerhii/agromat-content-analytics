@@ -2,6 +2,14 @@
 /* eslint-disable @next/next/no-img-element -- product images come from the Agromat CDN */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CONTENT_REVIEW_ACTIONS,
+  CONTENT_REVIEW_MANAGERS,
+  type ContentProductReview,
+  type ContentReviewAction,
+  type ContentReviewManager,
+  type ContentReviewMetrics,
+} from "@/lib/content-review-types";
 
 type FacetRow = { key: string; name: string; count: number };
 type ProductRow = {
@@ -143,6 +151,21 @@ type DashboardResponse = {
       atcCtr: number | null;
     }>;
   };
+  categoryTrendForecast: {
+    available: boolean;
+    forecastMonth: string;
+    candidates: Array<{
+      categoryId: number;
+      categoryName: string;
+      score: number;
+      potential: "high" | "medium" | "watch";
+      seasonalityPct: number;
+      recentTrafficPct: number;
+      recentAtcPct: number | null;
+      historyYears: number;
+      latestImpressions: number;
+    }>;
+  };
   productAnalysis: {
     available: boolean;
     error: string;
@@ -171,9 +194,14 @@ type DashboardResponse = {
 };
 
 type ChartMode = "categories" | "brands" | "statuses";
-type DashboardView = "overview" | "new" | "categories" | "products";
+type DashboardView = "overview" | "new" | "categories" | "products" | "results";
 type ProductSignal = "highImpressions" | "lowCtr" | "lowAtc" | "poorContent";
 type MetricKey = "newProducts" | "inactiveProducts" | "promoProducts" | "ctr";
+type ContentManager = ContentReviewManager;
+type ContentAction = ContentReviewAction;
+type ReviewMetrics = ContentReviewMetrics;
+type ProductIntervention = ContentProductReview;
+type ReviewOutcome = "growth" | "flat" | "decline" | "waiting";
 
 const PAGE_SIZE = 25;
 const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
@@ -189,7 +217,14 @@ const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
     label: "Аналіз товарів",
     hint: "CTR, ATC та Content Score",
   },
+  {
+    id: "results",
+    label: "Контроль результату",
+    hint: "Ефект після змін",
+  },
 ];
+const CONTENT_MANAGERS = [...CONTENT_REVIEW_MANAGERS];
+const CONTENT_ACTIONS = [...CONTENT_REVIEW_ACTIONS];
 const PRODUCT_SIGNAL_META: Array<{
   id: ProductSignal;
   label: string;
@@ -316,6 +351,76 @@ function formatMonth(value: string): string {
     .format(date)
     .replace(" р.", "");
 }
+
+function formatGrowth(value: number | null): string {
+  if (value == null) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function reviewOutcome(item: ProductIntervention): ReviewOutcome {
+  if (!item.after) return "waiting";
+  const signals: number[] = [];
+  const impressionDelta = item.before.impressions
+    ? (item.after.impressions - item.before.impressions) /
+      item.before.impressions
+    : 0;
+  signals.push(impressionDelta > 0.05 ? 1 : impressionDelta < -0.05 ? -1 : 0);
+  for (const key of ["ctr", "atc"] as const) {
+    const before = item.before[key];
+    const after = item.after[key];
+    signals.push(
+      before == null || after == null
+        ? 0
+        : after - before > 0.1
+          ? 1
+          : after - before < -0.1
+            ? -1
+            : 0,
+    );
+  }
+  const contentDelta =
+    item.before.contentScore == null || item.after.contentScore == null
+      ? 0
+      : item.after.contentScore - item.before.contentScore;
+  signals.push(contentDelta > 1 ? 1 : contentDelta < -1 ? -1 : 0);
+  const positive = signals.filter((signal) => signal > 0).length;
+  const negative = signals.filter((signal) => signal < 0).length;
+  if (positive >= 2 && positive > negative) return "growth";
+  if (negative >= 2 && negative > positive) return "decline";
+  return "flat";
+}
+
+function metricDelta(
+  after: number | null,
+  before: number | null,
+): number | null {
+  return after == null || before == null ? null : after - before;
+}
+
+const REVIEW_OUTCOME_META = {
+  growth: { label: "Є зростання", color: "#087a55", background: "#e8f6ef" },
+  flat: { label: "Без змін", color: "#64717d", background: "#eef1f4" },
+  decline: { label: "Погіршення", color: "#bd3b3b", background: "#fff0f0" },
+  waiting: { label: "Очікує заміру", color: "#93610b", background: "#fff7df" },
+} as const;
+
+const TREND_POTENTIAL_META = {
+  high: {
+    label: "Високий потенціал",
+    color: "#b45309",
+    background: "#fff4df",
+  },
+  medium: {
+    label: "Потенціал зростання",
+    color: "#087a55",
+    background: "#e8f6ef",
+  },
+  watch: {
+    label: "Під наглядом",
+    color: "#64717d",
+    background: "#eef1f4",
+  },
+} as const;
 
 async function copyText(value: string): Promise<void> {
   if (navigator.clipboard && window.isSecureContext) {
@@ -1108,6 +1213,279 @@ function BulkSearchModal({
   );
 }
 
+function ProcessProductModal({
+  product,
+  existing,
+  saving,
+  error,
+  onSave,
+  onClose,
+}: {
+  product: ProductRow;
+  existing?: ProductIntervention;
+  saving: boolean;
+  error: string;
+  onSave: (
+    manager: ContentManager,
+    actions: ContentAction[],
+  ) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [manager, setManager] = useState<ContentManager | "">(
+    existing?.manager || "",
+  );
+  const [actions, setActions] = useState<ContentAction[]>(
+    existing?.actions || [],
+  );
+  const canSave = Boolean(manager && actions.length);
+  const toggleAction = (action: ContentAction) => {
+    setActions((current) =>
+      current.includes(action)
+        ? current.filter((item) => item !== action)
+        : [...current, action],
+    );
+  };
+  return (
+    <div
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-[#111827a6] p-4"
+      onMouseDown={onClose}
+    >
+      <div
+        className="max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[#dfe4ea] bg-white shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-[#e4e8ec] px-5 py-4">
+          <div className="min-w-0">
+            <div className="text-[9px] font-black uppercase tracking-[.18em] text-[#087a55]">
+              Взяти в обробку
+            </div>
+            <h2 className="mt-1 truncate text-base font-black text-[#26313d]">
+              {product.name}
+            </h2>
+            <p className="mt-1 text-[9px] text-[#87919b]">
+              IDD {product.code} · goods_ref {product.goodsRef}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg bg-[#f0f3f5] px-3 py-2 text-[10px] font-bold text-[#58636d]"
+          >
+            × Закрити
+          </button>
+        </header>
+        <div className="space-y-5 p-5">
+          <section>
+            <h3 className="text-xs font-black text-[#34404c]">
+              1. Хто бере товар в обробку?
+            </h3>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {CONTENT_MANAGERS.map((item) => {
+                const selected = manager === item;
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setManager(item)}
+                    className="rounded-xl border px-4 py-3 text-left text-xs font-black transition"
+                    style={{
+                      color: selected ? "#087a55" : "#596571",
+                      borderColor: selected ? "#68bd94" : "#dfe4e8",
+                      background: selected ? "#eaf7f1" : "#fff",
+                    }}
+                  >
+                    <span className="mr-2">{selected ? "●" : "○"}</span>
+                    {item}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <section>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xs font-black text-[#34404c]">
+                2. Які дії плануються?
+              </h3>
+              <span className="text-[9px] font-bold text-[#87919b]">
+                Обрано: {actions.length}
+              </span>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {CONTENT_ACTIONS.map((action) => {
+                const selected = actions.includes(action);
+                return (
+                  <button
+                    key={action}
+                    type="button"
+                    onClick={() => toggleAction(action)}
+                    className="flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-[10px] font-bold transition"
+                    style={{
+                      color: selected ? "#087a55" : "#596571",
+                      borderColor: selected ? "#8bc9a9" : "#e0e5e9",
+                      background: selected ? "#f0faf5" : "#fbfcfd",
+                    }}
+                  >
+                    <span
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px]"
+                      style={{
+                        color: selected ? "#fff" : "transparent",
+                        borderColor: selected ? "#23a875" : "#cbd3da",
+                        background: selected ? "#23a875" : "#fff",
+                      }}
+                    >
+                      ✓
+                    </span>
+                    {action}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <div className="rounded-xl border border-[#d7e8df] bg-[#f3faf6] px-4 py-3 text-[9px] leading-4 text-[#557064]">
+            Поточні Impressions, CTR, ATC і Content Score будуть зафіксовані як
+            «до змін». Планова перевірка — першого числа через один повний
+            місяць.
+          </div>
+          {error && (
+            <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] px-4 py-3 text-[10px] font-bold text-[#b73535]">
+              {error}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 border-t border-[#edf0f2] pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="rounded-lg border border-[#d8dde3] bg-white px-4 py-2 text-xs font-bold text-[#596571]"
+            >
+              Скасувати
+            </button>
+            <button
+              type="button"
+              disabled={!canSave || saving}
+              onClick={() => {
+                if (manager) void onSave(manager, actions);
+              }}
+              className="rounded-lg bg-[#23a875] px-5 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {saving ? "Зберігаємо…" : "ОК · Взяти в обробку"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewChange({
+  value,
+  suffix = "",
+}: {
+  value: number | null;
+  suffix?: string;
+}) {
+  if (value == null) return null;
+  const rounded = Math.round(value * 100) / 100;
+  const positive = rounded > 0;
+  const negative = rounded < 0;
+  return (
+    <span
+      className="ml-1 rounded-full px-1.5 py-0.5 text-[8px] font-black tabular-nums"
+      style={{
+        color: positive ? "#087a55" : negative ? "#bd3b3b" : "#64717d",
+        background: positive ? "#e8f6ef" : negative ? "#fff0f0" : "#eef1f4",
+      }}
+    >
+      {positive ? "+" : ""}
+      {rounded}
+      {suffix}
+    </span>
+  );
+}
+
+function ReviewMetricsCard({
+  metrics,
+  before,
+}: {
+  metrics: ReviewMetrics;
+  before?: ReviewMetrics;
+}) {
+  return (
+    <div className="grid min-w-[250px] grid-cols-2 gap-1.5">
+      {metrics.periodFrom && metrics.periodTo && (
+        <div className="col-span-2 text-[7px] font-bold text-[#8a949e]">
+          Період: {formatDate(metrics.periodFrom)} —{" "}
+          {formatDate(metrics.periodTo)}
+        </div>
+      )}
+      <div className="rounded-lg bg-[#f7f9fb] p-2">
+        <div className="text-[7px] font-black uppercase tracking-[.08em] text-[#8a949e]">
+          Impressions
+        </div>
+        <div className="mt-0.5 whitespace-nowrap text-[10px] font-black text-[#34404c]">
+          {formatNumber(metrics.impressions)}
+          {before && (
+            <ReviewChange value={metrics.impressions - before.impressions} />
+          )}
+        </div>
+      </div>
+      <div className="rounded-lg bg-[#f7f9fb] p-2">
+        <div className="text-[7px] font-black uppercase tracking-[.08em] text-[#8a949e]">
+          CTR
+        </div>
+        <div className="mt-0.5 whitespace-nowrap text-[10px] font-black text-[#118dff]">
+          {formatCtr(metrics.ctr)}
+          {before && (
+            <ReviewChange
+              value={metricDelta(metrics.ctr, before.ctr)}
+              suffix=" п.п."
+            />
+          )}
+        </div>
+        <div className="mt-0.5 text-[7px] text-[#929ca5]">
+          кат. {formatCtr(metrics.categoryCtr)}
+        </div>
+      </div>
+      <div className="rounded-lg bg-[#f7f9fb] p-2">
+        <div className="text-[7px] font-black uppercase tracking-[.08em] text-[#8a949e]">
+          ATC
+        </div>
+        <div className="mt-0.5 whitespace-nowrap text-[10px] font-black text-[#6556d8]">
+          {formatCtr(metrics.atc)}
+          {before && (
+            <ReviewChange
+              value={metricDelta(metrics.atc, before.atc)}
+              suffix=" п.п."
+            />
+          )}
+        </div>
+        <div className="mt-0.5 text-[7px] text-[#929ca5]">
+          кат. {formatCtr(metrics.categoryAtc)}
+        </div>
+      </div>
+      <div className="rounded-lg bg-[#f7f9fb] p-2">
+        <div className="text-[7px] font-black uppercase tracking-[.08em] text-[#8a949e]">
+          Content Score
+        </div>
+        <div className="mt-0.5 whitespace-nowrap text-[10px] font-black text-[#087a55]">
+          {metrics.contentScore == null ? "—" : metrics.contentScore.toFixed(1)}
+          {before && (
+            <ReviewChange
+              value={metricDelta(metrics.contentScore, before.contentScore)}
+            />
+          )}
+        </div>
+        <div className="mt-0.5 text-[7px] text-[#929ca5]">
+          кат.{" "}
+          {metrics.categoryContent == null
+            ? "—"
+            : metrics.categoryContent.toFixed(1)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ProductCardsDashboardV2() {
   const [view, setView] = useState<DashboardView>("overview");
   const [data, setData] = useState<DashboardResponse | null>(null);
@@ -1141,6 +1519,19 @@ export function ProductCardsDashboardV2() {
   const [attributesProduct, setAttributesProduct] = useState<ProductRow | null>(
     null,
   );
+  const [processingProduct, setProcessingProduct] = useState<ProductRow | null>(
+    null,
+  );
+  const [interventions, setInterventions] = useState<ProductIntervention[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [reviewsError, setReviewsError] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewSaveError, setReviewSaveError] = useState("");
+  const [resultSearch, setResultSearch] = useState("");
+  const [resultCategory, setResultCategory] = useState("");
+  const [resultBrand, setResultBrand] = useState("");
+  const [resultManager, setResultManager] = useState<ContentManager | "">("");
+  const [resultMonth, setResultMonth] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1150,7 +1541,7 @@ export function ProductCardsDashboardV2() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          view,
+          view: view === "results" ? "overview" : view,
           page,
           limit: PAGE_SIZE,
           search,
@@ -1193,9 +1584,37 @@ export function ProductCardsDashboardV2() {
     productSignal,
   ]);
 
+  const loadInterventions = useCallback(async () => {
+    setReviewsLoading(true);
+    setReviewsError("");
+    try {
+      const response = await fetch("/api/products/content-reviews", {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        reviews?: ProductIntervention[];
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      setInterventions(payload.reviews || []);
+    } catch (cause) {
+      setReviewsError(
+        cause instanceof Error
+          ? cause.message
+          : "Не вдалося завантажити контроль результатів",
+      );
+    } finally {
+      setReviewsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    void loadInterventions();
+  }, [loadInterventions]);
   useEffect(() => {
     setPage(1);
   }, [
@@ -1270,6 +1689,99 @@ export function ProductCardsDashboardV2() {
     .join(" · ");
   const activeView =
     VIEW_ITEMS.find((item) => item.id === view) || VIEW_ITEMS[0];
+  const trendCandidates = data?.categoryTrendForecast?.candidates || [];
+  const trendLeader = trendCandidates[0];
+  const trendLeaderMeta = trendLeader
+    ? TREND_POTENTIAL_META[trendLeader.potential]
+    : null;
+  const processedByCode = useMemo(() => {
+    const latest = new Map<number, ProductIntervention>();
+    for (const item of interventions) {
+      if (!latest.has(item.code)) latest.set(item.code, item);
+    }
+    return latest;
+  }, [interventions]);
+  const resultCategories = useMemo(
+    () =>
+      [...new Set(interventions.map((item) => item.categoryName))].sort(
+        (a, b) => a.localeCompare(b, "uk"),
+      ),
+    [interventions],
+  );
+  const resultBrands = useMemo(
+    () =>
+      [...new Set(interventions.map((item) => item.brand))].sort((a, b) =>
+        a.localeCompare(b, "uk"),
+      ),
+    [interventions],
+  );
+  const resultMonths = useMemo(
+    () =>
+      [
+        ...new Set(interventions.map((item) => item.changedAt.slice(0, 7))),
+      ].sort((a, b) => b.localeCompare(a)),
+    [interventions],
+  );
+  const filteredInterventions = useMemo(() => {
+    const needle = resultSearch.trim().toLocaleLowerCase("uk");
+    return interventions
+      .filter((item) => {
+        if (
+          needle &&
+          !`${item.name} ${item.code} ${item.goodsRef}`
+            .toLocaleLowerCase("uk")
+            .includes(needle)
+        )
+          return false;
+        if (resultCategory && item.categoryName !== resultCategory)
+          return false;
+        if (resultBrand && item.brand !== resultBrand) return false;
+        if (resultManager && item.manager !== resultManager) return false;
+        if (resultMonth && item.changedAt.slice(0, 7) !== resultMonth)
+          return false;
+        return true;
+      })
+      .sort(
+        (left, right) =>
+          right.changedAt.localeCompare(left.changedAt) ||
+          left.name.localeCompare(right.name, "uk"),
+      );
+  }, [
+    interventions,
+    resultSearch,
+    resultCategory,
+    resultBrand,
+    resultManager,
+    resultMonth,
+  ]);
+  const resultOutcomeItems = useMemo(() => {
+    const counts: Record<Exclude<ReviewOutcome, "waiting">, number> = {
+      growth: 0,
+      flat: 0,
+      decline: 0,
+    };
+    for (const item of filteredInterventions) {
+      const outcome = reviewOutcome(item);
+      if (outcome !== "waiting") counts[outcome]++;
+    }
+    return [
+      { key: "growth", name: "Є зростання", count: counts.growth },
+      { key: "flat", name: "Без змін", count: counts.flat },
+      { key: "decline", name: "Погіршення", count: counts.decline },
+    ];
+  }, [filteredInterventions]);
+  const resultCheckedTotal = resultOutcomeItems.reduce(
+    (total, item) => total + item.count,
+    0,
+  );
+  const resultWaitingTotal = filteredInterventions.filter(
+    (item) => reviewOutcome(item) === "waiting",
+  ).length;
+  const resultManagerCounts = CONTENT_MANAGERS.map((manager) => ({
+    manager,
+    count: filteredInterventions.filter((item) => item.manager === manager)
+      .length,
+  }));
   const chartItems = (data?.facets[chartMode] || []).slice(0, 10);
   const chartTotal = data?.total || 0;
   const chartActiveKey =
@@ -1299,6 +1811,63 @@ export function ProductCardsDashboardV2() {
       setCopied(key);
       window.setTimeout(() => setCopied(""), 1600);
     } catch {}
+  };
+  const saveIntervention = async (
+    product: ProductRow,
+    manager: ContentManager,
+    actions: ContentAction[],
+  ) => {
+    setReviewSaving(true);
+    setReviewSaveError("");
+    try {
+      const response = await fetch("/api/products/content-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product: {
+            id: product.id,
+            code: product.code,
+            goodsRef: product.goodsRef,
+            name: product.name,
+            url: product.url,
+            categoryId: product.categoryId,
+            categoryName: product.categoryName || "Без категорії",
+            brand: product.brand || "Без бренду",
+          },
+          manager,
+          actions,
+          before: {
+            impressions: product.impressions || 0,
+            ctr: product.ctr ?? null,
+            atc: product.atc ?? null,
+            contentScore: product.contentScore ?? null,
+            categoryCtr: product.categoryMedianCtr ?? null,
+            categoryAtc: product.categoryMedianAtc ?? null,
+            categoryContent: product.categoryMedianContent ?? null,
+          },
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        review?: ProductIntervention;
+        error?: string;
+      };
+      if (!response.ok || !payload.review)
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      const saved = payload.review;
+      setInterventions((current) => [
+        saved,
+        ...current.filter((item) => item.id !== saved.id),
+      ]);
+      setProcessingProduct(null);
+    } catch (cause) {
+      setReviewSaveError(
+        cause instanceof Error
+          ? cause.message
+          : "Не вдалося зберегти обробку товару",
+      );
+    } finally {
+      setReviewSaving(false);
+    }
   };
   const selectChartItem = (item: FacetRow) => {
     if (chartMode === "categories")
@@ -1903,7 +2472,9 @@ export function ProductCardsDashboardV2() {
                     ? "Поточний стан контенту категорій та динаміка CTR Каталог → PDP."
                     : view === "products"
                       ? "Пошук точок зростання за видимістю, конверсією та якістю контенту."
-                      : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
+                      : view === "results"
+                        ? "Контроль ефекту контентних змін після завершення контрольного періоду."
+                        : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
               </p>
             </section>
             {error && (
@@ -2117,26 +2688,53 @@ export function ProductCardsDashboardV2() {
                                 : "#087a55";
                           const selected =
                             bulkIds.length === 1 && bulkIds[0] === row.code;
+                          const processed = processedByCode.get(row.code);
                           return (
                             <tr
                               key={row.id}
                               onClick={() => selectProductRow(row)}
                               className={`cursor-pointer border-t border-[#edf0f2] transition-colors ${
-                                selected ? "bg-[#edf6ff]" : "hover:bg-[#f8fbfd]"
+                                processed
+                                  ? "bg-[#eaf8f0] hover:bg-[#e2f5eb]"
+                                  : selected
+                                    ? "bg-[#edf6ff]"
+                                    : "hover:bg-[#f8fbfd]"
                               }`}
-                              title="Натисніть, щоб вибрати товар; повторний клік поверне всю вибірку"
+                              title={
+                                processed
+                                  ? `Оброблено: ${processed.manager}`
+                                  : "Натисніть, щоб вибрати товар; повторний клік поверне всю вибірку"
+                              }
                             >
                               <td className="min-w-0 px-2 py-3">
-                                <a
-                                  href={row.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(event) => event.stopPropagation()}
-                                  title={row.name}
-                                  className="block w-full truncate text-[10px] font-bold leading-4 text-[#34404c] no-underline hover:text-[#118dff]"
-                                >
-                                  {row.name} ↗
-                                </a>
+                                <div className="flex min-w-0 items-start gap-2">
+                                  <a
+                                    href={row.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(event) => event.stopPropagation()}
+                                    title={row.name}
+                                    className="block min-w-0 flex-1 truncate text-[10px] font-bold leading-5 text-[#34404c] no-underline hover:text-[#118dff]"
+                                  >
+                                    {row.name} ↗
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setReviewSaveError("");
+                                      setProcessingProduct(row);
+                                    }}
+                                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#23a875] text-[11px] font-black text-white shadow-sm transition hover:scale-105 hover:bg-[#16885d]"
+                                    title={
+                                      processed
+                                        ? "Переглянути або змінити обробку"
+                                        : "Взяти товар в обробку"
+                                    }
+                                  >
+                                    {processed ? "✓" : "+"}
+                                  </button>
+                                </div>
                                 {compactIdCell(row)}
                               </td>
                               <td className="hidden min-w-0 px-2 py-3 text-[9px] font-bold text-[#45515d] xl:table-cell">
@@ -2298,6 +2896,393 @@ export function ProductCardsDashboardV2() {
                   {pager}
                 </div>
               </section>
+            ) : view === "results" ? (
+              <section className="space-y-4">
+                <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                  <div className="border-b border-[#e8edf1] bg-[#fbfcfd] p-4">
+                    <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#23a875]">
+                          Серверний журнал
+                        </div>
+                        <h2 className="mt-1 text-sm font-black text-[#27313c]">
+                          Оброблені товари та результат змін
+                        </h2>
+                        <p className="mt-1 text-[10px] text-[#7d8892]">
+                          Фільтр місяця враховує дату внесення змін. Контрольний
+                          замір виконується автоматично після одного повного
+                          календарного місяця.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void loadInterventions()}
+                        disabled={reviewsLoading}
+                        className="self-start rounded-xl border border-[#bcd8f1] bg-[#edf6ff] px-3 py-2 text-[10px] font-black text-[#0b6fc2] disabled:opacity-50"
+                      >
+                        {reviewsLoading ? "Оновлюємо…" : "Оновити журнал"}
+                      </button>
+                    </div>
+                    {reviewsError && (
+                      <div className="mb-3 rounded-xl border border-[#f0b6b6] bg-[#fff1f1] px-3 py-2.5 text-[10px] font-bold text-[#b73535]">
+                        Не вдалося завантажити журнал: {reviewsError}
+                      </div>
+                    )}
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(240px,1.4fr)_repeat(4,minmax(150px,1fr))_auto]">
+                      <input
+                        value={resultSearch}
+                        onChange={(event) =>
+                          setResultSearch(event.target.value)
+                        }
+                        placeholder="Пошук за товаром, IDD або goods_ref"
+                        className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[11px] outline-none focus:border-[#118dff]"
+                      />
+                      <select
+                        value={resultCategory}
+                        onChange={(event) =>
+                          setResultCategory(event.target.value)
+                        }
+                        className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[11px] font-semibold text-[#596571] outline-none focus:border-[#118dff]"
+                      >
+                        <option value="">Усі категорії</option>
+                        {resultCategories.map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={resultBrand}
+                        onChange={(event) => setResultBrand(event.target.value)}
+                        className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[11px] font-semibold text-[#596571] outline-none focus:border-[#118dff]"
+                      >
+                        <option value="">Усі бренди</option>
+                        {resultBrands.map((brand) => (
+                          <option key={brand} value={brand}>
+                            {brand}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={resultManager}
+                        onChange={(event) =>
+                          setResultManager(
+                            event.target.value as ContentManager | "",
+                          )
+                        }
+                        className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[11px] font-semibold text-[#596571] outline-none focus:border-[#118dff]"
+                      >
+                        <option value="">Усі менеджери</option>
+                        {CONTENT_MANAGERS.map((manager) => (
+                          <option key={manager} value={manager}>
+                            {manager}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={resultMonth}
+                        onChange={(event) => setResultMonth(event.target.value)}
+                        className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[11px] font-semibold text-[#596571] outline-none focus:border-[#118dff]"
+                      >
+                        <option value="">Усі місяці змін</option>
+                        {resultMonths.map((month) => (
+                          <option key={month} value={month}>
+                            {formatMonth(month)}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResultSearch("");
+                          setResultCategory("");
+                          setResultBrand("");
+                          setResultManager("");
+                          setResultMonth("");
+                        }}
+                        className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[10px] font-black text-[#68737e] hover:bg-[#f4f7f9]"
+                      >
+                        Скинути
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(340px,.7fr)]">
+                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    {[
+                      {
+                        label: "Оброблено",
+                        value: filteredInterventions.length,
+                        note: "за вибраними фільтрами",
+                        color: "#118dff",
+                      },
+                      {
+                        label: "Перевірено",
+                        value: resultCheckedTotal,
+                        note: "є показники після змін",
+                        color: "#6556d8",
+                      },
+                      {
+                        label: "Є зростання",
+                        value:
+                          resultOutcomeItems.find(
+                            (item) => item.key === "growth",
+                          )?.count || 0,
+                        note: "позитивний результат",
+                        color: "#23a875",
+                      },
+                      {
+                        label: "Очікують заміру",
+                        value: resultWaitingTotal,
+                        note: "контрольна дата попереду",
+                        color: "#d58a16",
+                      },
+                    ].map((item) => (
+                      <article
+                        key={item.label}
+                        className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_4px_16px_rgba(31,42,55,0.04)]"
+                      >
+                        <div className="text-[9px] font-black uppercase tracking-[.12em] text-[#8a949e]">
+                          {item.label}
+                        </div>
+                        <div
+                          className="mt-2 text-3xl font-black tabular-nums"
+                          style={{ color: item.color }}
+                        >
+                          {formatNumber(item.value)}
+                        </div>
+                        <div className="mt-1 text-[9px] text-[#8b949e]">
+                          {item.note}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <aside className="row-span-2 overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                    <header className="border-b border-[#e5e8eb] px-4 py-3">
+                      <h3 className="text-xs font-black text-[#26313d]">
+                        Результат після змін
+                      </h3>
+                      <p className="mt-0.5 text-[9px] text-[#8b949e]">
+                        Розподіл уже перевірених товарів
+                      </p>
+                    </header>
+                    <div className="p-4">
+                      <DonutChart
+                        items={resultOutcomeItems}
+                        colors={["#23a875", "#9aa4ae", "#e05c68"]}
+                        total={resultCheckedTotal}
+                        activeKey={null}
+                        onSelect={() => {}}
+                      />
+                      <div className="mt-3 space-y-2">
+                        {resultOutcomeItems.map((item, index) => (
+                          <div
+                            key={item.key}
+                            className="flex items-center justify-between rounded-lg bg-[#f7f9fb] px-3 py-2 text-[10px]"
+                          >
+                            <span className="flex items-center gap-2 font-semibold text-[#596571]">
+                              <span
+                                className="h-2.5 w-2.5 rounded-full"
+                                style={{
+                                  background: ["#23a875", "#9aa4ae", "#e05c68"][
+                                    index
+                                  ],
+                                }}
+                              />
+                              {item.name}
+                            </span>
+                            <b className="tabular-nums text-[#27313c]">
+                              {formatNumber(item.count)}
+                            </b>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-5 border-t border-[#edf0f2] pt-4">
+                        <div className="mb-2 text-[9px] font-black uppercase tracking-[.12em] text-[#8a949e]">
+                          Менеджери
+                        </div>
+                        <table className="w-full text-[10px]">
+                          <tbody>
+                            {resultManagerCounts.map((item) => (
+                              <tr
+                                key={item.manager}
+                                className="border-t border-[#edf0f2] first:border-0"
+                              >
+                                <td className="py-2 font-semibold text-[#596571]">
+                                  {item.manager}
+                                </td>
+                                <td className="py-2 text-right font-black tabular-nums text-[#27313c]">
+                                  {formatNumber(item.count)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </aside>
+
+                  <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[1320px] border-collapse text-left">
+                        <thead>
+                          <tr className="border-b border-[#e3e7eb] bg-[#f7f9fb] text-[8px] font-black uppercase tracking-[.08em] text-[#77828d]">
+                            <th className="px-3 py-3">Товар</th>
+                            <th className="px-3 py-3">Менеджер / дії</th>
+                            <th className="px-3 py-3">До змін</th>
+                            <th className="px-3 py-3">Після змін</th>
+                            <th className="px-3 py-3">Дата зміни</th>
+                            <th className="px-3 py-3">Дата перевірки</th>
+                            <th className="px-3 py-3">Результат</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reviewsLoading && (
+                            <tr>
+                              <td
+                                colSpan={7}
+                                className="p-12 text-center text-xs font-semibold text-[#82909d]"
+                              >
+                                Завантажуємо журнал обробок…
+                              </td>
+                            </tr>
+                          )}
+                          {filteredInterventions.map((item) => {
+                            const outcome = reviewOutcome(item);
+                            const outcomeMeta = REVIEW_OUTCOME_META[outcome];
+                            return (
+                              <tr
+                                key={item.id}
+                                className="border-b border-[#edf0f2] align-top last:border-0 hover:bg-[#fbfcfd]"
+                              >
+                                <td className="min-w-[280px] px-3 py-3">
+                                  <a
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[10px] font-black leading-4 text-[#27313c] hover:text-[#118dff] hover:underline"
+                                  >
+                                    {item.name}
+                                  </a>
+                                  <div className="mt-1 text-[8px] text-[#8b949e]">
+                                    {item.categoryName} · {item.brand}
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void copy(
+                                          item.code,
+                                          `result-code:${item.id}`,
+                                        )
+                                      }
+                                      className="text-[9px] font-black tabular-nums text-[#596571] hover:text-[#118dff]"
+                                      title="Скопіювати IDD"
+                                    >
+                                      IDD: {item.code}{" "}
+                                      {copied === `result-code:${item.id}` && (
+                                        <span className="text-[#087a55]">
+                                          ✓
+                                        </span>
+                                      )}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void copy(
+                                          item.goodsRef,
+                                          `result-ref:${item.id}`,
+                                        )
+                                      }
+                                      className="text-[9px] font-semibold tabular-nums text-[#89929b] hover:text-[#118dff]"
+                                      title="Скопіювати goods_ref"
+                                    >
+                                      goods_ref: {item.goodsRef}{" "}
+                                      {copied === `result-ref:${item.id}` && (
+                                        <span className="text-[#087a55]">
+                                          ✓
+                                        </span>
+                                      )}
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="min-w-[220px] px-3 py-3">
+                                  <div className="text-[10px] font-black text-[#34404c]">
+                                    {item.manager}
+                                  </div>
+                                  <div className="mt-1.5 flex max-w-[220px] flex-wrap gap-1">
+                                    {item.actions.map((action) => (
+                                      <span
+                                        key={action}
+                                        className="rounded-full bg-[#eef4f7] px-2 py-1 text-[7px] font-bold text-[#64717d]"
+                                      >
+                                        {action}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <ReviewMetricsCard metrics={item.before} />
+                                </td>
+                                <td className="px-3 py-3">
+                                  {item.after ? (
+                                    <ReviewMetricsCard
+                                      metrics={item.after}
+                                      before={item.before}
+                                    />
+                                  ) : (
+                                    <div className="flex min-h-[92px] min-w-[250px] items-center justify-center rounded-xl border border-dashed border-[#efc778] bg-[#fff9ec] px-4 text-center text-[9px] font-bold leading-4 text-[#a36b0e]">
+                                      Автоматичний замір ще не виконано
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-3 text-[10px] font-semibold text-[#596571]">
+                                  {formatDate(item.changedAt)}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-3">
+                                  <div className="text-[10px] font-black text-[#34404c]">
+                                    {formatDate(item.checkAt)}
+                                  </div>
+                                  <div className="mt-1 text-[8px] text-[#8b949e]">
+                                    1-й день після повного місяця
+                                  </div>
+                                </td>
+                                <td className="min-w-[130px] px-3 py-3">
+                                  <span
+                                    className="inline-flex rounded-full px-2.5 py-1 text-[9px] font-black"
+                                    style={{
+                                      color: outcomeMeta.color,
+                                      background: outcomeMeta.background,
+                                    }}
+                                  >
+                                    {outcomeMeta.label}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {!reviewsLoading &&
+                            !reviewsError &&
+                            filteredInterventions.length === 0 && (
+                              <tr>
+                                <td
+                                  colSpan={7}
+                                  className="p-12 text-center text-xs text-[#82909d]"
+                                >
+                                  {interventions.length
+                                    ? "Товарів за вибраними фільтрами не знайдено"
+                                    : "Оброблених товарів поки немає"}
+                                </td>
+                              </tr>
+                            )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </section>
             ) : view === "categories" ? (
               <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                 {filterBar(true)}
@@ -2408,6 +3393,164 @@ export function ProductCardsDashboardV2() {
                       </div>
                     </div>
                   </article>
+                </div>
+                <div className="border-b border-[#e8edf1] bg-white p-4">
+                  <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <div className="text-[9px] font-black uppercase tracking-[.16em] text-[#e07a16]">
+                        Category forecast
+                      </div>
+                      <h2 className="mt-1 text-base font-black text-[#27313c]">
+                        Трендові категорії на{" "}
+                        {formatMonth(
+                          data?.categoryTrendForecast?.forecastMonth || "",
+                        )}
+                      </h2>
+                      <p className="mt-1 max-w-3xl text-[10px] leading-4 text-[#7d8892]">
+                        Trend Score: сезонність 50% · динаміка impressions 30% ·
+                        динаміка ATC 20%. Сезонність — медіана зростання до
+                        прогнозного місяця за доступні роки.
+                      </p>
+                    </div>
+                    <span className="w-fit rounded-xl border border-[#f2d2a9] bg-[#fff8ec] px-3 py-2 text-[9px] font-black text-[#a65c0c]">
+                      Прогноз, не гарантія попиту
+                    </span>
+                  </div>
+
+                  {trendLeader && trendLeaderMeta ? (
+                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,.8fr)]">
+                      <article className="overflow-hidden rounded-2xl border border-[#efcfaa] bg-gradient-to-br from-[#fff9ee] to-white p-4 shadow-[0_6px_20px_rgba(166,92,12,.08)]">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                          <div className="flex h-24 w-24 shrink-0 flex-col items-center justify-center rounded-full border-[7px] border-[#f2a444] bg-white shadow-sm">
+                            <strong className="text-3xl font-black leading-none text-[#9a550b]">
+                              {trendLeader.score}
+                            </strong>
+                            <span className="mt-1 text-[8px] font-black uppercase tracking-[.12em] text-[#9b7b59]">
+                              зі 100
+                            </span>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span
+                              className="inline-flex rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-[.08em]"
+                              style={{
+                                color: trendLeaderMeta.color,
+                                background: trendLeaderMeta.background,
+                              }}
+                            >
+                              🔥 {trendLeaderMeta.label}
+                            </span>
+                            <h3 className="mt-2 text-xl font-black leading-tight text-[#27313c]">
+                              {trendLeader.categoryName}
+                            </h3>
+                            <p className="mt-1 text-[10px] text-[#77828d]">
+                              Найсильніший сукупний сигнал серед категорій ·
+                              історія за {trendLeader.historyYears} роки
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCategoryId(String(trendLeader.categoryId));
+                                setPage(1);
+                              }}
+                              className="mt-3 rounded-lg border border-[#efc58d] bg-white px-3 py-2 text-[9px] font-black text-[#9a550b] hover:bg-[#fff7e8]"
+                            >
+                              Показати категорію →
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          {[
+                            {
+                              label: "Історична сезонність",
+                              value: formatGrowth(trendLeader.seasonalityPct),
+                              note: `${trendLeader.historyYears} роки`,
+                            },
+                            {
+                              label: "Свіжий тренд трафіку",
+                              value: formatGrowth(trendLeader.recentTrafficPct),
+                              note: "останній повний місяць",
+                            },
+                            {
+                              label: "Свіжий тренд ATC",
+                              value: formatGrowth(trendLeader.recentAtcPct),
+                              note: "проксі комерційного попиту",
+                            },
+                          ].map((signal) => (
+                            <div
+                              key={signal.label}
+                              className="rounded-xl border border-[#eee3d4] bg-white/85 p-3"
+                            >
+                              <div className="text-[8px] font-black uppercase tracking-[.1em] text-[#8b7d6d]">
+                                {signal.label}
+                              </div>
+                              <div className="mt-1 text-lg font-black text-[#34404c]">
+                                {signal.value}
+                              </div>
+                              <div className="mt-0.5 text-[8px] text-[#9b8e80]">
+                                {signal.note}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+
+                      <article className="rounded-2xl border border-[#dfe6ec] bg-[#fbfcfd] p-3">
+                        <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                          <h3 className="text-[10px] font-black uppercase tracking-[.12em] text-[#687480]">
+                            Рейтинг потенціалу
+                          </h3>
+                          <span className="text-[9px] text-[#929da7]">
+                            Top {Math.min(5, trendCandidates.length)}
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {trendCandidates
+                            .slice(0, 5)
+                            .map((candidate, index) => {
+                              const meta =
+                                TREND_POTENTIAL_META[candidate.potential];
+                              return (
+                                <button
+                                  key={candidate.categoryId}
+                                  type="button"
+                                  onClick={() => {
+                                    setCategoryId(String(candidate.categoryId));
+                                    setPage(1);
+                                  }}
+                                  className="grid w-full grid-cols-[26px_minmax(0,1fr)_54px] items-center gap-2 rounded-xl border border-[#e5eaee] bg-white px-2.5 py-2 text-left transition hover:border-[#efc58d] hover:bg-[#fffaf2]"
+                                >
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#f0f3f5] text-[9px] font-black text-[#697580]">
+                                    {index + 1}
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-[10px] font-black text-[#34404c]">
+                                      {candidate.categoryName}
+                                    </span>
+                                    <span
+                                      className="mt-0.5 block text-[8px] font-bold"
+                                      style={{ color: meta.color }}
+                                    >
+                                      сезонність{" "}
+                                      {formatGrowth(candidate.seasonalityPct)} ·
+                                      трафік{" "}
+                                      {formatGrowth(candidate.recentTrafficPct)}
+                                    </span>
+                                  </span>
+                                  <span className="rounded-lg bg-[#fff3df] px-2 py-1.5 text-center text-sm font-black tabular-nums text-[#9a550b]">
+                                    {candidate.score}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </article>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-[#e1e6ea] bg-[#f8fafb] px-4 py-5 text-center text-[10px] text-[#7f8a94]">
+                      Недостатньо історії для прогнозу: потрібні щонайменше 2
+                      сезонні порівняння та 200 impressions у базовому місяці.
+                    </div>
+                  )}
                 </div>
                 {!data?.categoryCtrAvailable && (
                   <div className="border-b border-[#f0d18a] bg-[#fff9e8] px-4 py-2 text-[9px] text-[#7b5b14]">
@@ -2843,6 +3986,22 @@ export function ProductCardsDashboardV2() {
         <MissingAttributesModal
           product={attributesProduct}
           onClose={() => setAttributesProduct(null)}
+        />
+      )}
+      {processingProduct && (
+        <ProcessProductModal
+          product={processingProduct}
+          existing={processedByCode.get(processingProduct.code)}
+          saving={reviewSaving}
+          error={reviewSaveError}
+          onClose={() => {
+            if (reviewSaving) return;
+            setReviewSaveError("");
+            setProcessingProduct(null);
+          }}
+          onSave={(manager, actions) =>
+            saveIntervention(processingProduct, manager, actions)
+          }
         />
       )}
       {copied && (

@@ -81,6 +81,8 @@ const CHART_COLORS = [
   "#2d98da",
 ];
 const CTR_MIN_IMPRESSIONS = 20;
+const CATEGORY_FORECAST_MIN_IMPRESSIONS = 200;
+const CATEGORY_FORECAST_MIN_ATC = 10;
 const CTR_CACHE_TTL_MS = 15 * 60_000;
 
 let ctrCache: { key: string; expiresAt: number; value: CtrSummary } | null =
@@ -231,17 +233,43 @@ function categoryCtrMonths(today: string) {
   const lastYear = [-3, -2, -1, 0].map((offset) =>
     monthKey(year - 1, currentMonthIndex + offset),
   );
+  const forecastDate = new Date(Date.UTC(year, currentMonthIndex + 1, 1));
+  const forecastYear = forecastDate.getUTCFullYear();
+  const forecastMonthIndex = forecastDate.getUTCMonth();
+  const seasonalPairs = [-3, -2, -1].map((yearOffset) => {
+    const targetYear = forecastYear + yearOffset;
+    return {
+      year: targetYear,
+      previousMonth: monthKey(targetYear, forecastMonthIndex - 1),
+      targetMonth: monthKey(targetYear, forecastMonthIndex),
+    };
+  });
+  const queryMonths = [
+    ...new Set([
+      ...currentThree,
+      ...lastYear,
+      ...seasonalPairs.flatMap((pair) => [
+        pair.previousMonth,
+        pair.targetMonth,
+      ]),
+    ]),
+  ].sort();
   return {
     currentThree,
     lastYear,
-    currentFrom: `${currentThree[0]}-01`,
-    currentTo: lastDayOfMonth(currentThree[2]),
-    lastYearFrom: `${lastYear[0]}-01`,
-    lastYearTo: lastDayOfMonth(lastYear[3]),
+    forecastMonth: monthKey(forecastYear, forecastMonthIndex),
+    seasonalPairs,
+    queryMonths,
   };
 }
 
-function monthlyCtrSql() {
+function monthlyCtrSql(months: string[]) {
+  const dateFilter = months
+    .map(
+      (month) =>
+        `(event_date BETWEEN DATE '${month}-01' AND DATE '${lastDayOfMonth(month)}')`,
+    )
+    .join("\n      OR ");
   return `
 WITH item_events AS (
   SELECT
@@ -251,10 +279,7 @@ WITH item_events AS (
     NULLIF(TRIM(item_category3), '') AS item_category3
   FROM ${productEventsTable()}
   WHERE (
-      event_date BETWEEN PARSE_DATE('%Y%m%d', @currentFrom)
-        AND PARSE_DATE('%Y%m%d', @currentTo)
-      OR event_date BETWEEN PARSE_DATE('%Y%m%d', @lastYearFrom)
-        AND PARSE_DATE('%Y%m%d', @lastYearTo)
+      ${dateFilter}
     )
     AND event_name IN ('view_item_list', 'view_item', 'add_to_cart')
 )
@@ -276,7 +301,7 @@ async function readMonthlyCtr(
   today: string,
 ): Promise<{ rows: MonthlyCtrRow[]; available: boolean; error?: string }> {
   const months = categoryCtrMonths(today);
-  const key = `${months.currentFrom}:${months.currentTo}:${months.lastYearFrom}:${months.lastYearTo}`;
+  const key = months.queryMonths.join(":");
   if (
     monthlyCtrCache &&
     monthlyCtrCache.key === key &&
@@ -292,13 +317,7 @@ async function readMonthlyCtr(
       projectId: process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
     });
     const [rawRows] = await bigQuery.query({
-      query: monthlyCtrSql(),
-      params: {
-        currentFrom: months.currentFrom.replaceAll("-", ""),
-        currentTo: months.currentTo.replaceAll("-", ""),
-        lastYearFrom: months.lastYearFrom.replaceAll("-", ""),
-        lastYearTo: months.lastYearTo.replaceAll("-", ""),
-      },
+      query: monthlyCtrSql(months.queryMonths),
       location: "EU",
       maximumBytesBilled: "50000000000",
     });
@@ -786,6 +805,21 @@ async function buildDashboard(input: DashboardFilters) {
       atcCtr: number | null;
     }>,
   };
+  let categoryTrendForecast = {
+    available: false,
+    forecastMonth: categoryCtrMonths(today).forecastMonth,
+    candidates: [] as Array<{
+      categoryId: number;
+      categoryName: string;
+      score: number;
+      potential: "high" | "medium" | "watch";
+      seasonalityPct: number;
+      recentTrafficPct: number;
+      recentAtcPct: number | null;
+      historyYears: number;
+      latestImpressions: number;
+    }>,
+  };
   if (filters.view === "categories") {
     const previousFiltered = previousProducts.filter(matchesFacetFilters);
     const previousByCategory = new Map<number, ProductLite[]>();
@@ -797,6 +831,29 @@ async function buildDashboard(input: DashboardFilters) {
     const ctrDataset = await readMonthlyCtr(today);
     categoryCtrAvailable = ctrDataset.available;
     categoryCtrError = ctrDataset.error || "";
+    const ctrByRefMonth = new Map<
+      string,
+      {
+        impressions: number;
+        clicks: number;
+        productViews: number;
+        addToCart: number;
+      }
+    >();
+    for (const row of ctrDataset.rows) {
+      const key = `${scalar(row.goods_ref)}:${monthScalar(row.month)}`;
+      const metric = ctrByRefMonth.get(key) || {
+        impressions: 0,
+        clicks: 0,
+        productViews: 0,
+        addToCart: 0,
+      };
+      metric.impressions += scalar(row.impressions);
+      metric.clicks += scalar(row.clicks);
+      metric.productViews += scalar(row.product_views);
+      metric.addToCart += scalar(row.add_to_cart);
+      ctrByRefMonth.set(key, metric);
+    }
     const monthConfig = categoryCtrMonths(today);
     const byCategory = new Map<number, ProductLite[]>();
     for (const product of filtered) {
@@ -806,6 +863,28 @@ async function buildDashboard(input: DashboardFilters) {
     }
     const pct = (value: number, total: number) =>
       total ? Math.round((value / total) * 1000) / 10 : 0;
+    const categoryCtr = (rows: ProductLite[], month: string) => {
+      let impressions = 0;
+      let clicks = 0;
+      let productViews = 0;
+      let addToCart = 0;
+      for (const product of rows) {
+        const metric = ctrByRefMonth.get(`${product.goodsRef}:${month}`);
+        if (!metric) continue;
+        impressions += metric.impressions;
+        clicks += metric.clicks;
+        productViews += metric.productViews;
+        addToCart += metric.addToCart;
+      }
+      return {
+        impressions,
+        clicks,
+        productViews,
+        addToCart,
+        pdpCtr: impressions > 0 ? (clicks / impressions) * 100 : null,
+        atcCtr: productViews > 0 ? (addToCart / productViews) * 100 : null,
+      };
+    };
     const selectedCategoryRefs =
       filters.categoryId == null
         ? null
@@ -847,6 +926,7 @@ async function buildDashboard(input: DashboardFilters) {
       filters.statusId != null;
     const summaryMetric = (month: string) => {
       let impressions = 0;
+      let clicks = 0;
       let productViews = 0;
       let addToCart = 0;
       for (const row of ctrDataset.rows) {
@@ -862,10 +942,11 @@ async function buildDashboard(input: DashboardFilters) {
         )
           continue;
         impressions += scalar(row.impressions);
+        clicks += scalar(row.clicks);
         productViews += scalar(row.product_views);
         addToCart += scalar(row.add_to_cart);
       }
-      return { impressions, productViews, addToCart };
+      return { impressions, clicks, productViews, addToCart };
     };
     const series = (months: string[]) =>
       months.map((month) => {
@@ -886,6 +967,10 @@ async function buildDashboard(input: DashboardFilters) {
       currentThree: series(monthConfig.currentThree),
       lastYear: series(monthConfig.lastYear),
     };
+    const trendSignalScore = (ratio: number) =>
+      Math.max(0, Math.min(100, (ratio - 0.5) * 100));
+    const growthPct = (ratio: number) => Math.round((ratio - 1) * 1000) / 10;
+    const forecastCandidates: typeof categoryTrendForecast.candidates = [];
     for (const [categoryId, rows] of byCategory) {
       const before = previousByCategory.get(categoryId) || [];
       const withPhotos = rows.filter(
@@ -906,6 +991,58 @@ async function buildDashboard(input: DashboardFilters) {
       ).length;
       const inactive = rows.filter(isInactive).length;
       const beforeInactive = before.filter(isInactive).length;
+      const seasonalRatios = monthConfig.seasonalPairs.flatMap((pair) => {
+        const previous = categoryCtr(rows, pair.previousMonth);
+        const target = categoryCtr(rows, pair.targetMonth);
+        return previous.impressions >= CATEGORY_FORECAST_MIN_IMPRESSIONS &&
+          target.impressions >= 50
+          ? [target.impressions / previous.impressions]
+          : [];
+      });
+      const recentPrevious = categoryCtr(rows, monthConfig.currentThree[1]);
+      const recent = categoryCtr(rows, monthConfig.currentThree[2]);
+      const recentTrafficRatio =
+        recentPrevious.impressions >= CATEGORY_FORECAST_MIN_IMPRESSIONS &&
+        recent.impressions >= 50
+          ? recent.impressions / recentPrevious.impressions
+          : null;
+      const recentAtcRatio =
+        recentPrevious.addToCart >= CATEGORY_FORECAST_MIN_ATC
+          ? recent.addToCart / recentPrevious.addToCart
+          : null;
+      if (seasonalRatios.length >= 2 && recentTrafficRatio != null) {
+        const seasonalityRatio = median(seasonalRatios);
+        const weightedSignals = [
+          { weight: 0.5, score: trendSignalScore(seasonalityRatio) },
+          { weight: 0.3, score: trendSignalScore(recentTrafficRatio) },
+          ...(recentAtcRatio == null
+            ? []
+            : [{ weight: 0.2, score: trendSignalScore(recentAtcRatio) }]),
+        ];
+        const weightTotal = weightedSignals.reduce(
+          (total, signal) => total + signal.weight,
+          0,
+        );
+        const score = Math.round(
+          weightedSignals.reduce(
+            (total, signal) => total + signal.weight * signal.score,
+            0,
+          ) / weightTotal,
+        );
+        forecastCandidates.push({
+          categoryId,
+          categoryName:
+            rows[0]?.categoryName || rows[0]?.categoryPath || "Без категорії",
+          score,
+          potential: score >= 70 ? "high" : score >= 55 ? "medium" : "watch",
+          seasonalityPct: growthPct(seasonalityRatio),
+          recentTrafficPct: growthPct(recentTrafficRatio),
+          recentAtcPct:
+            recentAtcRatio == null ? null : growthPct(recentAtcRatio),
+          historyYears: seasonalRatios.length,
+          latestImpressions: recent.impressions,
+        });
+      }
       categoryAnalysis.push({
         categoryId,
         categoryName:
@@ -937,6 +1074,17 @@ async function buildDashboard(input: DashboardFilters) {
         right.total - left.total ||
         left.categoryName.localeCompare(right.categoryName, "uk"),
     );
+    forecastCandidates.sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.latestImpressions - left.latestImpressions ||
+        left.categoryName.localeCompare(right.categoryName, "uk"),
+    );
+    categoryTrendForecast = {
+      available: categoryCtrAvailable && forecastCandidates.length > 0,
+      forecastMonth: monthConfig.forecastMonth,
+      candidates: forecastCandidates.slice(0, 8),
+    };
   }
 
   type ProductAnalysisRow = ProductLite & {
@@ -1252,6 +1400,7 @@ async function buildDashboard(input: DashboardFilters) {
     categoryCtrAvailable,
     categoryCtrError,
     categoryCtrSummary,
+    categoryTrendForecast,
     productAnalysis,
     total: outputRows.length,
     page: filters.page,

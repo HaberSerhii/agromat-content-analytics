@@ -7,7 +7,12 @@ type SortedSetMember = { score: number; member: string };
 
 interface RedisPipelineLike {
   get(key: string): RedisPipelineLike;
-  zrange(key: string, start: number, stop: number, opts?: ZRangeOptions): RedisPipelineLike;
+  zrange(
+    key: string,
+    start: number,
+    stop: number,
+    opts?: ZRangeOptions,
+  ): RedisPipelineLike;
   exec(): Promise<unknown[]>;
 }
 
@@ -15,8 +20,18 @@ export interface RedisLike {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, opts?: RedisSetOptions): Promise<unknown>;
   del(key: string): Promise<unknown>;
-  zadd(key: string, first: SortedSetMember, ...rest: SortedSetMember[]): Promise<unknown>;
-  zrange(key: string, start: number, stop: number, opts?: ZRangeOptions): Promise<string[]>;
+  zadd(
+    key: string,
+    first: SortedSetMember,
+    ...rest: SortedSetMember[]
+  ): Promise<unknown>;
+  zrange(
+    key: string,
+    start: number,
+    stop: number,
+    opts?: ZRangeOptions,
+  ): Promise<string[]>;
+  zrem(key: string, ...members: string[]): Promise<unknown>;
   zremrangebyscore(key: string, min: number, max: number): Promise<unknown>;
   pipeline(): RedisPipelineLike;
 }
@@ -29,7 +44,12 @@ class IORedisPipelineAdapter implements RedisPipelineLike {
     return this;
   }
 
-  zrange(key: string, start: number, stop: number, opts?: ZRangeOptions): RedisPipelineLike {
+  zrange(
+    key: string,
+    start: number,
+    stop: number,
+    opts?: ZRangeOptions,
+  ): RedisPipelineLike {
     if (opts?.byScore) {
       if (opts.rev) {
         this.pipe.zrevrangebyscore(key, String(start), String(stop));
@@ -74,13 +94,22 @@ class IORedisAdapter implements RedisLike {
     return this.client.del(key);
   }
 
-  zadd(key: string, first: SortedSetMember, ...rest: SortedSetMember[]): Promise<unknown> {
+  zadd(
+    key: string,
+    first: SortedSetMember,
+    ...rest: SortedSetMember[]
+  ): Promise<unknown> {
     const members = [first, ...rest];
     const args = members.flatMap((m) => [String(m.score), m.member]);
     return this.client.zadd(key, ...args);
   }
 
-  zrange(key: string, start: number, stop: number, opts?: ZRangeOptions): Promise<string[]> {
+  zrange(
+    key: string,
+    start: number,
+    stop: number,
+    opts?: ZRangeOptions,
+  ): Promise<string[]> {
     if (opts?.byScore) {
       if (opts.rev) {
         return this.client.zrevrangebyscore(key, String(start), String(stop));
@@ -88,6 +117,10 @@ class IORedisAdapter implements RedisLike {
       return this.client.zrangebyscore(key, String(start), String(stop));
     }
     return this.client.zrange(key, start, stop);
+  }
+
+  zrem(key: string, ...members: string[]): Promise<unknown> {
+    return this.client.zrem(key, ...members);
   }
 
   zremrangebyscore(key: string, min: number, max: number): Promise<unknown> {
