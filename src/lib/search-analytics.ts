@@ -2,10 +2,13 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 import {
   ensureSearchQueryDiscovery,
+  getSearchSheetRevision,
+  listSearchQueryExclusions,
   listSearchQueryProcessing,
 } from "@/lib/search-query-processing-store";
 import type {
   SearchAnalyticsRow,
+  SearchMonthlyMetric,
   SearchQueryProcessing,
   SearchQueryProduct,
 } from "@/lib/search-analytics-types";
@@ -22,6 +25,12 @@ type SheetMapping = {
   queryUk: string;
   queryRu: string;
   goodsRefs: number[];
+};
+
+type MonthRange = {
+  month: string;
+  from: string;
+  to: string;
 };
 
 type MutableRow = SearchAnalyticsRow & { aliasSet: Set<string> };
@@ -56,6 +65,29 @@ function periodRange(today = dateInKyiv()): { from: string; to: string } {
   };
 }
 
+function monthRanges(today = dateInKyiv()): MonthRange[] {
+  const anchor = new Date(`${today}T12:00:00Z`);
+  anchor.setUTCDate(anchor.getUTCDate() - 1);
+  return [2, 1, 0].map((offset) => {
+    const first = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - offset, 1));
+    const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0));
+    if (last > anchor) last.setTime(anchor.getTime());
+    return {
+      month: first.toISOString().slice(0, 7),
+      from: first.toISOString().slice(0, 10),
+      to: last.toISOString().slice(0, 10),
+    };
+  });
+}
+
+function sourceCacheKey(from: string, to: string, cacheDay: string): string {
+  const monthEnd = new Date(`${from.slice(0, 7)}-01T12:00:00Z`);
+  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
+  monthEnd.setUTCDate(0);
+  const closedMonth = from.endsWith("-01") && to === monthEnd.toISOString().slice(0, 10);
+  return closedMonth ? `closed:${from}:${to}` : `daily:${cacheDay}:${from}:${to}`;
+}
+
 function csvRows(input: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -84,10 +116,10 @@ function csvRows(input: string): string[][] {
   return rows;
 }
 
-async function loadSheetMappings(cacheDay: string): Promise<SheetMapping[]> {
+async function loadSheetMappings(cacheDay: string, revision: number): Promise<SheetMapping[]> {
   return readThroughBigQueryCache({
     namespace: "multisearch-google-sheet",
-    key: cacheDay,
+    key: `${cacheDay}:r${revision}`,
     load: async () => {
       const response = await fetch(
         `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&gid=0`,
@@ -119,7 +151,7 @@ async function loadMultisearchQueries(
   if (!key) throw new Error("MULTISEARCH_ANALYTICS_KEY is not configured");
   return readThroughBigQueryCache({
     namespace: `multisearch-${kind}`,
-    key: `${cacheDay}:${from}:${to}`,
+    key: sourceCacheKey(from, to, cacheDay),
     load: async () => {
       const rows: SourceQuery[] = [];
       const chunk = 10_000;
@@ -169,7 +201,7 @@ async function loadBigQueryQueries(
   const toSuffix = to.replaceAll("-", "");
   return readThroughBigQueryCache({
     namespace: "search-queries-ga4",
-    key: `${cacheDay}:${from}:${to}`,
+    key: sourceCacheKey(from, to, cacheDay),
     load: async () => {
       const client = new BigQuery({ projectId: project });
       const [rows] = await client.query({
@@ -247,6 +279,7 @@ function emptyRow(key: string, query: string): MutableRow {
     multisearchFoundCount: 0,
     multisearchNoResultsCount: 0,
     totalSearches: 0,
+    monthly: [],
     firstSeenAt: null,
     lastSeenAt: null,
     status: "new",
@@ -300,12 +333,25 @@ export async function buildSearchAnalyticsDataset(): Promise<{
 }> {
   const cacheDay = dateInKyiv();
   const { from, to } = periodRange(cacheDay);
+  const months = monthRanges(cacheDay);
   const warnings: string[] = [];
-  const settled = await Promise.allSettled([
-    loadBigQueryQueries(from, to, cacheDay),
-    loadMultisearchQueries("found", from, to, cacheDay),
-    loadMultisearchQueries("no-results", from, to, cacheDay),
-    loadSheetMappings(cacheDay),
+  const sheetRevision = await getSearchSheetRevision();
+  const [settled, monthlySettled] = await Promise.all([
+    Promise.allSettled([
+      loadBigQueryQueries(from, to, cacheDay),
+      loadMultisearchQueries("found", from, to, cacheDay),
+      loadMultisearchQueries("no-results", from, to, cacheDay),
+      loadSheetMappings(cacheDay, sheetRevision),
+    ]),
+    Promise.all(
+      months.map((range) =>
+        Promise.allSettled([
+          loadBigQueryQueries(range.from, range.to, cacheDay),
+          loadMultisearchQueries("found", range.from, range.to, cacheDay),
+          loadMultisearchQueries("no-results", range.from, range.to, cacheDay),
+        ]),
+      ),
+    ),
   ]);
   const value = <T>(index: number, label: string): T[] => {
     const result = settled[index];
@@ -317,9 +363,25 @@ export async function buildSearchAnalyticsDataset(): Promise<{
   const found = value<SourceQuery>(1, "Multisearch з результатами");
   const noResults = value<SourceQuery>(2, "Multisearch без результатів");
   const sheet = value<SheetMapping>(3, "Google Sheets");
-  const [products, processing] = await Promise.all([
+  const monthlySources = monthlySettled.map((results, monthIndex) => {
+    const read = (index: number, label: string): SourceQuery[] => {
+      const result = results[index];
+      if (result.status === "fulfilled") return result.value;
+      warnings.push(
+        `${label} ${months[monthIndex].month}: ${result.reason instanceof Error ? result.reason.message : "помилка"}`,
+      );
+      return [];
+    };
+    return {
+      bigQuery: read(0, "BigQuery"),
+      found: read(1, "Multisearch з результатами"),
+      noResults: read(2, "Multisearch без результатів"),
+    };
+  });
+  const [products, processing, exclusions] = await Promise.all([
     readAllLite(),
     listSearchQueryProcessing(),
+    listSearchQueryExclusions(),
   ]);
   const byGoodsRef = new Map(products.map((item) => [item.goodsRef, item]));
   const codeSet = new Set(products.map((item) => String(item.code)));
@@ -372,6 +434,20 @@ export async function buildSearchAnalyticsDataset(): Promise<{
   merge(found, "multisearch-found");
   merge(noResults, "multisearch-no-results");
 
+  const countMap = (items: SourceQuery[]) => {
+    const map = new Map<string, number>();
+    for (const item of items) {
+      const key = normalizeSearchQuery(item.query);
+      if (key) map.set(key, (map.get(key) || 0) + item.count);
+    }
+    return map;
+  };
+  const monthlyLookups = monthlySources.map((sources) => ({
+    bigQuery: countMap(sources.bigQuery),
+    found: countMap(sources.found),
+    noResults: countMap(sources.noResults),
+  }));
+
   const discovery = await ensureSearchQueryDiscovery(
     [...rows.values()].map((row) => normalizeSearchQuery(row.query)),
     cacheDay,
@@ -379,8 +455,20 @@ export async function buildSearchAnalyticsDataset(): Promise<{
 
   for (const row of rows.values()) {
     row.firstSeenAt = discovery[normalizeSearchQuery(row.query)] || cacheDay;
-    const stored = processing[normalizeSearchQuery(row.query)];
-    if (stored) applyProcessing(row, stored);
+    const stored = [...row.aliasSet]
+      .map((alias) => processing[alias])
+      .find(Boolean);
+    if (stored) {
+      applyProcessing(row, stored);
+      for (const alias of [stored.queryUk, stored.queryRu]) {
+        const normalized = normalizeSearchQuery(alias);
+        if (normalized) {
+          row.aliasSet.add(normalized);
+          if (!row.aliases.some((item) => normalizeSearchQuery(item) === normalized))
+            row.aliases.push(alias);
+        }
+      }
+    }
     if (row.status === "new") {
       row.garbageReason = classifyGarbage(
         row.query,
@@ -394,10 +482,40 @@ export async function buildSearchAnalyticsDataset(): Promise<{
     row.aliases = [...row.aliasSet].map(
       (alias) => row.aliases.find((item) => normalizeSearchQuery(item) === alias) || alias,
     );
+    row.monthly = months.map((range, index): SearchMonthlyMetric => {
+      const lookup = monthlyLookups[index];
+      const aliases = [...row.aliasSet];
+      const bigQueryCount = aliases.reduce(
+        (sum, alias) => sum + (lookup.bigQuery.get(alias) || 0),
+        0,
+      );
+      const multisearchFoundCount = aliases.reduce(
+        (sum, alias) => sum + (lookup.found.get(alias) || 0),
+        0,
+      );
+      const multisearchNoResultsCount = aliases.reduce(
+        (sum, alias) => sum + (lookup.noResults.get(alias) || 0),
+        0,
+      );
+      return {
+        ...range,
+        bigQueryCount,
+        multisearchFoundCount,
+        multisearchNoResultsCount,
+        totalSearches: Math.max(
+          bigQueryCount,
+          multisearchFoundCount + multisearchNoResultsCount,
+        ),
+      };
+    });
   }
 
+  const visibleRows = [...rows.values()].filter(
+    (row) => ![...row.aliasSet].some((alias) => Boolean(exclusions[alias])),
+  );
+
   return {
-    rows: [...rows.values()].map((row) => {
+    rows: visibleRows.map((row) => {
       const finalRow = { ...row } as Partial<MutableRow>;
       delete finalRow.aliasSet;
       return finalRow as SearchAnalyticsRow;
@@ -425,6 +543,8 @@ function applyProcessing(row: MutableRow, stored: SearchQueryProcessing) {
   row.products = stored.products;
   row.sheetSynced = stored.sheetSynced;
   row.processedAt = stored.processedAt;
+  if (stored.sheetSynced && !row.sources.includes("google-sheet"))
+    row.sources.push("google-sheet");
 }
 
 export function searchAnalyticsPeriod(): { from: string; to: string } {

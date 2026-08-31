@@ -20,7 +20,7 @@ const EMPTY_RESPONSE: SearchAnalyticsResponse = {
   updatedAt: "",
   periodFrom: "",
   periodTo: "",
-  testMode: true,
+  testMode: false,
   stats: {
     uniqueQueries: 0,
     searchEvents: 0,
@@ -54,6 +54,14 @@ function formatDate(value: string | null): string {
     month: "2-digit",
     year: "2-digit",
   }).format(new Date(`${value.slice(0, 10)}T12:00:00`));
+}
+
+function formatMonth(value: string): string {
+  const label = new Intl.DateTimeFormat("uk-UA", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${value}-01T12:00:00`));
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 const STATUS_META: Record<
@@ -99,7 +107,11 @@ function QueryProcessingModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [preparedRow, setPreparedRow] = useState<string[] | null>(null);
+  const [sheetResult, setSheetResult] = useState<{
+    row: string[];
+    action: "created" | "updated";
+    rowNumber: number;
+  } | null>(null);
   const idds = useMemo(
     () =>
       [...new Set(iddText.split(/[^0-9]+/).map(Number).filter(Number.isSafeInteger))],
@@ -118,9 +130,16 @@ function QueryProcessingModal({
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
         sheetRow?: string[];
+        sheetAction?: "created" | "updated";
+        sheetRowNumber?: number;
       };
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      setPreparedRow(payload.sheetRow || null);
+      if (payload.sheetRow && payload.sheetAction && payload.sheetRowNumber)
+        setSheetResult({
+          row: payload.sheetRow,
+          action: payload.sheetAction,
+          rowNumber: payload.sheetRowNumber,
+        });
       onSaved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не вдалося зберегти");
@@ -153,6 +172,23 @@ function QueryProcessingModal({
           </button>
         </div>
         <div className="space-y-4 p-5">
+          <div>
+            <div className="mb-2 text-[10px] font-black text-[#45515d]">
+              Динаміка за останні 3 місяці
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              {row.monthly.map((month) => (
+                <div key={month.month} className="rounded-xl border border-[#dfe4ea] bg-[#fbfcfd] p-3">
+                  <div className="text-[9px] font-black text-[#596571]">{formatMonth(month.month)}</div>
+                  <div className="mt-1 text-lg font-black text-[#27313c]">{formatNumber(month.totalSearches)}</div>
+                  <div className="mt-1 text-[8px] leading-4 text-[#7d8892]">
+                    BQ {formatNumber(month.bigQueryCount)} · MS 0 {formatNumber(month.multisearchNoResultsCount)} · MS є {formatNumber(month.multisearchFoundCount)}
+                  </div>
+                  <div className="mt-1 text-[7px] text-[#a0a8af]">{formatDate(month.from)} — {formatDate(month.to)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
           <div>
             <div className="mb-2 text-[10px] font-black text-[#45515d]">Менеджер</div>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -203,18 +239,21 @@ function QueryProcessingModal({
           </label>
           <div className="rounded-xl border border-[#d7e8f7] bg-[#f3f9ff] p-3 text-[10px] leading-5 text-[#4e6578]">
             Розпізнано IDD: <b>{idds.length}</b>. Після перевірки вони будуть
-            перетворені на goods_ref. У тестовому режимі Google Sheets не змінюється.
+            перетворені на goods_ref. Існуючий рядок Google Sheets буде оновлено,
+            а якщо запиту ще немає — створено новий.
           </div>
           {error && (
             <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-[10px] font-bold text-[#b73535]">
               {error}
             </div>
           )}
-          {preparedRow && (
+          {sheetResult && (
             <div className="rounded-xl border border-[#aedfc9] bg-[#effaf5] p-3">
-              <b className="text-[10px] text-[#087a55]">Підготовлено рядок Google Sheets</b>
+              <b className="text-[10px] text-[#087a55]">
+                {sheetResult.action === "updated" ? "Оновлено" : "Створено"} рядок {sheetResult.rowNumber} у Google Sheets
+              </b>
               <div className="mt-2 break-all font-mono text-[9px] leading-5 text-[#496259]">
-                {preparedRow.join(" | ")}
+                {sheetResult.row.join(" | ")}
               </div>
             </div>
           )}
@@ -232,9 +271,50 @@ function QueryProcessingModal({
               disabled={saving || !manager || !queryUk.trim() || !queryRu.trim() || !idds.length}
               className="rounded-xl bg-[#118dff] px-5 py-2.5 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {saving ? "Перевіряємо…" : "Підтвердити (тест)"}
+              {saving ? "Зберігаємо…" : "Зберегти в Google Sheets"}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OutOfStockProductsModal({
+  row,
+  onClose,
+}: {
+  row: SearchAnalyticsRow;
+  onClose: () => void;
+}) {
+  const products = row.products.filter((product) => (product.stockQty || 0) <= 0);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#17212bcc]/70 p-3 backdrop-blur-sm">
+      <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-[#e8edf1] p-5">
+          <div>
+            <div className="text-[9px] font-black uppercase tracking-[.16em] text-[#dc5a64]">Товари без залишків</div>
+            <h3 className="mt-1 text-lg font-black text-[#27313c]">{row.query}</h3>
+            <div className="mt-1 text-[9px] text-[#7d8892]">Знайдено: {products.length}</div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg bg-[#eef1f3] px-3 py-2 text-xs font-black text-[#596571]">✕</button>
+        </div>
+        <div className="divide-y divide-[#edf0f2]">
+          {products.map((product) => (
+            <div key={product.goodsRef} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-[10px] font-black text-[#27313c]">{product.name}</div>
+                <div className="mt-1 text-[8px] text-[#7d8892]">
+                  IDD: <b>{product.code}</b> · goods_ref: {product.goodsRef} · {product.statusName || "Статус не вказано"}
+                </div>
+              </div>
+              {product.url && (
+                <a href={product.url} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg border border-[#bcd8f1] bg-[#edf6ff] px-3 py-2 text-[9px] font-black text-[#0b6fc2]">
+                  Відкрити товар ↗
+                </a>
+              )}
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -254,6 +334,8 @@ export function SearchAnalyticsPanel() {
   const [manager, setManager] = useState("all");
   const [minCount, setMinCount] = useState("1");
   const [selected, setSelected] = useState<SearchAnalyticsRow | null>(null);
+  const [stockDetails, setStockDetails] = useState<SearchAnalyticsRow | null>(null);
+  const [deletingKey, setDeletingKey] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -290,9 +372,35 @@ export function SearchAnalyticsPanel() {
   }, [load]);
   useEffect(() => setPage(1), [manager, minCount, result, search, source, status]);
 
+  const exclude = async (row: SearchAnalyticsRow) => {
+    const confirmed = window.confirm(
+      `Приховати запит «${row.query}» назавжди з цього дашборда? Рядок у Google Sheets видалено не буде.`,
+    );
+    if (!confirmed) return;
+    setDeletingKey(row.key);
+    setError("");
+    try {
+      const response = await fetch("/api/products/search-analytics", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: row.query,
+          aliases: [...row.aliases, row.queryUk, row.queryRu],
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не вдалося приховати запит");
+    } finally {
+      setDeletingKey("");
+    }
+  };
+
   const kpis = [
     { label: "Унікальних запитів", value: data.stats.uniqueQueries, note: `${formatNumber(data.stats.searchEvents)} пошуків за період`, tone: "#118dff" },
-    { label: "До обробки", value: data.stats.pendingQueries, note: `${formatNumber(data.sourceStats.multisearchNoResultsQueries)} без результатів`, tone: "#e05c68" },
+    { label: "До обробки", value: data.stats.pendingQueries, note: `${formatNumber(data.sourceStats.multisearchNoResultsEvents)} пошуків без результатів у MS`, tone: "#e05c68" },
     { label: "Опрацьовано", value: data.stats.processedQueries, note: `${formatNumber(data.sourceStats.sheetMappings)} імпортовано з Sheets`, tone: "#23a875" },
     { label: "Залучено товарів", value: data.stats.involvedProducts, note: `${formatNumber(data.stats.productsInStock)} із залишком · ${formatNumber(data.stats.productsOutOfStock)} без`, tone: "#f39c4a" },
   ];
@@ -308,15 +416,16 @@ export function SearchAnalyticsPanel() {
           }}
         />
       )}
-      <div className="flex flex-col gap-3 rounded-2xl border border-[#f0d4a5] bg-[#fff8eb] p-4 lg:flex-row lg:items-center lg:justify-between">
+      {stockDetails && <OutOfStockProductsModal row={stockDetails} onClose={() => setStockDetails(null)} />}
+      <div className="flex flex-col gap-3 rounded-2xl border border-[#b9dfcf] bg-[#f0faf6] p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <div className="text-[9px] font-black uppercase tracking-[.15em] text-[#b97716]">Тестовий режим</div>
-          <div className="mt-1 text-[11px] font-bold text-[#66533b]">
-            Реальні джерела та перевірка IDD. Запис у Google Sheets поки вимкнений.
+          <div className="text-[9px] font-black uppercase tracking-[.15em] text-[#087a55]">Синхронізація активна</div>
+          <div className="mt-1 text-[11px] font-bold text-[#496259]">
+            Збереження створює або оновлює відповідний рядок у Google Sheets Multisearch.
           </div>
         </div>
-        <div className="text-[9px] text-[#866f51]">
-          Період: <b>{formatDate(data.periodFrom)} — {formatDate(data.periodTo)}</b>
+        <div className="text-[9px] text-[#5d766c]">
+          Дані таблиці: <b>{formatDate(data.periodFrom)} — {formatDate(data.periodTo)}</b> · останні 30 завершених днів
         </div>
       </div>
       <section className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
@@ -397,8 +506,8 @@ export function SearchAnalyticsPanel() {
               <tr>
                 <th className="px-4 py-3">Пошуковий запит</th>
                 <th className="px-3 py-3">Джерела</th>
-                <th className="px-3 py-3 text-center">Пошуків</th>
-                <th className="px-3 py-3 text-center">Без результату</th>
+                <th className="px-3 py-3 text-center" title="Загальна кількість виконаних пошуків за вибраний період">К-сть пошукових запитів</th>
+                <th className="px-3 py-3 text-center" title="Кількість пошуків, у яких Multisearch не показав жодного товару">MS без результатів</th>
                 <th className="px-3 py-3">Перша поява</th>
                 <th className="px-3 py-3">Менеджер</th>
                 <th className="px-3 py-3 text-center">Товари</th>
@@ -411,15 +520,27 @@ export function SearchAnalyticsPanel() {
                 const inStock = row.products.filter((product) => (product.stockQty || 0) > 0).length;
                 return (
                   <tr key={row.key} className="border-b border-[#edf0f2] last:border-0 hover:bg-[#fbfcfd]">
-                    <td className="min-w-[260px] px-4 py-3">
-                      <button
-                        type="button"
-                        disabled={row.status === "garbage"}
-                        onClick={() => setSelected(row)}
-                        className="text-left text-[11px] font-black text-[#27313c] hover:text-[#118dff] disabled:cursor-default disabled:text-[#707b85]"
-                      >
-                        {row.query}
-                      </button>
+                    <td className="min-w-[280px] px-4 py-3">
+                      <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          disabled={row.status === "garbage"}
+                          onClick={() => setSelected(row)}
+                          className="min-w-0 text-left text-[11px] font-black text-[#27313c] hover:text-[#118dff] disabled:cursor-default disabled:text-[#707b85]"
+                        >
+                          {row.query}
+                        </button>
+                        <button
+                          type="button"
+                          title="Назавжди приховати запит із дашборда"
+                          aria-label={`Видалити запит ${row.query}`}
+                          disabled={deletingKey === row.key}
+                          onClick={() => void exclude(row)}
+                          className="ml-auto shrink-0 rounded-md border border-[#f0c6ca] bg-[#fff4f5] px-2 py-1 text-[9px] font-black text-[#c64753] hover:bg-[#ffe9eb] disabled:opacity-40"
+                        >
+                          {deletingKey === row.key ? "…" : "✕"}
+                        </button>
+                      </div>
                       {(row.queryUk !== row.queryRu || row.aliases.length > 1) && (
                         <div className="mt-1 max-w-[360px] truncate text-[8px] text-[#929ca5]">UK: {row.queryUk} · RU: {row.queryRu}</div>
                       )}
@@ -442,7 +563,15 @@ export function SearchAnalyticsPanel() {
                     <td className="whitespace-nowrap px-3 py-3 text-[9px] font-black text-[#45515d]">{row.manager || "—"}</td>
                     <td className="px-3 py-3 text-center">
                       <b className="text-[11px] text-[#34404c]">{row.products.length}</b>
-                      {row.products.length > 0 && <div className="mt-1 text-[8px] text-[#929ca5]">{inStock} є · {row.products.length - inStock} немає</div>}
+                      {row.products.length > 0 && (
+                        <div className="mt-1 text-[8px] text-[#929ca5]">
+                          {inStock} є · {row.products.length - inStock > 0 ? (
+                            <button type="button" onClick={() => setStockDetails(row)} className="font-black text-[#dc5a64] underline decoration-dotted underline-offset-2">
+                              {row.products.length - inStock} немає
+                            </button>
+                          ) : "0 немає"}
+                        </div>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
                       <span className="inline-flex rounded-full px-2.5 py-1 text-[8px] font-black" style={{ color: meta.color, background: meta.background }}>{meta.label}</span>

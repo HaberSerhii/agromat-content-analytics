@@ -5,7 +5,13 @@ import {
   buildSearchAnalyticsDataset,
   normalizeSearchQuery,
 } from "@/lib/search-analytics";
-import { saveSearchQueryProcessing } from "@/lib/search-query-processing-store";
+import {
+  bumpSearchSheetRevision,
+  excludeSearchQueries,
+  listSearchQueryProcessing,
+  saveSearchQueryProcessing,
+} from "@/lib/search-query-processing-store";
+import { syncSearchQueryToGoogleSheet } from "@/lib/multisearch-google-sheet";
 import type {
   SearchAnalyticsResponse,
   SearchQueryProcessing,
@@ -86,7 +92,7 @@ export async function GET(request: Request) {
       updatedAt: new Date().toISOString(),
       periodFrom: dataset.from,
       periodTo: dataset.to,
-      testMode: true,
+      testMode: false,
       stats,
       sourceStats: dataset.sourceStats,
       warnings: dataset.warnings,
@@ -132,9 +138,27 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     const selected = idds.map((code) => byCode.get(code)!);
+    const existing = await listSearchQueryProcessing();
+    const previous = existing[normalizeSearchQuery(query)];
+    const aliasKeys = [...new Set([
+      query,
+      queryUk,
+      queryRu,
+      previous?.originalQuery || "",
+      previous?.queryUk || "",
+      previous?.queryRu || "",
+    ].map(normalizeSearchQuery).filter(Boolean))];
+    const sheet = await syncSearchQueryToGoogleSheet({
+      matchQueries: aliasKeys,
+      queryUk,
+      queryRu,
+      goodsRefs: selected.map((item) => item.goodsRef),
+    });
+    await bumpSearchSheetRevision();
     const now = new Date().toISOString();
     const processing: SearchQueryProcessing = {
       queryKey: normalizeSearchQuery(query),
+      aliasKeys,
       originalQuery: query,
       queryUk,
       queryRu,
@@ -149,15 +173,18 @@ export async function POST(request: Request) {
         stockQty: item.stockQty,
         statusName: item.statusName,
       })),
-      source: "dashboard-test",
-      sheetSynced: false,
-      processedAt: now,
+      source: "dashboard-sync",
+      sheetSynced: true,
+      sheetRow: sheet.rowNumber,
+      processedAt: previous?.processedAt || now,
       updatedAt: now,
     };
     await saveSearchQueryProcessing(processing);
     return NextResponse.json({
       processing,
-      testMode: true,
+      testMode: false,
+      sheetAction: sheet.action,
+      sheetRowNumber: sheet.rowNumber,
       sheetRow: [queryUk, queryRu, processing.goodsRefs.join(", ")],
     });
   } catch (error) {
@@ -166,4 +193,22 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+export async function DELETE(request: Request) {
+  if (!isDashboardRequest(request))
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const body = (await request.json().catch(() => ({}))) as {
+    query?: unknown;
+    aliases?: unknown;
+  };
+  const query = String(body.query || "").trim();
+  const aliases = Array.isArray(body.aliases)
+    ? body.aliases.map((item) => String(item || ""))
+    : [];
+  const queryKeys = [...new Set([query, ...aliases].map(normalizeSearchQuery).filter(Boolean))];
+  if (!queryKeys.length)
+    return NextResponse.json({ error: "Пошуковий запит не вказаний" }, { status: 400 });
+  await excludeSearchQueries(queryKeys, query);
+  return NextResponse.json({ excluded: true, queryKeys });
 }

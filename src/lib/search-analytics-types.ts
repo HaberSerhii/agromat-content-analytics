@@ -11,8 +11,19 @@ export interface SearchQueryProduct {
   statusName: string;
 }
 
+export interface SearchMonthlyMetric {
+  month: string;
+  from: string;
+  to: string;
+  bigQueryCount: number;
+  multisearchFoundCount: number;
+  multisearchNoResultsCount: number;
+  totalSearches: number;
+}
+
 export interface SearchQueryProcessing {
   queryKey: string;
+  aliasKeys?: string[];
   originalQuery: string;
   queryUk: string;
   queryRu: string;
@@ -20,8 +31,9 @@ export interface SearchQueryProcessing {
   idds: number[];
   goodsRefs: number[];
   products: SearchQueryProduct[];
-  source: "dashboard-test" | "google-sheet";
+  source: "dashboard-test" | "dashboard-sync" | "google-sheet";
   sheetSynced: boolean;
+  sheetRow?: number | null;
   processedAt: string;
   updatedAt: string;
 }
@@ -37,6 +49,7 @@ export interface SearchAnalyticsRow {
   multisearchFoundCount: number;
   multisearchNoResultsCount: number;
   totalSearches: number;
+  monthly: SearchMonthlyMetric[];
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   status: SearchQueryStatus;

@@ -3,8 +3,16 @@ import type { SearchQueryProcessing } from "@/lib/search-analytics-types";
 
 const STORE_KEY = "products:search-query-processing:v1";
 const DISCOVERY_KEY = "products:search-query-discovery:v1";
+const EXCLUSION_KEY = "products:search-query-exclusions:v1";
+const SHEET_REVISION_KEY = "products:search-query-sheet-revision:v1";
 
-function parse(raw: string | null): Record<string, SearchQueryProcessing> {
+export interface SearchQueryExclusion {
+  queryKey: string;
+  originalQuery: string;
+  excludedAt: string;
+}
+
+function parseProcessing(raw: string | null): Record<string, SearchQueryProcessing> {
   if (!raw) return {};
   try {
     const value = JSON.parse(raw) as Record<string, SearchQueryProcessing>;
@@ -17,16 +25,53 @@ function parse(raw: string | null): Record<string, SearchQueryProcessing> {
 export async function listSearchQueryProcessing(): Promise<
   Record<string, SearchQueryProcessing>
 > {
-  return parse(await getRedis().get(STORE_KEY));
+  return parseProcessing(await getRedis().get(STORE_KEY));
 }
 
 export async function saveSearchQueryProcessing(
   processing: SearchQueryProcessing,
 ): Promise<SearchQueryProcessing> {
   const current = await listSearchQueryProcessing();
-  current[processing.queryKey] = processing;
+  const keys = [...new Set([processing.queryKey, ...(processing.aliasKeys || [])])];
+  for (const key of keys) current[key] = processing;
   await getRedis().set(STORE_KEY, JSON.stringify(current));
   return processing;
+}
+
+export async function listSearchQueryExclusions(): Promise<
+  Record<string, SearchQueryExclusion>
+> {
+  const raw = await getRedis().get(EXCLUSION_KEY);
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw) as Record<string, SearchQueryExclusion>;
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function excludeSearchQueries(
+  queryKeys: string[],
+  originalQuery: string,
+): Promise<void> {
+  const current = await listSearchQueryExclusions();
+  const excludedAt = new Date().toISOString();
+  for (const queryKey of [...new Set(queryKeys.filter(Boolean))]) {
+    current[queryKey] = { queryKey, originalQuery, excludedAt };
+  }
+  await getRedis().set(EXCLUSION_KEY, JSON.stringify(current));
+}
+
+export async function getSearchSheetRevision(): Promise<number> {
+  const revision = Number(await getRedis().get(SHEET_REVISION_KEY));
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+}
+
+export async function bumpSearchSheetRevision(): Promise<number> {
+  const revision = (await getSearchSheetRevision()) + 1;
+  await getRedis().set(SHEET_REVISION_KEY, String(revision));
+  return revision;
 }
 
 export async function ensureSearchQueryDiscovery(
