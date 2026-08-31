@@ -1,4 +1,8 @@
 import { BigQuery } from "@google-cloud/bigquery";
+import {
+  bigQueryCacheDay,
+  readThroughBigQueryCache,
+} from "@/lib/bigquery-result-cache";
 
 export type SalesWebMetricMonth = {
   month: string;
@@ -36,14 +40,6 @@ type QueryRow = {
   avg_cart_items: number | string | null;
   data_through: string | { value?: string } | null;
 };
-
-type CacheEntry = {
-  expiresAt: number;
-  value: SalesWebMetricsDataset;
-};
-
-const CACHE_TTL_MS = 15 * 60 * 1000;
-const cache = new Map<string, CacheEntry>();
 
 function projectId() {
   return process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413";
@@ -164,20 +160,23 @@ export async function readSalesWebMetrics(input: {
 }): Promise<SalesWebMetricsDataset> {
   const range = normalizeRange(input.from, input.to);
   const cacheKey = `${range.from}:${range.to}`;
-  const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
-
-  const bigQuery = new BigQuery({ projectId: projectId() });
-  const [queryRows] = await bigQuery.query({
-    query: buildSql(),
-    params: {
-      suffixFrom: range.from.replaceAll("-", ""),
-      suffixTo: range.to.replaceAll("-", ""),
+  const rows = await readThroughBigQueryCache<QueryRow[]>({
+    namespace: "sales-web-metrics",
+    key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
+    load: async () => {
+      const bigQuery = new BigQuery({ projectId: projectId() });
+      const [queryRows] = await bigQuery.query({
+        query: buildSql(),
+        params: {
+          suffixFrom: range.from.replaceAll("-", ""),
+          suffixTo: range.to.replaceAll("-", ""),
+        },
+        location: "EU",
+        maximumBytesBilled: "50000000000",
+      });
+      return queryRows as QueryRow[];
     },
-    location: "EU",
-    maximumBytesBilled: "50000000000",
   });
-  const rows = queryRows as QueryRow[];
   const months = rows.map((row): SalesWebMetricMonth => ({
     month: dateScalar(row.month) || "",
     visits: scalar(row.visits),
@@ -205,6 +204,5 @@ export async function readSalesWebMetrics(input: {
     months,
     totals,
   };
-  cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value });
   return value;
 }

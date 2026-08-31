@@ -1,5 +1,9 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import {
+  bigQueryCacheDay,
+  readThroughBigQueryCache,
+} from "@/lib/bigquery-result-cache";
+import {
   completeContentProductReview,
   contentReviewControlWindow,
   contentReviewMetricWindow,
@@ -81,23 +85,30 @@ export async function captureContentReviewMetrics(
     period === "control"
       ? contentReviewControlWindow(anchorDate)
       : contentReviewMetricWindow(anchorDate);
-  const [products, attrIndex, requiredAttrs, queryResult] = await Promise.all([
+  const [products, attrIndex, requiredAttrs, rows] = await Promise.all([
     readAllLite(),
     readProductAttributeIndex(),
     readRequiredAttrs(),
-    new BigQuery({
-      projectId: process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
-    }).query({
-      query: performanceSql(),
-      params: {
-        dateFrom: window.from.replaceAll("-", ""),
-        dateTo: window.to.replaceAll("-", ""),
+    readThroughBigQueryCache<PerformanceRow[]>({
+      namespace: "content-review-metrics",
+      key: `v1:${bigQueryCacheDay()}:${productEventsTable()}:${window.from}:${window.to}`,
+      load: async () => {
+        const [queryRows] = await new BigQuery({
+          projectId:
+            process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
+        }).query({
+          query: performanceSql(),
+          params: {
+            dateFrom: window.from.replaceAll("-", ""),
+            dateTo: window.to.replaceAll("-", ""),
+          },
+          location: "EU",
+          maximumBytesBilled: "50000000000",
+        });
+        return queryRows as PerformanceRow[];
       },
-      location: "EU",
-      maximumBytesBilled: "50000000000",
     }),
   ]);
-  const rows = queryResult[0] as PerformanceRow[];
   const performanceByRef = new Map(
     rows.map((row) => [
       numberValue(row.goods_ref),

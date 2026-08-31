@@ -1,4 +1,8 @@
 import { BigQuery } from "@google-cloud/bigquery";
+import {
+  bigQueryCacheDay,
+  readThroughBigQueryCache,
+} from "@/lib/bigquery-result-cache";
 import type {
   PromotionWebFunnelResponse,
   WebFunnelChannel,
@@ -37,14 +41,6 @@ type QueryRow = {
   stage_key: WebFunnelStageKey;
   users: number | string | null;
 };
-
-type CacheEntry = {
-  expiresAt: number;
-  value: PromotionWebFunnelResponse;
-};
-
-const cache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 15 * 60 * 1000;
 
 function getBigQueryProjectId(): string {
   return process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413";
@@ -510,19 +506,23 @@ export async function readPromotionWebFunnel(input: {
     : "week";
   const periodInfo = periodRanges(periodKind, input.anchor, input.dateFrom, input.dateTo);
   const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}`;
-  const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
-
-  const bigQuery = getBigQueryClient();
-  const [rows] = await bigQuery.query({
-    query: buildSql(periodInfo.ranges, scope),
-    params: { normalizedUrl },
-    location: "EU",
-    maximumBytesBilled: "50000000000",
+  const rows = await readThroughBigQueryCache<QueryRow[]>({
+    namespace: "promotion-web-funnel",
+    key: `v1:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
+    load: async () => {
+      const bigQuery = getBigQueryClient();
+      const [queryRows] = await bigQuery.query({
+        query: buildSql(periodInfo.ranges, scope),
+        params: { normalizedUrl },
+        location: "EU",
+        maximumBytesBilled: "50000000000",
+      });
+      return queryRows as QueryRow[];
+    },
   });
 
   const values = new Map<string, Map<WebFunnelStageKey, number>>();
-  for (const row of rows as QueryRow[]) {
+  for (const row of rows) {
     const key = `${row.period_key}:${row.device}:${row.channel}`;
     const stageValues = values.get(key) || new Map<WebFunnelStageKey, number>();
     stageValues.set(row.stage_key, Number(row.users || 0));
@@ -564,6 +564,5 @@ export async function readPromotionWebFunnel(input: {
     comparisons,
     comparisonsByDevice,
   };
-  cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value: result });
   return result;
 }

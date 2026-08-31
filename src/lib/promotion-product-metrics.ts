@@ -1,4 +1,8 @@
 import { BigQuery } from "@google-cloud/bigquery";
+import {
+  bigQueryCacheDay,
+  readThroughBigQueryCache,
+} from "@/lib/bigquery-result-cache";
 import { normalizeAnalyticsUrl } from "@/lib/promotion-web-funnel";
 import type {
   PromotionProductMetricRow,
@@ -23,7 +27,6 @@ const DEVICES: WebFunnelDevice[] = ["all", "mobile", "desktop"];
 const MAX_RANKING_ROWS = 250;
 const MIN_LIST_IMPRESSIONS = 20;
 const MIN_PRODUCT_VIEWS = 20;
-const CACHE_TTL_MS = 15 * 60 * 1000;
 
 type ProductMetricQueryRow = {
   goods_ref: number | string | null;
@@ -35,13 +38,6 @@ type ProductMetricQueryRow = {
   add_to_wishlist_users: number | string | null;
   product_view_events: number | string | null;
 };
-
-type CachedQuery = {
-  expiresAt: number;
-  rows: ProductMetricQueryRow[];
-};
-
-const queryCache = new Map<string, CachedQuery>();
 
 type HistoricalProductMeta = Pick<ProductLite, "goodsRef" | "code" | "name">;
 
@@ -331,28 +327,26 @@ export async function readPromotionProductMetrics(input: {
   const channel = CHANNELS.includes(input.channel) ? input.channel : "all";
   const device = DEVICES.includes(input.device) ? input.device : "all";
   const cacheKey = `${normalizedUrl}:${input.from}:${input.to}:${channel}:${device}`;
-  const cached = queryCache.get(cacheKey);
-  let queryRows: ProductMetricQueryRow[];
-
-  if (cached && cached.expiresAt > Date.now()) {
-    queryRows = cached.rows;
-  } else {
-    const bigQuery = new BigQuery({ projectId: getBigQueryProjectId() });
-    const [rows] = await bigQuery.query({
-      query: buildProductMetricsSql(scope),
-      params: {
-        normalizedUrl,
-        suffixFrom: input.from.replaceAll("-", ""),
-        suffixTo: input.to.replaceAll("-", ""),
-        channel,
-        device,
-      },
-      location: "EU",
-      maximumBytesBilled: "50000000000",
-    });
-    queryRows = rows as ProductMetricQueryRow[];
-    queryCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, rows: queryRows });
-  }
+  const queryRows = await readThroughBigQueryCache<ProductMetricQueryRow[]>({
+    namespace: "promotion-product-metrics",
+    key: `v1:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
+    load: async () => {
+      const bigQuery = new BigQuery({ projectId: getBigQueryProjectId() });
+      const [rows] = await bigQuery.query({
+        query: buildProductMetricsSql(scope),
+        params: {
+          normalizedUrl,
+          suffixFrom: input.from.replaceAll("-", ""),
+          suffixTo: input.to.replaceAll("-", ""),
+          channel,
+          device,
+        },
+        location: "EU",
+        maximumBytesBilled: "50000000000",
+      });
+      return rows as ProductMetricQueryRow[];
+    },
+  });
 
   const [products, soldQtyByCode, deletedProducts] = await Promise.all([
     readAllLite(),

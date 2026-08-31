@@ -1,5 +1,6 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
+import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 import {
   listSnapshotDates,
   readAllLite,
@@ -357,15 +358,22 @@ async function readMonthlyCtr(
     };
   }
   try {
-    const bigQuery = new BigQuery({
-      projectId: process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
+    const rows = await readThroughBigQueryCache<MonthlyCtrRow[]>({
+      namespace: "product-dashboard-monthly",
+      key: `v1:${today}:${productEventsTable()}:${key}`,
+      load: async () => {
+        const bigQuery = new BigQuery({
+          projectId:
+            process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
+        });
+        const [rawRows] = await bigQuery.query({
+          query: monthlyCtrSql(months.queryMonths),
+          location: "EU",
+          maximumBytesBilled: "50000000000",
+        });
+        return rawRows as MonthlyCtrRow[];
+      },
     });
-    const [rawRows] = await bigQuery.query({
-      query: monthlyCtrSql(months.queryMonths),
-      location: "EU",
-      maximumBytesBilled: "50000000000",
-    });
-    const rows = rawRows as MonthlyCtrRow[];
     monthlyCtrCache = {
       key,
       expiresAt: Date.now() + CTR_CACHE_TTL_MS,
@@ -442,19 +450,26 @@ async function readProductPerformance(today: string): Promise<{
     };
   }
   try {
-    const bigQuery = new BigQuery({
-      projectId: process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
-    });
-    const [rawRows] = await bigQuery.query({
-      query: productPerformanceSql(),
-      params: {
-        dateFrom: range.from.replaceAll("-", ""),
-        dateTo: range.to.replaceAll("-", ""),
+    const rows = await readThroughBigQueryCache<ProductPerformanceRow[]>({
+      namespace: "product-dashboard-performance",
+      key: `v1:${today}:${productEventsTable()}:${key}`,
+      load: async () => {
+        const bigQuery = new BigQuery({
+          projectId:
+            process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
+        });
+        const [rawRows] = await bigQuery.query({
+          query: productPerformanceSql(),
+          params: {
+            dateFrom: range.from.replaceAll("-", ""),
+            dateTo: range.to.replaceAll("-", ""),
+          },
+          location: "EU",
+          maximumBytesBilled: "50000000000",
+        });
+        return rawRows as ProductPerformanceRow[];
       },
-      location: "EU",
-      maximumBytesBilled: "50000000000",
     });
-    const rows = rawRows as ProductPerformanceRow[];
     productPerformanceCache = {
       key,
       expiresAt: Date.now() + CTR_CACHE_TTL_MS,
@@ -521,21 +536,28 @@ async function readCtr(
     return ctrCache.value;
 
   try {
-    const bigQuery = new BigQuery({
-      projectId: process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
-    });
-    const [rawRows] = await bigQuery.query({
-      query: bigQuerySql(),
-      params: {
-        currentFrom: ranges.currentFrom.replaceAll("-", ""),
-        currentTo: ranges.currentTo.replaceAll("-", ""),
-        previousFrom: ranges.previousFrom.replaceAll("-", ""),
-        previousTo: ranges.previousTo.replaceAll("-", ""),
+    const rows = await readThroughBigQueryCache<CtrRow[]>({
+      namespace: "product-dashboard-ctr",
+      key: `v1:${today}:${productEventsTable()}:${key}`,
+      load: async () => {
+        const bigQuery = new BigQuery({
+          projectId:
+            process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
+        });
+        const [rawRows] = await bigQuery.query({
+          query: bigQuerySql(),
+          params: {
+            currentFrom: ranges.currentFrom.replaceAll("-", ""),
+            currentTo: ranges.currentTo.replaceAll("-", ""),
+            previousFrom: ranges.previousFrom.replaceAll("-", ""),
+            previousTo: ranges.previousTo.replaceAll("-", ""),
+          },
+          location: "EU",
+          maximumBytesBilled: "50000000000",
+        });
+        return rawRows as CtrRow[];
       },
-      location: "EU",
-      maximumBytesBilled: "50000000000",
     });
-    const rows = rawRows as CtrRow[];
     const productByRef = new Map(
       products.map((product) => [product.goodsRef, product]),
     );

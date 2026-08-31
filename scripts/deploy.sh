@@ -100,6 +100,19 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   else
     echo "  PROMOTIONS_SNAPSHOT_DIR not set — using app-local data/promotion-snapshots"
   fi
+  BIGQUERY_CACHE_DIR="${BIGQUERY_RESULT_CACHE_DIR:-}"
+  if [ -z "$BIGQUERY_CACHE_DIR" ] && [ -f ".env" ]; then
+    BIGQUERY_CACHE_DIR=$(awk -F= '/^BIGQUERY_RESULT_CACHE_DIR=/{print substr($0, index($0, "=") + 1)}' .env | tail -1)
+  fi
+  if [ -z "$BIGQUERY_CACHE_DIR" ] && [ -n "$SNAPSHOT_DIR" ]; then
+    BIGQUERY_CACHE_DIR="$(dirname "$SNAPSHOT_DIR")/bigquery-cache"
+  fi
+  if [ -n "$BIGQUERY_CACHE_DIR" ]; then
+    mkdir -p "$BIGQUERY_CACHE_DIR"
+    echo "  BigQuery result cache dir: $BIGQUERY_CACHE_DIR"
+  else
+    echo "  BIGQUERY_RESULT_CACHE_DIR not set — using app-local data/bigquery-cache"
+  fi
 
   CURRENT_STEP="npm run build"
   echo "▸ $CURRENT_STEP"
