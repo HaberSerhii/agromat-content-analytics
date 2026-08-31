@@ -114,7 +114,13 @@ function QueryProcessingModal({
   } | null>(null);
   const idds = useMemo(
     () =>
-      [...new Set(iddText.split(/[^0-9]+/).map(Number).filter(Number.isSafeInteger))],
+      [...new Set(
+        iddText
+          .split(/[^0-9]+/)
+          .filter(Boolean)
+          .map(Number)
+          .filter((value) => Number.isSafeInteger(value) && value > 0),
+      )],
     [iddText],
   );
 

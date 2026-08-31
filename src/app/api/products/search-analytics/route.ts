@@ -122,7 +122,11 @@ export async function POST(request: Request) {
   const queryUk = String(body.queryUk || "").trim();
   const queryRu = String(body.queryRu || "").trim();
   const idds = Array.isArray(body.idds)
-    ? [...new Set(body.idds.map(Number).filter(Number.isSafeInteger))]
+    ? [...new Set(
+      body.idds
+        .map(Number)
+        .filter((value) => Number.isSafeInteger(value) && value > 0),
+    )]
     : [];
   if (!query || !queryUk || !queryRu || !isContentReviewManager(body.manager))
     return NextResponse.json({ error: "Заповніть запити та менеджера" }, { status: 400 });
