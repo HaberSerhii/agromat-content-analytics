@@ -46,6 +46,7 @@ type DashboardFilters = {
 type MonthlyCtrRow = {
   month: string | { value?: string } | null;
   goods_ref: number | string | null;
+  item_category3: string | null;
   impressions: number | string | null;
   clicks: number | string | null;
   product_views: number | string | null;
@@ -191,6 +192,19 @@ function lastDayOfMonth(month: string) {
   return new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
 }
 
+function productEventsTable() {
+  const project = (
+    process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413"
+  ).replace(/`/g, "");
+  const dataset = (
+    process.env.BIGQUERY_DATASET_ID || "analytics_321347682"
+  ).replace(/`/g, "");
+  const table = (
+    process.env.BIGQUERY_PRODUCT_EVENTS_TABLE || "items_detailed_events"
+  ).replace(/`/g, "");
+  return `\`${project}.${dataset}.${table}\``;
+}
+
 function median(values: number[]) {
   if (!values.length) return 0;
   const sorted = [...values].sort((left, right) => left - right);
@@ -228,37 +242,33 @@ function categoryCtrMonths(today: string) {
 }
 
 function monthlyCtrSql() {
-  const project = (
-    process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413"
-  ).replace(/`/g, "");
-  const dataset = (
-    process.env.BIGQUERY_DATASET_ID || "analytics_321347682"
-  ).replace(/`/g, "");
   return `
 WITH item_events AS (
   SELECT
-    FORMAT_DATE('%Y-%m', PARSE_DATE('%Y%m%d', event_date)) AS month,
+    FORMAT_DATE('%Y-%m', event_date) AS month,
     event_name,
-    SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) AS goods_ref
-  FROM \`${project}.${dataset}.events_*\`
-  CROSS JOIN UNNEST(items) AS item
+    SAFE_CAST(NULLIF(TRIM(item_id), '') AS INT64) AS goods_ref,
+    NULLIF(TRIM(item_category3), '') AS item_category3
+  FROM ${productEventsTable()}
   WHERE (
-      _TABLE_SUFFIX BETWEEN @currentFrom AND @currentTo
-      OR _TABLE_SUFFIX BETWEEN @lastYearFrom AND @lastYearTo
+      event_date BETWEEN PARSE_DATE('%Y%m%d', @currentFrom)
+        AND PARSE_DATE('%Y%m%d', @currentTo)
+      OR event_date BETWEEN PARSE_DATE('%Y%m%d', @lastYearFrom)
+        AND PARSE_DATE('%Y%m%d', @lastYearTo)
     )
-    AND event_name IN ('view_item_list', 'select_item', 'view_item', 'add_to_cart')
-    AND geo.country = 'Ukraine'
+    AND event_name IN ('view_item_list', 'view_item', 'add_to_cart')
 )
 SELECT
   month,
   goods_ref,
+  item_category3,
   COUNTIF(event_name = 'view_item_list') AS impressions,
-  COUNTIF(event_name = 'select_item') AS clicks,
+  COUNTIF(event_name = 'view_item') AS clicks,
   COUNTIF(event_name = 'view_item') AS product_views,
   COUNTIF(event_name = 'add_to_cart') AS add_to_cart
 FROM item_events
 WHERE goods_ref IS NOT NULL
-GROUP BY month, goods_ref
+GROUP BY month, goods_ref, item_category3
 `;
 }
 
@@ -317,27 +327,20 @@ function rollingThirtyDays(today: string) {
 }
 
 function productPerformanceSql() {
-  const project = (
-    process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413"
-  ).replace(/`/g, "");
-  const dataset = (
-    process.env.BIGQUERY_DATASET_ID || "analytics_321347682"
-  ).replace(/`/g, "");
   return `
 WITH item_events AS (
   SELECT
     event_name,
-    SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) AS goods_ref
-  FROM \`${project}.${dataset}.events_*\`
-  CROSS JOIN UNNEST(items) AS item
-  WHERE _TABLE_SUFFIX BETWEEN @dateFrom AND @dateTo
-    AND event_name IN ('view_item_list', 'select_item', 'view_item', 'add_to_cart')
-    AND geo.country = 'Ukraine'
+    SAFE_CAST(NULLIF(TRIM(item_id), '') AS INT64) AS goods_ref
+  FROM ${productEventsTable()}
+  WHERE event_date BETWEEN PARSE_DATE('%Y%m%d', @dateFrom)
+      AND PARSE_DATE('%Y%m%d', @dateTo)
+    AND event_name IN ('view_item_list', 'view_item', 'add_to_cart')
 )
 SELECT
   goods_ref,
   COUNTIF(event_name = 'view_item_list') AS impressions,
-  COUNTIF(event_name = 'select_item') AS clicks,
+  COUNTIF(event_name = 'view_item') AS clicks,
   COUNTIF(event_name = 'view_item') AS product_views,
   COUNTIF(event_name = 'add_to_cart') AS add_to_cart
 FROM item_events
@@ -396,47 +399,30 @@ async function readProductPerformance(today: string): Promise<{
 }
 
 function bigQuerySql() {
-  const project = (
-    process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413"
-  ).replace(/`/g, "");
-  const dataset = (
-    process.env.BIGQUERY_DATASET_ID || "analytics_321347682"
-  ).replace(/`/g, "");
   return `
-WITH periods AS (
-  SELECT 'current' AS period, @currentFrom AS suffix_from, @currentTo AS suffix_to
-  UNION ALL
-  SELECT 'previous' AS period, @previousFrom AS suffix_from, @previousTo AS suffix_to
-),
-events AS (
+WITH item_events AS (
   SELECT
     CASE
-      WHEN _TABLE_SUFFIX BETWEEN @currentFrom AND @currentTo THEN 'current'
+      WHEN event_date BETWEEN PARSE_DATE('%Y%m%d', @currentFrom)
+          AND PARSE_DATE('%Y%m%d', @currentTo) THEN 'current'
       ELSE 'previous'
     END AS period,
     event_name,
-    items
-  FROM \`${project}.${dataset}.events_*\`
+    SAFE_CAST(NULLIF(TRIM(item_id), '') AS INT64) AS goods_ref
+  FROM ${productEventsTable()}
   WHERE (
-      _TABLE_SUFFIX BETWEEN @currentFrom AND @currentTo
-      OR _TABLE_SUFFIX BETWEEN @previousFrom AND @previousTo
+      event_date BETWEEN PARSE_DATE('%Y%m%d', @currentFrom)
+        AND PARSE_DATE('%Y%m%d', @currentTo)
+      OR event_date BETWEEN PARSE_DATE('%Y%m%d', @previousFrom)
+        AND PARSE_DATE('%Y%m%d', @previousTo)
     )
-    AND event_name IN ('view_item_list', 'select_item')
-    AND geo.country = 'Ukraine'
-),
-item_events AS (
-  SELECT
-    period,
-    event_name,
-    SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) AS goods_ref
-  FROM events
-  CROSS JOIN UNNEST(items) AS item
+    AND event_name IN ('view_item_list', 'view_item')
 )
 SELECT
   period,
   goods_ref,
   COUNTIF(event_name = 'view_item_list') AS impressions,
-  COUNTIF(event_name = 'select_item') AS clicks
+  COUNTIF(event_name = 'view_item') AS clicks
 FROM item_events
 WHERE goods_ref IS NOT NULL
 GROUP BY period, goods_ref
@@ -811,23 +797,6 @@ async function buildDashboard(input: DashboardFilters) {
     const ctrDataset = await readMonthlyCtr(today);
     categoryCtrAvailable = ctrDataset.available;
     categoryCtrError = ctrDataset.error || "";
-    const ctrByRefMonth = new Map<
-      string,
-      {
-        impressions: number;
-        clicks: number;
-        productViews: number;
-        addToCart: number;
-      }
-    >();
-    for (const row of ctrDataset.rows) {
-      ctrByRefMonth.set(`${scalar(row.goods_ref)}:${monthScalar(row.month)}`, {
-        impressions: scalar(row.impressions),
-        clicks: scalar(row.clicks),
-        productViews: scalar(row.product_views),
-        addToCart: scalar(row.add_to_cart),
-      });
-    }
     const monthConfig = categoryCtrMonths(today);
     const byCategory = new Map<number, ProductLite[]>();
     for (const product of filtered) {
@@ -837,32 +806,81 @@ async function buildDashboard(input: DashboardFilters) {
     }
     const pct = (value: number, total: number) =>
       total ? Math.round((value / total) * 1000) / 10 : 0;
-    const categoryCtr = (rows: ProductLite[], month: string) => {
+    const selectedCategoryRefs =
+      filters.categoryId == null
+        ? null
+        : new Set(
+            products
+              .filter((product) => product.categoryId === filters.categoryId)
+              .map((product) => product.goodsRef),
+          );
+    const category3Scores = new Map<
+      string,
+      { products: Set<number>; impressions: number; productViews: number }
+    >();
+    if (selectedCategoryRefs) {
+      for (const row of ctrDataset.rows) {
+        const goodsRef = scalar(row.goods_ref);
+        const category3 = String(row.item_category3 || "").trim();
+        if (!category3 || !selectedCategoryRefs.has(goodsRef)) continue;
+        const score = category3Scores.get(category3) || {
+          products: new Set<number>(),
+          impressions: 0,
+          productViews: 0,
+        };
+        score.products.add(goodsRef);
+        score.impressions += scalar(row.impressions);
+        score.productViews += scalar(row.product_views);
+        category3Scores.set(category3, score);
+      }
+    }
+    const historicalCategory3 = [...category3Scores.entries()].sort(
+      (left, right) =>
+        right[1].products.size - left[1].products.size ||
+        right[1].impressions - left[1].impressions ||
+        right[1].productViews - left[1].productViews,
+    )[0]?.[0];
+    const filteredRefs = new Set(filtered.map((product) => product.goodsRef));
+    const restrictSummaryToCurrentRefs =
+      !historicalCategory3 ||
+      filters.brandId != null ||
+      filters.statusId != null;
+    const summaryMetric = (month: string) => {
       let impressions = 0;
-      let clicks = 0;
       let productViews = 0;
       let addToCart = 0;
-      for (const product of rows) {
-        const metric = ctrByRefMonth.get(`${product.goodsRef}:${month}`);
-        if (!metric) continue;
-        impressions += metric.impressions;
-        clicks += metric.clicks;
-        productViews += metric.productViews;
-        addToCart += metric.addToCart;
+      for (const row of ctrDataset.rows) {
+        if (monthScalar(row.month) !== month) continue;
+        if (
+          historicalCategory3 &&
+          String(row.item_category3 || "").trim() !== historicalCategory3
+        )
+          continue;
+        if (
+          restrictSummaryToCurrentRefs &&
+          !filteredRefs.has(scalar(row.goods_ref))
+        )
+          continue;
+        impressions += scalar(row.impressions);
+        productViews += scalar(row.product_views);
+        addToCart += scalar(row.add_to_cart);
       }
-      return {
-        impressions,
-        clicks,
-        productViews,
-        addToCart,
-        pdpCtr: impressions > 0 ? (clicks / impressions) * 100 : null,
-        atcCtr: productViews > 0 ? (addToCart / productViews) * 100 : null,
-      };
+      return { impressions, productViews, addToCart };
     };
     const series = (months: string[]) =>
       months.map((month) => {
-        const values = categoryCtr(filtered, month);
-        return { month, pdpCtr: values.pdpCtr, atcCtr: values.atcCtr };
+        const values = summaryMetric(month);
+        return {
+          month,
+          pdpCtr:
+            values.impressions > 0
+              ? (values.productViews / values.impressions) * 100
+              : null,
+          atcCtr:
+            values.productViews > 0
+              ? (values.addToCart / values.productViews) * 100
+              : null,
+        };
       });
     categoryCtrSummary = {
       currentThree: series(monthConfig.currentThree),
@@ -992,12 +1010,18 @@ async function buildDashboard(input: DashboardFilters) {
       }
     >();
     for (const row of monthlyDataset.rows) {
-      monthlyByRef.set(`${scalar(row.goods_ref)}:${monthScalar(row.month)}`, {
-        impressions: scalar(row.impressions),
-        clicks: scalar(row.clicks),
-        productViews: scalar(row.product_views),
-        addToCart: scalar(row.add_to_cart),
-      });
+      const key = `${scalar(row.goods_ref)}:${monthScalar(row.month)}`;
+      const metric = monthlyByRef.get(key) || {
+        impressions: 0,
+        clicks: 0,
+        productViews: 0,
+        addToCart: 0,
+      };
+      metric.impressions += scalar(row.impressions);
+      metric.clicks += scalar(row.clicks);
+      metric.productViews += scalar(row.product_views);
+      metric.addToCart += scalar(row.add_to_cart);
+      monthlyByRef.set(key, metric);
     }
     const contentFor = (product: ProductLite) => {
       const required = requiredAttrs[String(product.categoryId)] || [];
