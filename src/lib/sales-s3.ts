@@ -1320,6 +1320,44 @@ export async function readCompletedSalesProductQuantities(input: {
   return quantities;
 }
 
+export async function readUniqueSalesDocumentsForProductGroups(input: {
+  from: string;
+  to: string;
+  groups: Array<{ key: string; productCodes: number[] }>;
+}): Promise<{ total: number; byKey: Map<string, number> }> {
+  const { rows } = await readCachedSalesRows();
+  const normalizedFrom = normalizeDateFilter(input.from) || input.from;
+  const normalizedTo = normalizeDateFilter(input.to) || input.to;
+  const rangeFrom = normalizedFrom <= normalizedTo ? normalizedFrom : normalizedTo;
+  const rangeTo = normalizedFrom <= normalizedTo ? normalizedTo : normalizedFrom;
+  const groupCodes = new Map(
+    input.groups.map((group) => [group.key, new Set(group.productCodes)]),
+  );
+  const documentsByKey = new Map(
+    input.groups.map((group) => [group.key, new Set<string>()]),
+  );
+  const allDocuments = new Set<string>();
+
+  for (const row of rows) {
+    if (!isShipped(row) || !row.shippedDate || isExcludedAnalyticsOrder(row)) continue;
+    if (row.shippedDate < rangeFrom || row.shippedDate > rangeTo) continue;
+    const documentKey = row.docsRef || row.number;
+    if (!documentKey) continue;
+    for (const [key, codes] of groupCodes) {
+      if (!row.goodsCodeNumbers.some((code) => codes.has(code))) continue;
+      documentsByKey.get(key)?.add(documentKey);
+      allDocuments.add(documentKey);
+    }
+  }
+
+  return {
+    total: allDocuments.size,
+    byKey: new Map(
+      [...documentsByKey].map(([key, documents]) => [key, documents.size]),
+    ),
+  };
+}
+
 function canonicalPromotionSalesStatus(value: string): PromotionSalesStatus | null {
   const normalized = value.toLocaleLowerCase("uk").trim();
   if (normalized.includes("повністю відвантаж")) return "Повністю відвантажений";

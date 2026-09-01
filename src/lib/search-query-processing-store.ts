@@ -1,5 +1,8 @@
 import { getRedis } from "@/lib/redis";
-import type { SearchQueryProcessing } from "@/lib/search-analytics-types";
+import type {
+  SearchQueryExclusionReason,
+  SearchQueryProcessing,
+} from "@/lib/search-analytics-types";
 
 const STORE_KEY = "products:search-query-processing:v1";
 const DISCOVERY_KEY = "products:search-query-discovery:v1";
@@ -9,6 +12,7 @@ const SHEET_REVISION_KEY = "products:search-query-sheet-revision:v1";
 export interface SearchQueryExclusion {
   queryKey: string;
   originalQuery: string;
+  reason: SearchQueryExclusionReason;
   excludedAt: string;
 }
 
@@ -54,11 +58,12 @@ export async function listSearchQueryExclusions(): Promise<
 export async function excludeSearchQueries(
   queryKeys: string[],
   originalQuery: string,
+  reason: SearchQueryExclusionReason = "deleted",
 ): Promise<void> {
   const current = await listSearchQueryExclusions();
   const excludedAt = new Date().toISOString();
   for (const queryKey of [...new Set(queryKeys.filter(Boolean))]) {
-    current[queryKey] = { queryKey, originalQuery, excludedAt };
+    current[queryKey] = { queryKey, originalQuery, reason, excludedAt };
   }
   await getRedis().set(EXCLUSION_KEY, JSON.stringify(current));
 }

@@ -14,16 +14,26 @@ import {
 import { syncSearchQueryToGoogleSheet } from "@/lib/multisearch-google-sheet";
 import type {
   SearchAnalyticsResponse,
+  SearchQueryExclusionReason,
   SearchQueryProcessing,
   SearchQueryProduct,
 } from "@/lib/search-analytics-types";
 import { readAllLite } from "@/lib/products-store";
+import { captureContentReviewMetrics } from "@/lib/content-review-metrics";
+import { contentReviewMetricWindow, kyivDate } from "@/lib/content-reviews-store";
 
 export const dynamic = "force-dynamic";
 
 function integer(value: string | null, fallback: number): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function average(values: Array<number | null>): number | null {
+  const present = values.filter((value): value is number => value != null);
+  return present.length
+    ? present.reduce((sum, value) => sum + value, 0) / present.length
+    : null;
 }
 
 export async function GET(request: Request) {
@@ -152,14 +162,25 @@ export async function POST(request: Request) {
       previous?.queryUk || "",
       previous?.queryRu || "",
     ].map(normalizeSearchQuery).filter(Boolean))];
+    const now = new Date().toISOString();
+    const updateDate = kyivDate(new Date(now));
+    const baselineWindow = contentReviewMetricWindow(updateDate);
+    const baselinePromise = captureContentReviewMetrics(
+      selected.map((item) => item.goodsRef),
+      updateDate,
+      "rolling",
+    ).catch(() => null);
     const sheet = await syncSearchQueryToGoogleSheet({
       matchQueries: aliasKeys,
       queryUk,
       queryRu,
       goodsRefs: selected.map((item) => item.goodsRef),
     });
+    const baselineMetrics = await baselinePromise;
     await bumpSearchSheetRevision();
-    const now = new Date().toISOString();
+    const baselineRows = selected
+      .map((item) => baselineMetrics?.get(item.goodsRef))
+      .filter(Boolean);
     const processing: SearchQueryProcessing = {
       queryKey: normalizeSearchQuery(query),
       aliasKeys,
@@ -180,6 +201,18 @@ export async function POST(request: Request) {
       source: "dashboard-sync",
       sheetSynced: true,
       sheetRow: sheet.rowNumber,
+      controlBefore: baselineMetrics
+        ? {
+            impressions: baselineRows.reduce(
+              (sum, metrics) => sum + (metrics?.impressions || 0),
+              0,
+            ),
+            ctr: average(baselineRows.map((metrics) => metrics?.ctr ?? null)),
+            atc: average(baselineRows.map((metrics) => metrics?.atc ?? null)),
+            periodFrom: baselineWindow.from,
+            periodTo: baselineWindow.to,
+          }
+        : undefined,
       processedAt: previous?.processedAt || now,
       updatedAt: now,
     };
@@ -205,14 +238,18 @@ export async function DELETE(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     query?: unknown;
     aliases?: unknown;
+    reason?: unknown;
   };
   const query = String(body.query || "").trim();
   const aliases = Array.isArray(body.aliases)
     ? body.aliases.map((item) => String(item || ""))
     : [];
   const queryKeys = [...new Set([query, ...aliases].map(normalizeSearchQuery).filter(Boolean))];
+  const reason: SearchQueryExclusionReason = body.reason === "brand-not-found"
+    ? "brand-not-found"
+    : "deleted";
   if (!queryKeys.length)
     return NextResponse.json({ error: "Пошуковий запит не вказаний" }, { status: 400 });
-  await excludeSearchQueries(queryKeys, query);
-  return NextResponse.json({ excluded: true, queryKeys });
+  await excludeSearchQueries(queryKeys, query, reason);
+  return NextResponse.json({ excluded: true, queryKeys, reason });
 }

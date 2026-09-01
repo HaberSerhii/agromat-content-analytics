@@ -8,6 +8,7 @@ import {
 import type {
   SearchAnalyticsResponse,
   SearchAnalyticsRow,
+  SearchQueryExclusionReason,
   SearchQueryStatus,
 } from "@/lib/search-analytics-types";
 
@@ -78,6 +79,16 @@ const STATUS_META: Record<
     label: "Ідентифікатор / сміття",
     color: "#68737e",
     background: "#eef1f3",
+  },
+  deleted: {
+    label: "Видалено",
+    color: "#b23a46",
+    background: "#fff0f1",
+  },
+  "brand-not-found": {
+    label: "Бренд не знайдено",
+    color: "#a56a0b",
+    background: "#fff6e5",
   },
 };
 
@@ -338,10 +349,10 @@ export function SearchAnalyticsPanel() {
   const [source, setSource] = useState("all");
   const [result, setResult] = useState("no-results");
   const [manager, setManager] = useState("all");
-  const [minCount, setMinCount] = useState("1");
+  const [minCount, setMinCount] = useState("");
   const [selected, setSelected] = useState<SearchAnalyticsRow | null>(null);
   const [stockDetails, setStockDetails] = useState<SearchAnalyticsRow | null>(null);
-  const [deletingKey, setDeletingKey] = useState("");
+  const [excludingKey, setExcludingKey] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -377,13 +388,42 @@ export function SearchAnalyticsPanel() {
     void load();
   }, [load]);
   useEffect(() => setPage(1), [manager, minCount, result, search, source, status]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const nextSearch = searchDraft.trim();
+      setSearch(nextSearch);
+      if (nextSearch) {
+        setStatus("all");
+        setResult("all");
+        setSource("all");
+        setMinCount("");
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
 
-  const exclude = async (row: SearchAnalyticsRow) => {
+  const applySearch = () => {
+    const nextSearch = searchDraft.trim();
+    setSearch(nextSearch);
+    if (nextSearch) {
+      setStatus("all");
+      setResult("all");
+      setSource("all");
+      setMinCount("");
+    }
+  };
+
+  const exclude = async (
+    row: SearchAnalyticsRow,
+    reason: SearchQueryExclusionReason,
+  ) => {
     const confirmed = window.confirm(
-      `Приховати запит «${row.query}» назавжди з цього дашборда? Рядок у Google Sheets видалено не буде.`,
+      reason === "brand-not-found"
+        ? `Позначити «${row.query}» як бренд, якого немає на сайті? Запит зникне з черги, але залишиться у відповідному фільтрі.`
+        : `Перемістити запит «${row.query}» до видалених? Рядок у Google Sheets видалено не буде.`,
     );
     if (!confirmed) return;
-    setDeletingKey(row.key);
+    setExcludingKey(`${row.key}:${reason}`);
     setError("");
     try {
       const response = await fetch("/api/products/search-analytics", {
@@ -392,6 +432,7 @@ export function SearchAnalyticsPanel() {
         body: JSON.stringify({
           query: row.query,
           aliases: [...row.aliases, row.queryUk, row.queryRu],
+          reason,
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as { error?: string };
@@ -400,7 +441,7 @@ export function SearchAnalyticsPanel() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не вдалося приховати запит");
     } finally {
-      setDeletingKey("");
+      setExcludingKey("");
     }
   };
 
@@ -462,18 +503,25 @@ export function SearchAnalyticsPanel() {
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              setSearch(searchDraft.trim());
+              applySearch();
             }}
-            className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_repeat(5,minmax(130px,1fr))]"
+            className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(260px,1.5fr)_repeat(4,minmax(145px,1fr))_170px]"
           >
-            <input
-              value={searchDraft}
-              onChange={(event) => setSearchDraft(event.target.value)}
-              placeholder="Знайти пошуковий запит…"
-              className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[10px] outline-none focus:border-[#118dff]"
-            />
+            <div className="flex min-w-0">
+              <input
+                value={searchDraft}
+                onChange={(event) => setSearchDraft(event.target.value)}
+                placeholder="Знайти запит у всьому дашборді…"
+                className="min-w-0 flex-1 rounded-l-xl border border-r-0 border-[#d8dde3] bg-white px-3 py-2.5 text-[10px] outline-none focus:border-[#118dff]"
+              />
+              <button type="submit" className="rounded-r-xl bg-[#118dff] px-3 text-[9px] font-black text-white">
+                Знайти
+              </button>
+            </div>
             <select value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[10px] font-bold text-[#596571]">
               <option value="new">До обробки</option>
+              <option value="deleted">До обробки · Видалені</option>
+              <option value="brand-not-found">До обробки · Не знайдений бренд</option>
               <option value="processed">Опрацьовані</option>
               <option value="garbage">Ідентифікатори / сміття</option>
               <option value="all">Усі статуси</option>
@@ -494,14 +542,17 @@ export function SearchAnalyticsPanel() {
               <option value="all">Усі менеджери</option>
               {CONTENT_REVIEW_MANAGERS.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
-            <input
-              type="number"
-              min="0"
-              value={minCount}
-              onChange={(event) => setMinCount(event.target.value)}
-              placeholder="Пошуків від"
-              className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[10px] outline-none focus:border-[#118dff]"
-            />
+            <label className="flex items-center gap-2 rounded-xl border border-[#d8dde3] bg-white px-3 text-[9px] font-bold text-[#7d8892]">
+              Мін. к-сть
+              <input
+                type="number"
+                min="0"
+                value={minCount}
+                onChange={(event) => setMinCount(event.target.value)}
+                placeholder="0"
+                className="min-w-0 flex-1 border-0 bg-transparent py-2.5 text-[10px] font-black text-[#45515d] outline-none"
+              />
+            </label>
           </form>
         </div>
         {error && <div className="border-b border-[#f0b6b6] bg-[#fff1f1] p-3 text-[10px] font-bold text-[#b73535]">{error}</div>}
@@ -513,7 +564,6 @@ export function SearchAnalyticsPanel() {
                 <th className="px-4 py-3">Пошуковий запит</th>
                 <th className="px-3 py-3">Джерела</th>
                 <th className="px-3 py-3 text-center" title="Загальна кількість виконаних пошуків за вибраний період">К-сть пошукових запитів</th>
-                <th className="px-3 py-3 text-center" title="Кількість пошуків, у яких Multisearch не показав жодного товару">MS без результатів</th>
                 <th className="px-3 py-3">Перша поява</th>
                 <th className="px-3 py-3">Менеджер</th>
                 <th className="px-3 py-3 text-center">Товари</th>
@@ -538,13 +588,23 @@ export function SearchAnalyticsPanel() {
                         </button>
                         <button
                           type="button"
-                          title="Назавжди приховати запит із дашборда"
-                          aria-label={`Видалити запит ${row.query}`}
-                          disabled={deletingKey === row.key}
-                          onClick={() => void exclude(row)}
-                          className="ml-auto shrink-0 rounded-md border border-[#f0c6ca] bg-[#fff4f5] px-2 py-1 text-[9px] font-black text-[#c64753] hover:bg-[#ffe9eb] disabled:opacity-40"
+                          title="Бренду немає на сайті"
+                          aria-label={`Бренду немає на сайті: ${row.query}`}
+                          disabled={Boolean(excludingKey)}
+                          onClick={() => void exclude(row, "brand-not-found")}
+                          className="ml-auto shrink-0 rounded-md border border-[#eed49f] bg-[#fff8e8] px-2 py-1 text-[8px] font-black text-[#a56a0b] hover:bg-[#fff1cf] disabled:opacity-40"
                         >
-                          {deletingKey === row.key ? "…" : "✕"}
+                          {excludingKey === `${row.key}:brand-not-found` ? "…" : "Бренд 0"}
+                        </button>
+                        <button
+                          type="button"
+                          title="Перемістити до видалених"
+                          aria-label={`Видалити запит ${row.query}`}
+                          disabled={Boolean(excludingKey)}
+                          onClick={() => void exclude(row, "deleted")}
+                          className="shrink-0 rounded-md border border-[#f0c6ca] bg-[#fff4f5] px-2 py-1 text-[9px] font-black text-[#c64753] hover:bg-[#ffe9eb] disabled:opacity-40"
+                        >
+                          {excludingKey === `${row.key}:deleted` ? "…" : "✕"}
                         </button>
                       </div>
                       {(row.queryUk !== row.queryRu || row.aliases.length > 1) && (
@@ -564,7 +624,6 @@ export function SearchAnalyticsPanel() {
                       <b className="text-[11px] text-[#34404c]">{formatNumber(row.totalSearches)}</b>
                       <div className="mt-1 text-[8px] text-[#929ca5]">BQ {formatNumber(row.bigQueryCount)} · MS {formatNumber(row.multisearchFoundCount)}</div>
                     </td>
-                    <td className="px-3 py-3 text-center text-[11px] font-black text-[#dc5a64]">{formatNumber(row.multisearchNoResultsCount)}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-[10px] font-semibold text-[#596571]">{formatDate(row.firstSeenAt)}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-[9px] font-black text-[#45515d]">{row.manager || "—"}</td>
                     <td className="px-3 py-3 text-center">
@@ -587,10 +646,10 @@ export function SearchAnalyticsPanel() {
                 );
               })}
               {!loading && !data.rows.length && (
-                <tr><td colSpan={8} className="p-12 text-center text-xs text-[#82909d]">Запитів за вибраними умовами не знайдено</td></tr>
+                <tr><td colSpan={7} className="p-12 text-center text-xs text-[#82909d]">Запитів за вибраними умовами не знайдено</td></tr>
               )}
               {loading && !data.rows.length && (
-                <tr><td colSpan={8} className="p-12 text-center text-xs text-[#82909d]">Завантажуємо BigQuery, Multisearch та Google Sheets…</td></tr>
+                <tr><td colSpan={7} className="p-12 text-center text-xs text-[#82909d]">Завантажуємо BigQuery, Multisearch та Google Sheets…</td></tr>
               )}
             </tbody>
           </table>

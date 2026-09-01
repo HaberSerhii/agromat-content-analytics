@@ -25,6 +25,7 @@ type SheetMapping = {
   queryUk: string;
   queryRu: string;
   goodsRefs: number[];
+  rowNumber: number;
 };
 
 type MonthRange = {
@@ -128,13 +129,14 @@ async function loadSheetMappings(cacheDay: string, revision: number): Promise<Sh
       if (!response.ok) throw new Error(`Google Sheets HTTP ${response.status}`);
       return csvRows(await response.text())
         .slice(1)
-        .map((row) => ({
+        .map((row, index) => ({
           queryUk: String(row[0] || "").trim(),
           queryRu: String(row[1] || "").trim(),
           goodsRefs: String(row[2] || "")
             .split(",")
             .map((item) => Number(item.trim()))
             .filter(Number.isSafeInteger),
+          rowNumber: index + 2,
         }))
         .filter((row) => row.queryUk || row.queryRu);
     },
@@ -287,7 +289,9 @@ function emptyRow(key: string, query: string): MutableRow {
     garbageReason: null,
     products: [],
     sheetSynced: false,
+    sheetRow: null,
     processedAt: null,
+    updatedAt: null,
   };
 }
 
@@ -405,6 +409,7 @@ export async function buildSearchAnalyticsDataset(): Promise<{
     row.sources.push("google-sheet");
     row.status = "processed";
     row.sheetSynced = true;
+    row.sheetRow = mapping.rowNumber;
     row.products = mapping.goodsRefs
       .map((goodsRef) => byGoodsRef.get(goodsRef))
       .filter((item): item is ProductLite => Boolean(item))
@@ -510,9 +515,16 @@ export async function buildSearchAnalyticsDataset(): Promise<{
     });
   }
 
-  const visibleRows = [...rows.values()].filter(
-    (row) => ![...row.aliasSet].some((alias) => Boolean(exclusions[alias])),
-  );
+  const visibleRows = [...rows.values()];
+  for (const row of visibleRows) {
+    const exclusion = [...row.aliasSet]
+      .map((alias) => exclusions[alias])
+      .find(Boolean);
+    if (!exclusion) continue;
+    row.status = exclusion.reason === "brand-not-found"
+      ? "brand-not-found"
+      : "deleted";
+  }
 
   return {
     rows: visibleRows.map((row) => {
@@ -542,13 +554,33 @@ function applyProcessing(row: MutableRow, stored: SearchQueryProcessing) {
   row.queryRu = stored.queryRu;
   row.products = stored.products;
   row.sheetSynced = stored.sheetSynced;
+  row.sheetRow = stored.sheetRow ?? row.sheetRow;
   row.processedAt = stored.processedAt;
+  row.updatedAt = stored.updatedAt;
   if (stored.sheetSynced && !row.sources.includes("google-sheet"))
     row.sources.push("google-sheet");
 }
 
 export function searchAnalyticsPeriod(): { from: string; to: string } {
   return periodRange();
+}
+
+export async function readMultisearchNoResultsCounts(
+  from: string,
+  to: string,
+): Promise<Map<string, number>> {
+  const rows = await loadMultisearchQueries(
+    "no-results",
+    from,
+    to,
+    dateInKyiv(),
+  );
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const key = normalizeSearchQuery(row.query);
+    if (key) counts.set(key, (counts.get(key) || 0) + row.count);
+  }
+  return counts;
 }
 
 export const SEARCH_ANALYTICS_CACHE_TTL_MS = DAY_MS;

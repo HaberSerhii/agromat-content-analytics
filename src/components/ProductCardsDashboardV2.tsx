@@ -12,6 +12,7 @@ import {
 } from "@/lib/content-review-types";
 import type { NewProductAnalysisRow } from "@/lib/new-product-types";
 import { SearchAnalyticsPanel } from "@/components/SearchAnalyticsPanel";
+import { SearchControlPanel } from "@/components/SearchControlPanel";
 
 type FacetRow = { key: string; name: string; count: number };
 type ProductRow = {
@@ -3499,7 +3500,7 @@ export function ProductCardsDashboardV2() {
                     onRefresh={loadNewAssignments}
                   />
                 )}
-                {resultMode === "search" && <SearchAnalyticsPanel />}
+                {resultMode === "search" && <SearchControlPanel />}
                 <div
                   className={`${resultMode === "merchandising" ? "" : "hidden"} overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white`}
                 >

@@ -1,6 +1,5 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import {
-  bigQueryCacheDay,
   readThroughBigQueryCache,
 } from "@/lib/bigquery-result-cache";
 import {
@@ -79,19 +78,26 @@ export async function captureContentReviewMetrics(
   anchorDate: string,
   period: "rolling" | "control" = "rolling",
 ): Promise<Map<number, ContentReviewMetrics>> {
-  const requested = new Set(goodsRefs);
-  if (!requested.size) return new Map();
   const window =
     period === "control"
       ? contentReviewControlWindow(anchorDate)
       : contentReviewMetricWindow(anchorDate);
+  return captureContentReviewMetricsForWindow(goodsRefs, window);
+}
+
+export async function captureContentReviewMetricsForWindow(
+  goodsRefs: number[],
+  window: { from: string; to: string },
+): Promise<Map<number, ContentReviewMetrics>> {
+  const requested = new Set(goodsRefs);
+  if (!requested.size) return new Map();
   const [products, attrIndex, requiredAttrs, rows] = await Promise.all([
     readAllLite(),
     readProductAttributeIndex(),
     readRequiredAttrs(),
     readThroughBigQueryCache<PerformanceRow[]>({
       namespace: "content-review-metrics",
-      key: `v1:${bigQueryCacheDay()}:${productEventsTable()}:${window.from}:${window.to}`,
+      key: `v2:${productEventsTable()}:${window.from}:${window.to}`,
       load: async () => {
         const [queryRows] = await new BigQuery({
           projectId:
