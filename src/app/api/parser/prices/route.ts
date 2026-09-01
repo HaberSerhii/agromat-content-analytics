@@ -210,6 +210,11 @@ function parseIntOr(v: string | null, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function upstreamErrorStatus(error: unknown): number {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /exceed_egress_quota|restricted due to.*egress/i.test(message) ? 402 : 500;
+}
+
 function parseIntList(v: string | null): number[] {
   if (!v) return [];
   return v
@@ -621,7 +626,7 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
   } catch (error) {
     return NextResponse.json({
       error: error instanceof Error ? error.message : "parser_prices_base_failed",
-    }, { status: 500 });
+    }, { status: upstreamErrorStatus(error) });
   }
   const { competitors, lastUpdated, priceChanges } = metadata;
   const effectiveDate = snapshotDate || metadata.latestDate;
@@ -654,7 +659,10 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
         ? await fetchAllActiveProducts(db, search, segment)
         : filterProductRows(dataset.products, search, segment);
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "products_failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "products_failed" },
+      { status: upstreamErrorStatus(e) },
+    );
   }
 
   let notFoundIds: number[] = [];
@@ -676,7 +684,10 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
   try {
     urlOverrides = await fetchUrlOverrides(db, products.map((product) => product.id));
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "url_overrides_failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "url_overrides_failed" },
+      { status: upstreamErrorStatus(e) },
+    );
   }
 
   // 6) Build response rows. Sort by name for predictable order.
@@ -752,7 +763,7 @@ async function pricesResponse(q: URLSearchParams, maxLimit = 200, forceBaseRefre
   });
 }
 
-async function cachedPricesResponse(q: URLSearchParams) {
+async function cachedPricesResponse(q: URLSearchParams, maxLimit = 200) {
   const now = Date.now();
   const forceRefresh = q.get("refresh") === "1";
   const canonicalQuery = new URLSearchParams(q);
@@ -777,7 +788,7 @@ async function cachedPricesResponse(q: URLSearchParams) {
   }
 
   const work = (async () => {
-    const response = await pricesResponse(canonicalQuery, 200, forceRefresh);
+    const response = await pricesResponse(canonicalQuery, maxLimit, forceRefresh);
     const body = await response.json() as CacheableBody;
     if (response.status !== 200) return { body, status: response.status };
     const entry: CacheEntry = {
@@ -798,7 +809,15 @@ async function cachedPricesResponse(q: URLSearchParams) {
 }
 
 export async function GET(request: Request) {
-  return cachedPricesResponse(new URL(request.url).searchParams);
+  const requestUrl = new URL(request.url);
+  const authorization = request.headers.get("authorization") || "";
+  const cronSecret = process.env.CRON_SECRET || "";
+  const internalDashboardRequest = requestUrl.hostname === "internal"
+    && (!cronSecret || authorization === `Bearer ${cronSecret}`);
+  return cachedPricesResponse(
+    requestUrl.searchParams,
+    internalDashboardRequest ? 10_000 : 200,
+  );
 }
 
 export async function POST(request: Request) {

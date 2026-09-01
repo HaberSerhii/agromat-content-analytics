@@ -159,7 +159,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   mkdir -p "$DASHBOARD_CACHE_DIR"
   touch "$DASHBOARD_PREWARM_LOG" 2>/dev/null || true
   chmod +x "$APP_DIR/scripts/prewarm-dashboard-cache.sh"
-  DASHBOARD_PREWARM_CRON_LINE="4,19,34,49 * * * * APP_DIR=$APP_DIR APP_PORT=$APP_PORT DASHBOARD_PREWARM_LOG=$DASHBOARD_PREWARM_LOG $APP_DIR/scripts/prewarm-dashboard-cache.sh"
+  DASHBOARD_PREWARM_CRON_LINE="19 * * * * APP_DIR=$APP_DIR APP_PORT=$APP_PORT DASHBOARD_PREWARM_LOG=$DASHBOARD_PREWARM_LOG $APP_DIR/scripts/prewarm-dashboard-cache.sh"
   echo "$DASHBOARD_PREWARM_CRON_LINE" >> "$TMP_CRON"
   CONTENT_REVIEW_LOG="${CONTENT_REVIEW_LOG:-/tmp/agromat-content-review.log}"
   touch "$CONTENT_REVIEW_LOG" 2>/dev/null || true

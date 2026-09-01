@@ -82,11 +82,8 @@ read -r promotion_week_from promotion_week_to < <(node -e '
     "parser_comparison_default" \
     "http://127.0.0.1:5000/"
   warm_url \
-    "parser_prices_default" \
-    "http://127.0.0.1:${APP_PORT}/api/parser/prices?page=1&limit=50&refresh=1"
-  warm_url \
     "parser_dashboard_v2" \
-    "http://127.0.0.1:${APP_PORT}/api/parser/dashboard-v2?limit=20&refresh=1"
+    "http://127.0.0.1:${APP_PORT}/api/parser/dashboard-v2?limit=20"
   warm_url \
     "sales_compact" \
     "http://127.0.0.1:${APP_PORT}/api/sales?from=${month_start}&to=${today}&compact=1"

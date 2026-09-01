@@ -115,6 +115,16 @@ interface FacetValue {
   count: number;
 }
 
+class ParserPricesError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ParserPricesError";
+  }
+}
+
 interface DashboardBase {
   currentDate: string | null;
   previousDate: string | null;
@@ -292,26 +302,21 @@ async function loadPrices(
   includeAllProducts = false,
   forceRefresh = false,
 ): Promise<PricesPayload> {
-  async function loadPage(page: number): Promise<PricesPayload> {
-    const url = new URL("http://internal/api/parser/prices");
-    url.searchParams.set("page", String(page));
-    url.searchParams.set("limit", "200");
-    if (snapshotDate) url.searchParams.set("snapshot_date", snapshotDate);
-    if (includeAllProducts) url.searchParams.set("include_all", "1");
-    if (forceRefresh && page === 1) url.searchParams.set("refresh", "1");
-    const response = await parserPricesGet(new Request(url));
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`parser_prices_${response.status}:${body.slice(0, 160)}`);
-    }
-    return response.json() as Promise<PricesPayload>;
+  const url = new URL("http://internal/api/parser/prices");
+  url.searchParams.set("page", "1");
+  url.searchParams.set("limit", "10000");
+  if (snapshotDate) url.searchParams.set("snapshot_date", snapshotDate);
+  if (includeAllProducts) url.searchParams.set("include_all", "1");
+  if (forceRefresh) url.searchParams.set("refresh", "1");
+  const authorization = process.env.CRON_SECRET
+    ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
+    : undefined;
+  const response = await parserPricesGet(new Request(url, { headers: authorization }));
+  if (!response.ok) {
+    const body = await response.text();
+    throw new ParserPricesError(response.status, `parser_prices_${response.status}:${body.slice(0, 160)}`);
   }
-
-  const first = await loadPage(1);
-  const pageCount = Math.ceil(first.total / 200);
-  if (pageCount <= 1) return first;
-  const rest = await Promise.all(Array.from({ length: pageCount - 1 }, (_, index) => loadPage(index + 2)));
-  return { ...first, rows: [first, ...rest].flatMap((payload) => payload.rows) };
+  return response.json() as Promise<PricesPayload>;
 }
 
 async function fetchAllProducts(): Promise<ProductRow[]> {
@@ -657,6 +662,6 @@ export async function GET(request: Request) {
   } catch (error) {
     return NextResponse.json({
       error: error instanceof Error ? error.message : "parser_dashboard_v2_failed",
-    }, { status: 500 });
+    }, { status: error instanceof ParserPricesError ? error.status : 500 });
   }
 }
