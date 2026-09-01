@@ -188,8 +188,10 @@ function countSegments(
   predicate: (product: ProductLite) => boolean,
 ) {
   const result = { tile: 0, sanitary: 0 };
+  const countedIds = new Set<number>();
   for (const product of products) {
-    if (!predicate(product)) continue;
+    if (countedIds.has(product.id) || !predicate(product)) continue;
+    countedIds.add(product.id);
     result[segmentOf(product)]++;
   }
   return result;
@@ -208,6 +210,30 @@ function metric(
 
 function isInactive(product: ProductLite) {
   return product.deleted || (product.statusId !== 5 && product.statusId !== 3);
+}
+
+function isActiveStatusId(statusId: number) {
+  return statusId === 5 || statusId === 3;
+}
+
+function transitionedToInactiveInRange(
+  product: ProductLite,
+  from: string,
+  to: string,
+) {
+  return product.statusHistory.some(
+    (change) =>
+      inDateRange(change.at, from, to) &&
+      isActiveStatusId(change.from) &&
+      !isActiveStatusId(change.to),
+  );
+}
+
+function previousCalendarDate(date: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day - 1))
+    .toISOString()
+    .slice(0, 10);
 }
 
 function inDateRange(
@@ -737,24 +763,66 @@ async function buildDashboard(input: DashboardFilters) {
   ]);
   const comparisonDate =
     snapshots.find((snapshot) => snapshot.date < today)?.date || null;
-  const comparisonSnapshot = comparisonDate
-    ? await readDailySnapshot(comparisonDate)
-    : null;
+  const monthBaselineDate = snapshots.find(
+    (snapshot) => snapshot.date < ranges.currentFrom,
+  )?.date;
+  const exactMonthBaselineDate =
+    monthBaselineDate === previousCalendarDate(ranges.currentFrom)
+      ? monthBaselineDate
+      : null;
+  const [comparisonSnapshot, monthBaselineSnapshot] = await Promise.all([
+    comparisonDate ? readDailySnapshot(comparisonDate) : Promise.resolve(null),
+    exactMonthBaselineDate && exactMonthBaselineDate !== comparisonDate
+      ? readDailySnapshot(exactMonthBaselineDate)
+      : Promise.resolve(null),
+  ]);
   const previousProducts = comparisonSnapshot?.products || products;
+  const monthBaselineProducts =
+    exactMonthBaselineDate === comparisonDate
+      ? comparisonSnapshot?.products || []
+      : monthBaselineSnapshot?.products || [];
+  const monthBaselineById = new Map(
+    monthBaselineProducts.map((product) => [product.id, product]),
+  );
   const ctr = await readCtr(products, today);
 
   const currentNew = countSegments(products, (product) =>
+    !product.deleted &&
+    product.statusId === 5 &&
     inDateRange(product.firstSeenAt, ranges.currentFrom, ranges.currentTo),
   );
   const previousNew = countSegments(previousProducts, (product) =>
+    !product.deleted &&
+    product.statusId === 5 &&
     inDateRange(
       product.firstSeenAt,
       ranges.currentFrom,
       comparisonDate || ranges.currentTo,
     ),
   );
-  const currentInactive = countSegments(products, isInactive);
-  const previousInactive = countSegments(previousProducts, isInactive);
+  const currentInactive = countSegments(products, (product) => {
+    if (
+      transitionedToInactiveInRange(
+        product,
+        ranges.currentFrom,
+        ranges.currentTo,
+      )
+    )
+      return true;
+
+    // Compatibility for archive transitions detected before archive events
+    // were written into statusHistory. This is exact only when the snapshot
+    // immediately preceding the month is available.
+    const baseline = monthBaselineById.get(product.id);
+    return Boolean(baseline && !isInactive(baseline) && isInactive(product));
+  });
+  const previousInactive = countSegments(products, (product) =>
+    transitionedToInactiveInRange(
+      product,
+      ranges.previousFrom,
+      ranges.previousTo,
+    ),
+  );
   const currentPromo = countSegments(
     products,
     (product) => !product.deleted && product.isOnSale,

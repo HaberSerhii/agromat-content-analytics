@@ -58,11 +58,24 @@ function toLite(
   brandIdByName: Map<string, number>,
 ): { lite: ProductLite; full: ProductFull; changed: boolean; isNew: boolean } {
   const newStatusId = api.stock?.status?.id ?? 0;
-  const prevStatusId = prev?.statusId;
-  const statusChanged = prev != null && prevStatusId !== newStatusId;
+  // Archive is a real catalog-status transition even though the upstream API
+  // exposes it as a boolean next to stock.status. Track it as pseudo-status -1
+  // in history while keeping ProductLite.statusId equal to the upstream value.
+  const trackedStatusId = api.deleted ? -1 : newStatusId;
+  const prevTrackedStatusId = prev
+    ? prev.deleted
+      ? -1
+      : prev.statusId
+    : undefined;
+  const statusChanged =
+    prevTrackedStatusId != null && prevTrackedStatusId !== trackedStatusId;
   const history: StatusChange[] = prev?.statusHistory ? [...prev.statusHistory] : [];
   if (statusChanged) {
-    history.unshift({ at: syncedAt, from: prevStatusId!, to: newStatusId });
+    history.unshift({
+      at: syncedAt,
+      from: prevTrackedStatusId,
+      to: trackedStatusId,
+    });
     if (history.length > MAX_STATUS_HISTORY) history.length = MAX_STATUS_HISTORY;
   }
 
