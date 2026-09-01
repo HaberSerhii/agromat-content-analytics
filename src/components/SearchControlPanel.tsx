@@ -5,6 +5,7 @@ import { CONTENT_REVIEW_MANAGERS } from "@/lib/content-review-types";
 import type {
   SearchControlResponse,
   SearchControlRow,
+  SearchQueryProduct,
 } from "@/lib/search-analytics-types";
 
 const SHEET_ID = "12LQc7_q7ok9pufQJCNC-rtIYTc4OCdZwsdww_l_xrJc";
@@ -62,7 +63,7 @@ function Score({ value }: { value: number | null }) {
   );
 }
 
-function OutOfStockModal({ row, onClose }: { row: SearchControlRow; onClose: () => void }) {
+function OutOfStockModal({ row, onClose, onOpenProduct }: { row: SearchControlRow; onClose: () => void; onOpenProduct: (product: SearchQueryProduct) => void }) {
   const products = row.products.filter((product) => (product.stockQty || 0) <= 0);
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#17212bcc]/70 p-3 backdrop-blur-sm" onMouseDown={onClose}>
@@ -78,7 +79,7 @@ function OutOfStockModal({ row, onClose }: { row: SearchControlRow; onClose: () 
           {products.map((product) => (
             <div key={product.goodsRef} className="flex items-center justify-between gap-3 p-4">
               <div>
-                <div className="text-[10px] font-black text-[#27313c]">{product.name}</div>
+                <button type="button" onClick={() => onOpenProduct(product)} className="text-left text-[10px] font-black text-[#27313c] hover:text-[#118dff] hover:underline">{product.name}</button>
                 <div className="mt-1 text-[8px] text-[#7d8892]">IDD {product.code} · goods_ref {product.goodsRef}</div>
               </div>
               {product.url && <a href={product.url} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg bg-[#edf6ff] px-3 py-2 text-[9px] font-black text-[#0b6fc2]">Товар ↗</a>}
@@ -90,7 +91,7 @@ function OutOfStockModal({ row, onClose }: { row: SearchControlRow; onClose: () 
   );
 }
 
-export function SearchControlPanel() {
+export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product: SearchQueryProduct) => void }) {
   const [data, setData] = useState<SearchControlResponse>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -143,7 +144,7 @@ export function SearchControlPanel() {
 
   return (
     <div className="space-y-4">
-      {stockRow && <OutOfStockModal row={stockRow} onClose={() => setStockRow(null)} />}
+      {stockRow && <OutOfStockModal row={stockRow} onClose={() => setStockRow(null)} onOpenProduct={onOpenProduct} />}
       <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
         <div className="flex flex-col gap-3 border-b border-[#e8edf1] bg-[#fbfcfd] p-4 lg:flex-row lg:items-center lg:justify-between">
           <div>

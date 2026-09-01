@@ -145,6 +145,8 @@ function toLite(
 function diffProduct(prev: ProductComparable, next: ProductFull, at: string): ChangeEvent[] {
   const events: ChangeEvent[] = [];
 
+  if (prev.name !== next.name)
+    events.push({ at, field: "name", from: prev.name, to: next.name });
   if (prev.price !== next.price)
     events.push({ at, field: "price", from: prev.price, to: next.price });
   if (prev.priceBase !== next.priceBase)
@@ -230,6 +232,8 @@ function toTimelineEvent(ev: ChangeEvent, lite: ProductLite): TimelineEvent | nu
   };
   let group: TimelineGroup;
   switch (ev.field) {
+    case "name":
+      return null;
     case "images":
       group = "photos";
       return {

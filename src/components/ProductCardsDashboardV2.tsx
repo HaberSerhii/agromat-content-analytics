@@ -13,6 +13,7 @@ import {
 import type { NewProductAnalysisRow } from "@/lib/new-product-types";
 import { SearchAnalyticsPanel } from "@/components/SearchAnalyticsPanel";
 import { SearchControlPanel } from "@/components/SearchControlPanel";
+import { ProductChangeHistoryModal } from "@/components/ProductChangeHistoryModal";
 
 type FacetRow = { key: string; name: string; count: number };
 type ProductRow = {
@@ -51,6 +52,13 @@ type ProductRow = {
   categoryMedianCtr?: number;
   categoryMedianAtc?: number;
   categoryMedianContent?: number | null;
+};
+
+type ProductOpenTarget = {
+  productId?: number;
+  code: number;
+  goodsRef: number;
+  name: string;
 };
 
 type ProductFull = ProductRow & {
@@ -871,14 +879,15 @@ function ProductDetailsModal({
   const [data, setData] = useState<ProductFull | null>(null);
   const [required, setRequired] = useState<Record<string, number[]>>({});
   const [error, setError] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !showHistory) onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, showHistory]);
 
   useEffect(() => {
     fetch(`/api/products/${product.id}`)
@@ -937,12 +946,22 @@ function ProductDetailsModal({
               </span>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="shrink-0 rounded-lg bg-[#f0f3f5] px-3 py-2 text-[10px] font-bold text-[#58636d]"
-          >
-            × Закрити
-          </button>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowHistory(true)}
+              className="rounded-lg border border-[#cfc9f2] bg-[#f3f1ff] px-3 py-2 text-[10px] font-black text-[#6556d8]"
+            >
+              Історія змін
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg bg-[#f0f3f5] px-3 py-2 text-[10px] font-bold text-[#58636d]"
+            >
+              × Закрити
+            </button>
+          </div>
         </header>
         <div className="space-y-5 p-5">
           {error && (
@@ -1102,6 +1121,14 @@ function ProductDetailsModal({
           </section>
         </div>
       </div>
+      {showHistory && (
+        <ProductChangeHistoryModal
+          id={current.id}
+          productName={current.name}
+          currency={current.currency}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1597,11 +1624,13 @@ function NewProductsAnalysisPanel({
   loading,
   error,
   onRefresh,
+  onOpenProduct,
 }: {
   assignments: NewProductAnalysisRow[];
   loading: boolean;
   error: string;
   onRefresh: () => void | Promise<void>;
+  onOpenProduct: (product: ProductOpenTarget) => void;
 }) {
   const [chartMode, setChartMode] = useState<"sales" | "stock">("sales");
   const segmentCount = (
@@ -1897,14 +1926,13 @@ function NewProductsAnalysisPanel({
                   className="border-b border-[#edf0f2] align-top last:border-0 hover:bg-[#fbfcfd]"
                 >
                   <td className="min-w-[300px] px-3 py-3">
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[10px] font-black leading-4 text-[#27313c] hover:text-[#118dff]"
+                    <button
+                      type="button"
+                      onClick={() => onOpenProduct({ productId: item.productId, code: item.code, goodsRef: item.goodsRef, name: item.name })}
+                      className="text-left text-[10px] font-black leading-4 text-[#27313c] hover:text-[#118dff] hover:underline"
                     >
-                      {item.name} ↗
-                    </a>
+                      {item.name}
+                    </button>
                     <div className="mt-1 text-[8px] text-[#8b949e]">
                       IDD: {item.code} · goods_ref: {item.goodsRef}
                     </div>
@@ -2002,6 +2030,7 @@ export function ProductCardsDashboardV2() {
   const [selectedProduct, setSelectedProduct] = useState<ProductRow | null>(
     null,
   );
+  const [productOpenError, setProductOpenError] = useState("");
   const [attributesProduct, setAttributesProduct] = useState<ProductRow | null>(
     null,
   );
@@ -2015,23 +2044,64 @@ export function ProductCardsDashboardV2() {
   const [newAssignments, setNewAssignments] = useState<NewProductAnalysisRow[]>(
     [],
   );
-  const [newAssignmentsLoading, setNewAssignmentsLoading] = useState(true);
+  const [newAssignmentsLoading, setNewAssignmentsLoading] = useState(false);
   const [newAssignmentsError, setNewAssignmentsError] = useState("");
   const [resultMode, setResultMode] = useState<ResultMode>("merchandising");
   const [interventions, setInterventions] = useState<ProductIntervention[]>([]);
-  const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
   const [reviewSaveError, setReviewSaveError] = useState("");
+
+  const openProduct = useCallback(async (target: ProductRow | ProductOpenTarget) => {
+    setProductOpenError("");
+    if ("statusId" in target && typeof target.id === "number") {
+      setSelectedProduct(target);
+      return;
+    }
+    try {
+      const targetId = "productId" in target ? target.productId : undefined;
+      const url = targetId
+        ? `/api/products/${targetId}`
+        : `/api/products/resolve?code=${encodeURIComponent(target.code)}&goodsRef=${encodeURIComponent(target.goodsRef)}`;
+      const response = await fetch(url);
+      const payload = (await response.json().catch(() => ({}))) as ProductRow & { error?: string };
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      setSelectedProduct(payload);
+    } catch (cause) {
+      setProductOpenError(cause instanceof Error ? cause.message : "Не вдалося відкрити картку товару");
+    }
+  }, []);
   const [resultSearch, setResultSearch] = useState("");
   const [resultCategory, setResultCategory] = useState("");
   const [resultBrand, setResultBrand] = useState("");
   const [resultManager, setResultManager] = useState<ContentManager | "">("");
   const [resultMonth, setResultMonth] = useState("");
   const loadRequestRef = useRef(0);
+  const interventionsLoadedRef = useRef(false);
+  const newAssignmentsLoadedRef = useRef(false);
+  const loadScopeKey = JSON.stringify([
+    view,
+    search,
+    bulkIds,
+    categoryId,
+    brandId,
+    statusId,
+    minPrice,
+    maxPrice,
+    minStock,
+    maxStock,
+    productSignal,
+  ]);
+  const previousLoadScopeRef = useRef(loadScopeKey);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      if (view === "results" || view === "search") {
+        setLoading(false);
+        setError("");
+        return;
+      }
       const requestId = ++loadRequestRef.current;
       setLoading(true);
       setError("");
@@ -2041,7 +2111,7 @@ export function ProductCardsDashboardV2() {
           headers: { "Content-Type": "application/json" },
           signal,
           body: JSON.stringify({
-            view: view === "results" || view === "search" ? "overview" : view,
+            view,
             page,
             limit: PAGE_SIZE,
             search,
@@ -2102,6 +2172,7 @@ export function ProductCardsDashboardV2() {
       if (!response.ok)
         throw new Error(payload.error || `HTTP ${response.status}`);
       setInterventions(payload.reviews || []);
+      interventionsLoadedRef.current = true;
     } catch (cause) {
       setReviewsError(
         cause instanceof Error
@@ -2127,6 +2198,7 @@ export function ProductCardsDashboardV2() {
       if (!response.ok)
         throw new Error(payload.error || `HTTP ${response.status}`);
       setNewAssignments(payload.assignments || []);
+      newAssignmentsLoadedRef.current = true;
     } catch (cause) {
       setNewAssignmentsError(
         cause instanceof Error
@@ -2139,32 +2211,33 @@ export function ProductCardsDashboardV2() {
   }, []);
 
   useEffect(() => {
+    if (previousLoadScopeRef.current !== loadScopeKey) {
+      previousLoadScopeRef.current = loadScopeKey;
+      if (page !== 1) {
+        setPage(1);
+        return;
+      }
+    }
     const controller = new AbortController();
     void load(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [load, loadScopeKey, page]);
   useEffect(() => {
-    void loadInterventions();
-  }, [loadInterventions]);
+    if (
+      !interventionsLoadedRef.current &&
+      (view === "products" ||
+        (view === "results" && resultMode === "merchandising"))
+    )
+      void loadInterventions();
+  }, [loadInterventions, resultMode, view]);
   useEffect(() => {
-    void loadNewAssignments();
-  }, [loadNewAssignments]);
-  useEffect(() => {
-    setPage(1);
-  }, [
-    view,
-    search,
-    bulkIds,
-    categoryId,
-    brandId,
-    statusId,
-    minPrice,
-    maxPrice,
-    minStock,
-    maxStock,
-    productSignal,
-  ]);
-
+    if (
+      !newAssignmentsLoadedRef.current &&
+      view === "results" &&
+      resultMode === "new-products"
+    )
+      void loadNewAssignments();
+  }, [loadNewAssignments, resultMode, view]);
   const resetFilters = () => {
     setSearchDraft("");
     setSearch("");
@@ -2421,7 +2494,8 @@ export function ProductCardsDashboardV2() {
       if (!response.ok)
         throw new Error(payload.error || `HTTP ${response.status}`);
       setAssigningNewProduct(null);
-      await Promise.all([loadNewAssignments(), load()]);
+      newAssignmentsLoadedRef.current = false;
+      await load();
     } catch (cause) {
       setNewAssignmentError(
         cause instanceof Error
@@ -3277,16 +3351,17 @@ export function ProductCardsDashboardV2() {
                             >
                               <td className="min-w-0 px-2 py-3">
                                 <div className="flex min-w-0 items-start gap-2">
-                                  <a
-                                    href={row.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    onClick={(event) => event.stopPropagation()}
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void openProduct(row);
+                                    }}
                                     title={row.name}
-                                    className="block min-w-0 flex-1 truncate text-[10px] font-bold leading-5 text-[#34404c] no-underline hover:text-[#118dff]"
+                                    className="block min-w-0 flex-1 truncate text-left text-[10px] font-bold leading-5 text-[#34404c] hover:text-[#118dff] hover:underline"
                                   >
-                                    {row.name} ↗
-                                  </a>
+                                    {row.name}
+                                  </button>
                                   <button
                                     type="button"
                                     onClick={(event) => {
@@ -3466,7 +3541,7 @@ export function ProductCardsDashboardV2() {
                 </div>
               </section>
             ) : view === "search" ? (
-              <SearchAnalyticsPanel />
+              <SearchAnalyticsPanel onOpenProduct={(product) => void openProduct(product)} />
             ) : view === "results" ? (
               <section className="space-y-4">
                 <div className="grid gap-2 rounded-2xl border border-[#dfe4ea] bg-white p-2 md:grid-cols-3">
@@ -3498,9 +3573,12 @@ export function ProductCardsDashboardV2() {
                     loading={newAssignmentsLoading}
                     error={newAssignmentsError}
                     onRefresh={loadNewAssignments}
+                    onOpenProduct={(product) => void openProduct(product)}
                   />
                 )}
-                {resultMode === "search" && <SearchControlPanel />}
+                {resultMode === "search" && (
+                  <SearchControlPanel onOpenProduct={(product) => void openProduct(product)} />
+                )}
                 <div
                   className={`${resultMode === "merchandising" ? "" : "hidden"} overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white`}
                 >
@@ -3614,9 +3692,9 @@ export function ProductCardsDashboardV2() {
                 </div>
 
                 <div
-                  className={`${resultMode === "merchandising" ? "" : "hidden"} grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(340px,.7fr)]`}
+                  className={`${resultMode === "merchandising" ? "" : "hidden"} grid min-w-0 gap-4 min-[1800px]:grid-cols-[minmax(0,1fr)_300px]`}
                 >
-                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <div className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">
                     {[
                       {
                         label: "Оброблено",
@@ -3666,7 +3744,7 @@ export function ProductCardsDashboardV2() {
                     ))}
                   </div>
 
-                  <aside className="row-span-2 overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                  <aside className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white min-[1800px]:row-span-2">
                     <header className="border-b border-[#e5e8eb] px-4 py-3">
                       <h3 className="text-xs font-black text-[#26313d]">
                         Результат після змін
@@ -3731,9 +3809,9 @@ export function ProductCardsDashboardV2() {
                     </div>
                   </aside>
 
-                  <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[1320px] border-collapse text-left">
+                  <div className="min-w-0 overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                    <div className="overflow-x-auto overscroll-x-contain">
+                      <table className="w-full min-w-[1100px] border-collapse text-left">
                         <thead>
                           <tr className="border-b border-[#e3e7eb] bg-[#f7f9fb] text-[8px] font-black uppercase tracking-[.08em] text-[#77828d]">
                             <th className="px-3 py-3">Товар</th>
@@ -3764,15 +3842,14 @@ export function ProductCardsDashboardV2() {
                                 key={item.id}
                                 className="border-b border-[#edf0f2] align-top last:border-0 hover:bg-[#fbfcfd]"
                               >
-                                <td className="min-w-[280px] px-3 py-3">
-                                  <a
-                                    href={item.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-[10px] font-black leading-4 text-[#27313c] hover:text-[#118dff] hover:underline"
+                                <td className="min-w-[230px] px-3 py-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => void openProduct({ productId: item.productId, code: item.code, goodsRef: item.goodsRef, name: item.name })}
+                                    className="text-left text-[10px] font-black leading-4 text-[#27313c] hover:text-[#118dff] hover:underline"
                                   >
                                     {item.name}
-                                  </a>
+                                  </button>
                                   <div className="mt-1 text-[8px] text-[#8b949e]">
                                     {item.categoryName} · {item.brand}
                                   </div>
@@ -4321,14 +4398,13 @@ export function ProductCardsDashboardV2() {
                             </td>
                             <td className="px-3 py-3">{skuCell(row)}</td>
                             <td className="px-3 py-3">
-                              <a
-                                href={row.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="line-clamp-2 text-[11px] font-semibold leading-4 text-[#26313d] no-underline hover:text-[#118dff]"
+                              <button
+                                type="button"
+                                onClick={() => void openProduct(row)}
+                                className="line-clamp-2 text-left text-[11px] font-semibold leading-4 text-[#26313d] hover:text-[#118dff] hover:underline"
                               >
-                                {row.name} ↗
-                              </a>
+                                {row.name}
+                              </button>
                             </td>
                             <td className="px-3 py-3">
                               <div className="text-[10px] font-bold text-[#45515d]">
@@ -4442,7 +4518,7 @@ export function ProductCardsDashboardV2() {
                               <td className="px-3 py-3">{skuCell(row)}</td>
                               <td className="px-3 py-3">
                                 <button
-                                  onClick={() => setSelectedProduct(row)}
+                                  onClick={() => void openProduct(row)}
                                   className="line-clamp-2 text-left text-[11px] font-semibold leading-4 text-[#26313d] hover:text-[#118dff]"
                                 >
                                   {row.name}
@@ -4614,6 +4690,11 @@ export function ProductCardsDashboardV2() {
             setBulkOpen(false);
           }}
         />
+      )}
+      {productOpenError && (
+        <div className="fixed bottom-4 right-4 z-[170] max-w-sm rounded-xl border border-[#efb5b5] bg-[#fff1f1] px-4 py-3 text-[10px] font-bold text-[#bd3b3b] shadow-xl">
+          Не вдалося відкрити товар: {productOpenError}
+        </div>
       )}
       {selectedProduct && (
         <ProductDetailsModal

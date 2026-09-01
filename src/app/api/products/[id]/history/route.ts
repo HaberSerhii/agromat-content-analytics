@@ -5,10 +5,11 @@ export const dynamic = "force-dynamic";
 
 // History "tabs" exposed in the UI. Keep keys stable — the client picks
 // tabs by these names.
-type Bucket = "price" | "status" | "stock" | "sku" | "attributes" | "images" | "reviews";
+type Bucket = "name" | "price" | "status" | "stock" | "sku" | "attributes" | "images" | "reviews";
 
 function bucketFor(e: ChangeEvent): Bucket {
   switch (e.field) {
+    case "name":       return "name";
     case "price":
     case "priceBase":
     case "discountPct":
@@ -31,7 +32,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const events = await readChanges(id);
   const groups: Record<Bucket, ChangeEvent[]> = {
-    price: [], status: [], stock: [], sku: [], attributes: [], images: [], reviews: [],
+    name: [], price: [], status: [], stock: [], sku: [], attributes: [], images: [], reviews: [],
   };
   for (const e of events) groups[bucketFor(e)].push(e);
 

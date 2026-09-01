@@ -1673,7 +1673,7 @@ function ProductModal({ id, seed, onClose }: {
 // Tabs over change-event groups returned by /api/products/:id/history.
 // Each tab renders newest-first list of "from → to" rows; attributes and
 // images get richer layouts since they're not single scalar values.
-type HistoryBucket = "price" | "status" | "stock" | "sku" | "attributes" | "images";
+type HistoryBucket = "name" | "price" | "status" | "stock" | "sku" | "attributes" | "images";
 interface HistoryResponse {
   productId: number;
   total: number;
@@ -1710,12 +1710,13 @@ function ChangeHistoryModal({ id, productName, currency, onClose }: {
   // immediately instead of a default-empty pane.
   useEffect(() => {
     if (!data) return;
-    const order: HistoryBucket[] = ["price", "status", "stock", "sku", "attributes", "images"];
+    const order: HistoryBucket[] = ["name", "price", "status", "stock", "sku", "attributes", "images"];
     const firstWithData = order.find((b) => data.groups[b].length > 0);
     if (firstWithData) setTab(firstWithData);
   }, [data]);
 
   const tabs: { key: HistoryBucket; label: string; color: string }[] = [
+    { key: "name",       label: "Назва",     color: "#6556d8" },
     { key: "price",      label: "Ціни",      color: "#118dff" },
     { key: "status",     label: "Статус",    color: "#107c10" },
     { key: "stock",      label: "Залишок",   color: "#e66c37" },
@@ -1828,6 +1829,10 @@ function HistoryEventRow({ event, currency }: { event: ChangeEvent; currency: st
   const arrow = <span style={{ color: "var(--text-dim)", margin: "0 6px" }}>→</span>;
 
   switch (event.field) {
+    case "name":
+      return wrap("Назва", (
+        <span><span style={{ color: "var(--text-dim)" }}>{event.from || "—"}</span>{arrow}<b>{event.to || "—"}</b></span>
+      ), "#6556d8");
     case "price":
       return wrap("Ціна", (
         <span><span style={{ color: "var(--text-dim)" }}>{fmtMoney(event.from, currency)}</span>{arrow}<b>{fmtMoney(event.to, currency)}</b></span>

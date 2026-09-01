@@ -74,6 +74,7 @@ export interface ProductFull extends ProductLite {
 // Per-product change history captured at each sync by diffing the new full
 // record against the previously stored one. Powers the "Історія змін" modal.
 export type ChangeEvent =
+  | { at: string; field: "name";        from: string; to: string }
   | { at: string; field: "price";       from: number | null; to: number | null }
   | { at: string; field: "priceBase";   from: number | null; to: number | null }
   | { at: string; field: "discountPct"; from: number | null; to: number | null }
@@ -109,6 +110,7 @@ export type ChangeEvent =
 // without OOM (~10-30MB total vs. ~150MB for full records).
 export interface ProductComparable {
   id: number;
+  name: string;
   price: number | null;
   priceBase: number | null;
   discountPct: number | null;
@@ -893,6 +895,7 @@ export async function readAllComparable(): Promise<Map<number, ProductComparable
       for (const p of shard) {
         out.set(p.id, {
           id: p.id,
+          name: p.name,
           price: p.price,
           priceBase: p.priceBase,
           discountPct: p.discountPct,

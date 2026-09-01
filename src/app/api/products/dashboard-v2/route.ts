@@ -12,6 +12,7 @@ import {
   readRequiredAttrs,
   readSyncState,
   type ProductLite,
+  type RequiredAttrsConfig,
 } from "@/lib/products-store";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +70,18 @@ type ProductPerformanceRow = {
   clicks: number | string | null;
   product_views: number | string | null;
   add_to_cart: number | string | null;
+};
+
+type MonthlyCtrDataset = {
+  rows: MonthlyCtrRow[];
+  available: boolean;
+  error?: string;
+};
+
+type ProductPerformanceDataset = {
+  rows: ProductPerformanceRow[];
+  available: boolean;
+  error?: string;
 };
 
 type ProductMetric = {
@@ -369,9 +382,7 @@ GROUP BY month, goods_ref, item_category3
 `;
 }
 
-async function readMonthlyCtr(
-  today: string,
-): Promise<{ rows: MonthlyCtrRow[]; available: boolean; error?: string }> {
+async function readMonthlyCtr(today: string): Promise<MonthlyCtrDataset> {
   const months = categoryCtrMonths(today);
   const key = months.queryMonths.join(":");
   if (
@@ -459,11 +470,9 @@ GROUP BY goods_ref
 `;
 }
 
-async function readProductPerformance(today: string): Promise<{
-  rows: ProductPerformanceRow[];
-  available: boolean;
-  error?: string;
-}> {
+async function readProductPerformance(
+  today: string,
+): Promise<ProductPerformanceDataset> {
   const range = rollingThirtyDays(today);
   const key = `${range.from}:${range.to}`;
   if (
@@ -742,6 +751,12 @@ async function buildDashboard(input: DashboardFilters) {
   const filters = normalizeFilters(input);
   const today = dateInKyiv();
   const ranges = monthRanges(today);
+  const needsSnapshots =
+    filters.view === "overview" || filters.view === "categories";
+  const needsAttributes =
+    filters.view === "new" ||
+    filters.view === "categories" ||
+    filters.view === "products";
   const [
     products,
     syncedAt,
@@ -754,9 +769,13 @@ async function buildDashboard(input: DashboardFilters) {
     readAllLite(),
     readLiteSyncedAt(),
     readSyncState(),
-    listSnapshotDates(),
-    readProductAttributeIndex(),
-    readRequiredAttrs(),
+    needsSnapshots ? listSnapshotDates() : Promise.resolve([]),
+    needsAttributes
+      ? readProductAttributeIndex()
+      : Promise.resolve(new Map<number, { id: number; name: string }[]>()),
+    needsAttributes
+      ? readRequiredAttrs()
+      : Promise.resolve({} as RequiredAttrsConfig),
     filters.view === "new"
       ? listAssignedNewProductCodes()
       : Promise.resolve(new Set<number>()),
@@ -770,11 +789,51 @@ async function buildDashboard(input: DashboardFilters) {
     monthBaselineDate === previousCalendarDate(ranges.currentFrom)
       ? monthBaselineDate
       : null;
-  const [comparisonSnapshot, monthBaselineSnapshot] = await Promise.all([
+  const productAnalysisCacheKey = `${today}:${syncedAt || ""}:${products.length}:${JSON.stringify(requiredAttrs)}`;
+  const cachedProductAnalysis =
+    filters.view === "products" &&
+    productAnalysisCache?.key === productAnalysisCacheKey &&
+    productAnalysisCache.expiresAt > Date.now()
+      ? productAnalysisCache.value
+      : null;
+  const needsProductAnalysisLoad =
+    filters.view === "products" && !cachedProductAnalysis;
+  const [
+    comparisonSnapshot,
+    monthBaselineSnapshot,
+    ctr,
+    monthlyCtrDataset,
+    productPerformanceDataset,
+  ] = await Promise.all([
     comparisonDate ? readDailySnapshot(comparisonDate) : Promise.resolve(null),
-    exactMonthBaselineDate && exactMonthBaselineDate !== comparisonDate
+    filters.view === "overview" &&
+    exactMonthBaselineDate &&
+    exactMonthBaselineDate !== comparisonDate
       ? readDailySnapshot(exactMonthBaselineDate)
       : Promise.resolve(null),
+    filters.view === "overview"
+      ? readCtr(products, today)
+      : Promise.resolve<CtrSummary>({
+          available: false,
+          benchmark: null,
+          tile: null,
+          sanitary: null,
+          scoreTile: 0,
+          scoreSanitary: 0,
+          improvedTile: 0,
+          improvedSanitary: 0,
+          declinedTile: 0,
+          declinedSanitary: 0,
+        }),
+    filters.view === "categories" || needsProductAnalysisLoad
+      ? readMonthlyCtr(today)
+      : Promise.resolve<MonthlyCtrDataset>({ rows: [], available: false }),
+    needsProductAnalysisLoad
+      ? readProductPerformance(today)
+      : Promise.resolve<ProductPerformanceDataset>({
+          rows: [],
+          available: false,
+        }),
   ]);
   const previousProducts = comparisonSnapshot?.products || products;
   const monthBaselineProducts =
@@ -784,53 +843,75 @@ async function buildDashboard(input: DashboardFilters) {
   const monthBaselineById = new Map(
     monthBaselineProducts.map((product) => [product.id, product]),
   );
-  const ctr = await readCtr(products, today);
-
-  const currentNew = countSegments(products, (product) =>
-    !product.deleted &&
-    product.statusId === 5 &&
-    inDateRange(product.firstSeenAt, ranges.currentFrom, ranges.currentTo),
-  );
-  const previousNew = countSegments(previousProducts, (product) =>
-    !product.deleted &&
-    product.statusId === 5 &&
-    inDateRange(
-      product.firstSeenAt,
-      ranges.currentFrom,
-      comparisonDate || ranges.currentTo,
-    ),
-  );
-  const currentInactive = countSegments(products, (product) => {
-    if (
-      transitionedToInactiveInRange(
-        product,
-        ranges.currentFrom,
-        ranges.currentTo,
+  const emptySegment = { tile: 0, sanitary: 0 };
+  const isOverview = filters.view === "overview";
+  const currentNew = isOverview
+    ? countSegments(
+        products,
+        (product) =>
+          !product.deleted &&
+          product.statusId === 5 &&
+          inDateRange(
+            product.firstSeenAt,
+            ranges.currentFrom,
+            ranges.currentTo,
+          ),
       )
-    )
-      return true;
+    : emptySegment;
+  const previousNew = isOverview
+    ? countSegments(
+        previousProducts,
+        (product) =>
+          !product.deleted &&
+          product.statusId === 5 &&
+          inDateRange(
+            product.firstSeenAt,
+            ranges.currentFrom,
+            comparisonDate || ranges.currentTo,
+          ),
+      )
+    : emptySegment;
+  const currentInactive = isOverview
+    ? countSegments(products, (product) => {
+        if (
+          transitionedToInactiveInRange(
+            product,
+            ranges.currentFrom,
+            ranges.currentTo,
+          )
+        )
+          return true;
 
-    // Compatibility for archive transitions detected before archive events
-    // were written into statusHistory. This is exact only when the snapshot
-    // immediately preceding the month is available.
-    const baseline = monthBaselineById.get(product.id);
-    return Boolean(baseline && !isInactive(baseline) && isInactive(product));
-  });
-  const previousInactive = countSegments(products, (product) =>
-    transitionedToInactiveInRange(
-      product,
-      ranges.previousFrom,
-      ranges.previousTo,
-    ),
-  );
-  const currentPromo = countSegments(
-    products,
-    (product) => !product.deleted && product.isOnSale,
-  );
-  const previousPromo = countSegments(
-    previousProducts,
-    (product) => !product.deleted && product.isOnSale,
-  );
+        // Compatibility for archive transitions detected before archive events
+        // were written into statusHistory. This is exact only when the snapshot
+        // immediately preceding the month is available.
+        const baseline = monthBaselineById.get(product.id);
+        return Boolean(
+          baseline && !isInactive(baseline) && isInactive(product),
+        );
+      })
+    : emptySegment;
+  const previousInactive = isOverview
+    ? countSegments(products, (product) =>
+        transitionedToInactiveInRange(
+          product,
+          ranges.previousFrom,
+          ranges.previousTo,
+        ),
+      )
+    : emptySegment;
+  const currentPromo = isOverview
+    ? countSegments(
+        products,
+        (product) => !product.deleted && product.isOnSale,
+      )
+    : emptySegment;
+  const previousPromo = isOverview
+    ? countSegments(
+        previousProducts,
+        (product) => !product.deleted && product.isOnSale,
+      )
+    : emptySegment;
 
   const search = filters.search.toLocaleLowerCase("uk");
   const bulkIds = new Set(filters.bulkIds);
@@ -1002,7 +1083,7 @@ async function buildDashboard(input: DashboardFilters) {
       rows.push(product);
       previousByCategory.set(product.categoryId, rows);
     }
-    const ctrDataset = await readMonthlyCtr(today);
+    const ctrDataset = monthlyCtrDataset;
     categoryCtrAvailable = ctrDataset.available;
     categoryCtrError = ctrDataset.error || "";
     const ctrByRefMonth = new Map<
@@ -1284,17 +1365,10 @@ async function buildDashboard(input: DashboardFilters) {
     },
   };
   if (filters.view === "products") {
-    const analysisCacheKey = `${today}:${syncedAt || ""}:${products.length}:${JSON.stringify(requiredAttrs)}`;
-    let analysisDataset =
-      productAnalysisCache?.key === analysisCacheKey &&
-      productAnalysisCache.expiresAt > Date.now()
-        ? productAnalysisCache.value
-        : null;
+    let analysisDataset = cachedProductAnalysis;
     if (!analysisDataset) {
-      const [performanceDataset, monthlyDataset] = await Promise.all([
-        readProductPerformance(today),
-        readMonthlyCtr(today),
-      ]);
+      const performanceDataset = productPerformanceDataset;
+      const monthlyDataset = monthlyCtrDataset;
       const performanceByRef = new Map<
         number,
         {
@@ -1446,7 +1520,7 @@ async function buildDashboard(input: DashboardFilters) {
         contentAvailable: baseRows.some((row) => row.requiredAttrsConfigured),
       };
       productAnalysisCache = {
-        key: analysisCacheKey,
+        key: productAnalysisCacheKey,
         expiresAt:
           Date.now() +
           (analysisDataset.available

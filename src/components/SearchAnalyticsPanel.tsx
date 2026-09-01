@@ -9,6 +9,8 @@ import type {
   SearchAnalyticsResponse,
   SearchAnalyticsRow,
   SearchQueryExclusionReason,
+  SearchQueryProduct,
+  SearchQueryProcessing,
   SearchQueryStatus,
 } from "@/lib/search-analytics-types";
 
@@ -99,6 +101,33 @@ const SOURCE_META = {
   "google-sheet": { label: "Sheets", tone: "#168a55" },
 } as const;
 
+function applyProcessingToRow(
+  row: SearchAnalyticsRow,
+  processing: SearchQueryProcessing,
+): SearchAnalyticsRow {
+  return {
+    ...row,
+    queryUk: processing.queryUk,
+    queryRu: processing.queryRu,
+    aliases: [...new Set([
+      ...row.aliases,
+      processing.originalQuery,
+      processing.queryUk,
+      processing.queryRu,
+    ].filter(Boolean))],
+    sources: row.sources.includes("google-sheet")
+      ? row.sources
+      : [...row.sources, "google-sheet"],
+    status: "processed",
+    manager: processing.manager,
+    products: processing.products,
+    sheetSynced: processing.sheetSynced,
+    sheetRow: processing.sheetRow ?? null,
+    processedAt: processing.processedAt,
+    updatedAt: processing.updatedAt,
+  };
+}
+
 function QueryProcessingModal({
   row,
   onClose,
@@ -106,7 +135,7 @@ function QueryProcessingModal({
 }: {
   row: SearchAnalyticsRow;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (processing: SearchQueryProcessing) => void;
 }) {
   const [manager, setManager] = useState<ContentReviewManager | "">(
     row.manager || "",
@@ -136,8 +165,19 @@ function QueryProcessingModal({
   );
 
   const save = async () => {
-    setSaving(true);
     setError("");
+    setSheetResult(null);
+    const missing: string[] = [];
+    if (!manager) missing.push("менеджера");
+    if (!queryUk.trim()) missing.push("запит uk");
+    if (!queryRu.trim()) missing.push("запит ru");
+    if (!idds.length) missing.push("хоча б один IDD");
+    if (missing.length) {
+      setError(`Щоб зберегти дані, вкажіть ${missing.join(", ")}.`);
+      return;
+    }
+
+    setSaving(true);
     try {
       const response = await fetch("/api/products/search-analytics", {
         method: "POST",
@@ -149,15 +189,18 @@ function QueryProcessingModal({
         sheetRow?: string[];
         sheetAction?: "created" | "updated";
         sheetRowNumber?: number;
+        processing?: SearchQueryProcessing;
       };
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      if (!payload.processing)
+        throw new Error("Сервер не повернув збережені дані дашборда");
       if (payload.sheetRow && payload.sheetAction && payload.sheetRowNumber)
         setSheetResult({
           row: payload.sheetRow,
           action: payload.sheetAction,
           rowNumber: payload.sheetRowNumber,
         });
-      onSaved();
+      onSaved(payload.processing);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не вдалося зберегти");
     } finally {
@@ -285,7 +328,7 @@ function QueryProcessingModal({
             <button
               type="button"
               onClick={() => void save()}
-              disabled={saving || !manager || !queryUk.trim() || !queryRu.trim() || !idds.length}
+              disabled={saving}
               className="rounded-xl bg-[#118dff] px-5 py-2.5 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
               {saving ? "Зберігаємо…" : "Зберегти в Google Sheets"}
@@ -300,9 +343,11 @@ function QueryProcessingModal({
 function OutOfStockProductsModal({
   row,
   onClose,
+  onOpenProduct,
 }: {
   row: SearchAnalyticsRow;
   onClose: () => void;
+  onOpenProduct: (product: SearchQueryProduct) => void;
 }) {
   const products = row.products.filter((product) => (product.stockQty || 0) <= 0);
   return (
@@ -320,7 +365,7 @@ function OutOfStockProductsModal({
           {products.map((product) => (
             <div key={product.goodsRef} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="text-[10px] font-black text-[#27313c]">{product.name}</div>
+                <button type="button" onClick={() => onOpenProduct(product)} className="text-left text-[10px] font-black text-[#27313c] hover:text-[#118dff] hover:underline">{product.name}</button>
                 <div className="mt-1 text-[8px] text-[#7d8892]">
                   IDD: <b>{product.code}</b> · goods_ref: {product.goodsRef} · {product.statusName || "Статус не вказано"}
                 </div>
@@ -338,7 +383,7 @@ function OutOfStockProductsModal({
   );
 }
 
-export function SearchAnalyticsPanel() {
+export function SearchAnalyticsPanel({ onOpenProduct }: { onOpenProduct: (product: SearchQueryProduct) => void }) {
   const [data, setData] = useState<SearchAnalyticsResponse>(EMPTY_RESPONSE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -458,12 +503,20 @@ export function SearchAnalyticsPanel() {
         <QueryProcessingModal
           row={selected}
           onClose={() => setSelected(null)}
-          onSaved={() => {
+          onSaved={(processing) => {
+            const savedRow = applyProcessingToRow(selected, processing);
+            setSelected(savedRow);
+            setData((current) => ({
+              ...current,
+              rows: current.rows.map((item) =>
+                item.key === selected.key ? savedRow : item,
+              ),
+            }));
             void load();
           }}
         />
       )}
-      {stockDetails && <OutOfStockProductsModal row={stockDetails} onClose={() => setStockDetails(null)} />}
+      {stockDetails && <OutOfStockProductsModal row={stockDetails} onClose={() => setStockDetails(null)} onOpenProduct={onOpenProduct} />}
       <div className="flex flex-col gap-3 rounded-2xl border border-[#b9dfcf] bg-[#f0faf6] p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="text-[9px] font-black uppercase tracking-[.15em] text-[#087a55]">Синхронізація активна</div>

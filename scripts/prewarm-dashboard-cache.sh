@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuilds the expensive default promotions response before a user needs it.
+# Rebuilds expensive default dashboard responses before a user needs them.
 
 set -euo pipefail
 
@@ -70,6 +70,9 @@ read -r promotion_week_from promotion_week_to < <(node -e '
   warm_url \
     "products_catalog_default" \
     "http://127.0.0.1:${APP_PORT}/api/products?page=1&limit=50&status_ids=5%2C3&sort_by=firstSeenAt&sort_dir=desc"
+  warm_url \
+    "product_cards_v2_overview" \
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&page=1&limit=25&statusId=5"
   warm_url \
     "product_cards_v2_products" \
     "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=products&page=1&limit=25"
