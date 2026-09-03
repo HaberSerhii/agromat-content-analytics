@@ -1,19 +1,16 @@
 import { NextResponse } from "next/server";
-import { readSalesCategoryProducts, type SalesDateFilter } from "@/lib/sales-s3";
+import { readSalesBrandProducts, type SalesDateFilter } from "@/lib/sales-s3";
 import { getServerResult } from "@/lib/server-result-cache";
 
 export const dynamic = "force-dynamic";
 
-async function categoryProductsResponse(
-  category: string,
-  filter: SalesDateFilter,
-) {
-  if (!category.trim()) {
-    return NextResponse.json({ error: "Category is required" }, { status: 400 });
+async function brandProductsResponse(brand: string, filter: SalesDateFilter) {
+  if (!brand.trim()) {
+    return NextResponse.json({ error: "Brand is required" }, { status: 400 });
   }
   try {
     const key = JSON.stringify({
-      category,
+      brand,
       from: filter.from || "",
       to: filter.to || "",
       productCodes: Array.isArray(filter.productCodes)
@@ -24,16 +21,14 @@ async function categoryProductsResponse(
         : filter.statuses || "",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-category-products-json-v2",
+      namespace: "sales-brand-products-json-v2",
       key,
       ttlMs: 60_000,
       maxEntries: 32,
-      load: async () => {
-        return JSON.stringify({
-          category,
-          items: await readSalesCategoryProducts(category, filter),
-        });
-      },
+      load: async () => JSON.stringify({
+        category: brand,
+        items: await readSalesBrandProducts(brand, filter),
+      }),
     });
     return new NextResponse(json, {
       headers: {
@@ -43,14 +38,14 @@ async function categoryProductsResponse(
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load category products";
+    const message = error instanceof Error ? error.message : "Failed to load brand products";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  return categoryProductsResponse(url.searchParams.get("category") || "", {
+  return brandProductsResponse(url.searchParams.get("brand") || "", {
     from: url.searchParams.get("from") || undefined,
     to: url.searchParams.get("to") || undefined,
     productCodes: url.searchParams.get("product_codes") || undefined,
@@ -60,8 +55,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
-  return categoryProductsResponse(
-    typeof body?.category === "string" ? body.category : "",
+  return brandProductsResponse(
+    typeof body?.brand === "string" ? body.brand : "",
     {
       from: typeof body?.from === "string" ? body.from : undefined,
       to: typeof body?.to === "string" ? body.to : undefined,

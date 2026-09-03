@@ -103,8 +103,14 @@ type SalesDataset = {
       daysInMonth: number;
     };
     byDate: Array<{ date: string; docs: number; goods: number; revenue: number }>;
+    ordersByDate: Array<{
+      date: string;
+      docs: number;
+      managers: Array<{ seller: string; docs: number }>;
+    }>;
     months: Array<{ month: string; docs: number; goods: number; revenue: number }>;
     segments: BucketSummary[];
+    shippedSegments: BucketSummary[];
     brands: BucketSummary[];
     categories: BucketSummary[];
     categoryProducts: Record<string, CategoryProductSummary[]>;
@@ -144,6 +150,8 @@ type SalesDataset = {
 type SalesManagerSummary = SalesDataset["summary"]["managers"][number];
 
 type SalesWebMetricsDataset = {
+  mode: "live" | "demo";
+  notice: string | null;
   filter: { from: string; to: string; country: "Ukraine" };
   definition: { visits: string; averageCartItems: string };
   dataThrough: string | null;
@@ -160,12 +168,31 @@ type SalesWebMetricsDataset = {
     cartItems: number;
     avgCartItems: number | null;
   };
+  conversions: {
+    definition: string;
+    minimumViews: number;
+    categories: SalesConversionRow[];
+    brands: SalesConversionRow[];
+    products: SalesConversionRow[];
+  };
 };
 
-type SavedProductSet = { id: string; name: string; ids: number[]; rawText: string; createdAt: number };
-const SALES_SETS_KEY = "agromat.analytics.salesSets.v1";
+type SalesConversionRow = {
+  key: string;
+  label: string;
+  views: number;
+  soldQty: number;
+  conversionPct: number;
+  url?: string;
+};
+
+type RankingMetric = "goods" | "revenue";
+type DocumentSegment = "Усі" | "Плитка" | "Сантехніка";
+
+type SalesDashboardView = "overview" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
 
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
+const compactNumberFmt = new Intl.NumberFormat("uk-UA", { notation: "compact", maximumFractionDigits: 1 });
 const pctFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 1 });
 const decimalFmt = new Intl.NumberFormat("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STATUS_FILTERS = [
@@ -175,12 +202,26 @@ const STATUS_FILTERS = [
   { label: "Сформовано", value: "сформовано" },
 ] as const;
 
+const SALES_VIEW_ITEMS: Array<{ id: SalesDashboardView; label: string; hint: string }> = [
+  { id: "overview", label: "Огляд", hint: "План і динаміка" },
+  { id: "web", label: "Веб-аналіз продажів", hint: "Користувачі, кошики, замовлення" },
+  { id: "brands", label: "Бренди", hint: "Кількість, сума і товари" },
+  { id: "categories", label: "Категорії", hint: "Кількість, сума і товари" },
+  { id: "department", label: "Відділ продажів", hint: "Плани й менеджери" },
+  { id: "statuses", label: "Статуси документів", hint: "Кількість і сума" },
+  { id: "cancellations", label: "Причини скасування", hint: "Кількість і сума" },
+];
+
 function fmtMoney(value: number) {
   return `${numberFmt.format(value)} грн`;
 }
 
 function fmtNum(value: number) {
   return numberFmt.format(value);
+}
+
+function fmtCompactMoney(value: number) {
+  return `${compactNumberFmt.format(value)} ₴`;
 }
 
 function fmtPct(value: number | null) {
@@ -211,19 +252,6 @@ function fmtStatusLabel(status: string) {
   return STATUS_FILTERS.find((item) => item.value === status)?.label || status;
 }
 
-function KpiCard({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent: string }) {
-  return (
-    <div className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-      <div className="flex items-center gap-2">
-        <span className="h-2.5 w-2.5 rounded-full" style={{ background: accent }} />
-        <div className="text-xs font-semibold uppercase tracking-normal" style={{ color: "var(--text-dim)" }}>{label}</div>
-      </div>
-      <div className="mt-2 text-2xl font-black" style={{ color: "var(--text)" }}>{value}</div>
-      {hint && <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>{hint}</div>}
-    </div>
-  );
-}
-
 function ProgressBar({ value, color }: { value: number; color: string }) {
   return (
     <div className="h-3 rounded-full overflow-hidden" style={{ background: "var(--bg-input)" }}>
@@ -232,52 +260,62 @@ function ProgressBar({ value, color }: { value: number; color: string }) {
   );
 }
 
-function RankingList({ title, items, maxRevenue, color }: { title: string; items: BucketSummary[]; maxRevenue: number; color: string }) {
-  return (
-    <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-      <div className="text-sm font-bold mb-3" style={{ color: "var(--text)" }}>{title}</div>
-      <div className="space-y-2">
-        {items.slice(0, 10).map((item) => (
-          <div key={item.label} className="grid gap-2 md:grid-cols-[190px_1fr_170px] md:items-center">
-            <div className="text-xs font-semibold truncate" style={{ color: "var(--text)" }} title={item.label}>{item.label}</div>
-            <ProgressBar value={(item.revenue / maxRevenue) * 100} color={color} />
-            <div className="text-xs md:text-right" style={{ color: "var(--text-dim)" }}>
-              {fmtMoney(item.revenue)} · {fmtNum(item.goods)} шт
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function CategoryRankingList({
+  title,
+  itemNoun,
+  color,
   items,
+  comparisonItems,
+  metric,
+  onMetricChange,
   productsByCategory,
-  maxRevenue,
   expandedCategory,
   loadingCategory,
   categoryError,
   onToggleCategory,
 }: {
+  title: string;
+  itemNoun: string;
+  color: string;
   items: BucketSummary[];
+  comparisonItems: BucketSummary[];
+  metric: RankingMetric;
+  onMetricChange: (metric: RankingMetric) => void;
   productsByCategory: Record<string, CategoryProductSummary[]>;
-  maxRevenue: number;
   expandedCategory: string | null;
   loadingCategory: string | null;
   categoryError: string | null;
   onToggleCategory: (category: string) => void;
 }) {
+  const sortedItems = [...items].sort((left, right) => right[metric] - left[metric]);
+  const comparisonByLabel = new Map(comparisonItems.map((item) => [item.label, item]));
+  const maxValue = Math.max(1, ...sortedItems.map((item) => item[metric]));
   return (
-    <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-      <div className="text-sm font-bold mb-3" style={{ color: "var(--text)" }}>Категорії</div>
-      <div className="space-y-2">
-        {items.slice(0, 10).map((item) => {
+    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-black text-[#26313d]">{title} · {fmtNum(items.length)}</span><span className="rounded-full bg-[#eaf8f1] px-2 py-1 text-[9px] font-black text-[#16865c]">Повністю відвантажено</span></div>
+          <div className="mt-1 text-[10px] text-[#8a939c]">Усі повністю відвантажені позиції за період · натисніть на {itemNoun}, щоб переглянути товари</div>
+        </div>
+        <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
+          {(["goods", "revenue"] as RankingMetric[]).map((value) => (
+            <button key={value} type="button" onClick={() => onMetricChange(value)} className="rounded-md px-3 py-1.5 text-[10px] font-bold" style={{ background: metric === value ? "#118dff" : "transparent", color: metric === value ? "#fff" : "#687582" }}>
+              {value === "goods" ? "У штуках" : "У грошах"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1 p-4">
+        {sortedItems.map((item) => {
           const expanded = expandedCategory === item.label;
-          const products = productsByCategory[item.label] || [];
+          const products = [...(productsByCategory[item.label] || [])].sort((left, right) => metric === "goods" ? right.qty - left.qty : right.revenue - left.revenue);
+          const comparison = comparisonByLabel.get(item.label);
+          const currentValue = item[metric];
+          const previousValue = comparison?.[metric] || 0;
+          const delta = previousValue > 0 ? ((currentValue - previousValue) / previousValue) * 100 : null;
           return (
             <div key={item.label} className="border-t first:border-t-0 pt-2 first:pt-0" style={{ borderColor: "var(--border)" }}>
-              <div className="grid gap-2 md:grid-cols-[minmax(120px,190px)_1fr_150px] md:items-center">
+              <div className="grid gap-2 md:grid-cols-[minmax(150px,220px)_1fr_230px] md:items-center">
                 <button
                   type="button"
                   onClick={() => onToggleCategory(item.label)}
@@ -288,9 +326,10 @@ function CategoryRankingList({
                   <span className="inline-block w-4" aria-hidden="true">{expanded ? "−" : "+"}</span>
                   {item.label}
                 </button>
-                <ProgressBar value={(item.revenue / maxRevenue) * 100} color="#f59e0b" />
-                <div className="text-xs md:text-right" style={{ color: "var(--text-dim)" }}>
-                  {fmtMoney(item.revenue)} · {fmtNum(item.goods)} шт
+                <ProgressBar value={(currentValue / maxValue) * 100} color={color} />
+                <div className="text-xs md:text-right">
+                  <b className="text-[#33404c]">{metric === "goods" ? `${fmtNum(currentValue)} шт` : fmtMoney(currentValue)}</b>
+                  <div className="mt-0.5 text-[9px] text-[#8a939c]">Рік тому: {metric === "goods" ? `${fmtNum(previousValue)} шт` : fmtMoney(previousValue)} · <span style={{ color: delta == null ? "#8a939c" : delta >= 0 ? "#16865c" : "#d14b4b" }}>{fmtPct(delta)}</span></div>
                 </div>
               </div>
               {expanded && (
@@ -310,7 +349,7 @@ function CategoryRankingList({
                     <tbody>
                       {loadingCategory === item.label && (
                         <tr>
-                          <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "var(--text-dim)" }}>Завантаження товарів категорії…</td>
+                          <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "var(--text-dim)" }}>Завантаження товарів…</td>
                         </tr>
                       )}
                       {loadingCategory !== item.label && products.map((product, index) => (
@@ -340,7 +379,7 @@ function CategoryRankingList({
                       )}
                       {loadingCategory !== item.label && !categoryError && !products.length && (
                         <tr>
-                          <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "var(--text-dim)" }}>Немає товарів у цій категорії під обрані фільтри</td>
+                          <td className="px-2 py-5 text-center" colSpan={7} style={{ color: "var(--text-dim)" }}>Немає товарів під обрані фільтри</td>
                         </tr>
                       )}
                     </tbody>
@@ -351,101 +390,9 @@ function CategoryRankingList({
           );
         })}
         {!items.length && (
-          <div className="text-xs" style={{ color: "var(--text-dim)" }}>Немає категорій під обрані фільтри</div>
+          <div className="p-3 text-xs" style={{ color: "var(--text-dim)" }}>Немає даних під обрані фільтри</div>
         )}
       </div>
-    </section>
-  );
-}
-
-function SalesByDateDisclosure({
-  days,
-}: {
-  days: SalesDataset["summary"]["byDate"];
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const sortedDays = useMemo(() => {
-    const allDays = [...days].sort((a, b) => b.date.localeCompare(a.date));
-    const latestMonth = allDays[0]?.date.slice(0, 7);
-    return latestMonth ? allDays.filter((day) => day.date.startsWith(latestMonth)) : [];
-  }, [days]);
-  const latestDay = sortedDays[0];
-  const previousDays = sortedDays.slice(1);
-  const firstMonthDay = sortedDays[sortedDays.length - 1];
-
-  return (
-    <section className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-      <button
-        type="button"
-        onClick={() => previousDays.length && setExpanded((current) => !current)}
-        aria-expanded={expanded}
-        className="w-full border-0 bg-transparent p-4 text-left"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-bold" style={{ color: "var(--text)" }}>
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md text-sm" style={{ background: "var(--bg-input)", color: "#118dff" }} aria-hidden="true">
-                {expanded ? "−" : "+"}
-              </span>
-              Продажі по датах відвантаження
-            </div>
-            <div className="mt-1 pl-8 text-xs" style={{ color: "var(--text-dim)" }}>
-              Останній день показано одразу · ще {fmtNum(previousDays.length)} {previousDays.length === 1 ? "день" : "днів"} у списку
-            </div>
-          </div>
-          <div className="text-xs" style={{ color: "var(--text-dim)" }}>
-            Місяць: {firstMonthDay ? fmtIsoDateShort(firstMonthDay.date) : "—"} — {latestDay ? fmtIsoDateShort(latestDay.date) : "—"}
-          </div>
-        </div>
-        {latestDay ? (
-          <div className="mt-4 grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(150px,1fr)_1fr_1fr_1.2fr]" style={{ borderColor: "rgba(17,141,255,.28)", background: "rgba(17,141,255,.06)" }}>
-            <div>
-              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Дата відвантаження</div>
-              <div className="mt-1 text-sm font-black" style={{ color: "var(--text)" }}>{fmtIsoDateShort(latestDay.date)}</div>
-            </div>
-            <div>
-              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Документи</div>
-              <div className="mt-1 text-sm font-bold tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(latestDay.docs)}</div>
-            </div>
-            <div>
-              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Товари</div>
-              <div className="mt-1 text-sm font-bold tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(latestDay.goods)}</div>
-            </div>
-            <div>
-              <div className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-dim)" }}>Сума</div>
-              <div className="mt-1 text-sm font-black tabular-nums" style={{ color: "#075985" }}>{fmtMoney(latestDay.revenue)}</div>
-            </div>
-          </div>
-        ) : (
-          <div className="mt-4 rounded-lg border px-3 py-5 text-center text-xs" style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
-            Немає відвантажень під обрані фільтри
-          </div>
-        )}
-      </button>
-      {expanded && previousDays.length > 0 && (
-        <div className="overflow-x-auto border-t" style={{ borderColor: "var(--border)" }}>
-          <table className="w-full text-xs border-collapse">
-            <thead style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>
-              <tr>
-                <th className="text-left px-4 py-2">Інші дати відвантаження</th>
-                <th className="text-right px-4 py-2">Документи</th>
-                <th className="text-right px-4 py-2">Товари</th>
-                <th className="text-right px-4 py-2">Сума</th>
-              </tr>
-            </thead>
-            <tbody>
-              {previousDays.map((day) => (
-                <tr key={day.date} className="border-t" style={{ borderColor: "var(--border)" }}>
-                  <td className="px-4 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text)" }}>{fmtIsoDateShort(day.date)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(day.docs)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(day.goods)}</td>
-                  <td className="px-4 py-2 text-right font-bold tabular-nums" style={{ color: "var(--text)" }}>{fmtMoney(day.revenue)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </section>
   );
 }
@@ -730,89 +677,22 @@ function StatusFilter({
   );
 }
 
-function parseBulkIds(text: string) {
-  const ids: number[] = [];
-  const seen = new Set<number>();
-  for (const part of text.split(/[\s,;|]+/)) {
-    const n = parseInt(part.trim(), 10);
-    if (Number.isFinite(n) && !seen.has(n)) {
-      seen.add(n);
-      ids.push(n);
-    }
-  }
-  return ids;
-}
-
-function ProductSetModal({ initialText, onApply, onClose }: {
-  initialText: string;
-  onApply: (ids: number[], rawText: string) => void;
-  onClose: () => void;
-}) {
-  const [text, setText] = useState(initialText);
-  const parsed = useMemo(() => parseBulkIds(text), [text]);
-
-  useEffect(() => {
-    const onEsc = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onEsc);
-    return () => document.removeEventListener("keydown", onEsc);
-  }, [onClose]);
-
+function DocumentSegmentFilter({ value, onChange }: { value: DocumentSegment; onChange: (value: DocumentSegment) => void }) {
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,.45)" }} onClick={onClose}>
-      <div className="rounded-xl flex flex-col" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", width: "100%", maxWidth: 560 }} onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: "var(--border)" }}>
-          <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Додати набір товарів</div>
-          <button onClick={onClose} className="px-3 py-1 rounded-lg text-xs border-0" style={{ background: "var(--bg-input)", color: "var(--text-mid)" }}>Закрити</button>
-        </div>
-        <div className="p-4 space-y-3">
-          <div className="text-xs" style={{ color: "var(--text-dim)" }}>
-            Встав IDD / code товарів через пробіл, кому, табуляцію або новий рядок. Продажі будуть відфільтровані по документах, де є хоча б один товар з набору.
-          </div>
-          <textarea
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            rows={9}
-            autoFocus
-            placeholder={"305190, 598397\n533613 533629"}
-            className="w-full rounded-lg px-3 py-2 text-xs border outline-none tabular-nums"
-            style={{ background: "var(--bg-input)", color: "var(--text)", borderColor: "var(--border2)", resize: "vertical", fontFamily: "monospace" }}
-          />
-          <div className="text-xs tabular-nums" style={{ color: parsed.length ? "#107c10" : "var(--text-dim)" }}>
-            {parsed.length ? `Розпізнано ${fmtNum(parsed.length)} унікальних IDD` : "Встав IDD щоб застосувати фільтр"}
-          </div>
-        </div>
-        <div className="p-4 border-t flex items-center justify-end gap-2" style={{ borderColor: "var(--border)" }}>
-          <button onClick={onClose} className="h-9 rounded-lg px-3 text-xs font-bold border" style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}>Скасувати</button>
-          <button
-            onClick={() => {
-              if (!parsed.length) return;
-              onApply(parsed, text);
-              onClose();
-            }}
-            disabled={!parsed.length}
-            className="h-9 rounded-lg px-3 text-xs font-bold border disabled:opacity-50"
-            style={{ borderColor: "#118dff", background: "#118dff", color: "#fff" }}
-          >
-            Застосувати ({fmtNum(parsed.length)})
-          </button>
-        </div>
+    <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
+      <div>
+        <div className="text-[10px] font-black uppercase tracking-[.12em] text-[#7b8691]">Сегмент продажів</div>
+        <div className="mt-1 text-[10px] text-[#8a939c]">Суми, кількість і частки перераховуються всередині вибраного сегмента</div>
       </div>
-    </div>
+      <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
+        {(["Усі", "Плитка", "Сантехніка"] as const).map((segment) => (
+          <button key={segment} type="button" onClick={() => onChange(segment)} aria-pressed={value === segment} className="rounded-md px-3 py-1.5 text-[10px] font-bold transition-colors" style={{ background: value === segment ? "#118dff" : "transparent", color: value === segment ? "#fff" : "#687582" }}>
+            {segment}
+          </button>
+        ))}
+      </div>
+    </section>
   );
-}
-
-async function copyText(text: string) {
-  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
-  const area = document.createElement("textarea");
-  area.value = text;
-  area.style.position = "fixed";
-  area.style.left = "-9999px";
-  document.body.appendChild(area);
-  area.select();
-  document.execCommand("copy");
-  area.remove();
 }
 
 function toInputDate(date: Date) {
@@ -845,16 +725,268 @@ function previousMonthRange() {
   return { from: toInputDate(first), to: toInputDate(last) };
 }
 
+function shiftIsoYear(value: string, offset: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return value;
+  const targetYear = year + offset;
+  const lastDay = new Date(Date.UTC(targetYear, month, 0)).getUTCDate();
+  return `${targetYear}-${String(month).padStart(2, "0")}-${String(Math.min(day, lastDay)).padStart(2, "0")}`;
+}
+
+function yearComparisonHint(current: number, previous: number, formatter: (value: number) => string) {
+  const delta = previous > 0 ? ((current - previous) / previous) * 100 : null;
+  return `Рік тому: ${formatter(previous)} · ${fmtPct(delta)}`;
+}
+
+function SalesMetricCard({
+  label,
+  value,
+  hint,
+  symbol,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  symbol: string;
+  tone: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-[.12em] text-[#7b8691]">{label}</div>
+          <div className="mt-2 text-2xl font-black tracking-tight text-[#202a35]">{value}</div>
+          <div className="mt-1 text-[10px] text-[#8a939c]">{hint}</div>
+        </div>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-black" style={{ background: `${tone}18`, color: tone }}>
+          {symbol}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function chartX(index: number, length: number) {
+  return length <= 1 ? 50 : 2 + (index / (length - 1)) * 96;
+}
+
+function chartY(value: number, maxValue: number) {
+  return 92 - (value / Math.max(1, maxValue)) * 84;
+}
+
+function salesAxis(maxValue: number) {
+  const step = 200_000;
+  const max = Math.max(step, (Math.floor(maxValue / step) + 1) * step);
+  return {
+    max,
+    ticks: Array.from({ length: max / step + 1 }, (_, index) => max - index * step),
+  };
+}
+
+function chartLabelIndices(length: number) {
+  if (length <= 6) return Array.from({ length }, (_, index) => index);
+  return [...new Set(Array.from({ length: 6 }, (_, index) => Math.round(index * (length - 1) / 5)))];
+}
+
+function SalesTrendChart({ days }: { days: SalesDataset["summary"]["byDate"] }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const points = days.slice(-31);
+  const peakValue = Math.max(0, ...points.map((point) => point.revenue));
+  const axis = salesAxis(peakValue);
+  const coordinates = points.map((point, index) => {
+    const x = chartX(index, points.length);
+    const y = chartY(point.revenue, axis.max);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+  const total = points.reduce((sum, point) => sum + point.revenue, 0);
+  const hovered = hoveredIndex == null ? null : points[hoveredIndex];
+  const hoveredLeft = hoveredIndex == null ? 0 : chartX(hoveredIndex, points.length);
+  const xLabels = chartLabelIndices(points.length);
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+        <div>
+          <h2 className="text-sm font-black text-[#26313d]">Динаміка відвантажень</h2>
+          <p className="mt-1 text-[10px] text-[#8a939c]">Лише документи зі статусом «Повністю відвантажений»</p>
+        </div>
+        <div className="text-right">
+          <div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div>
+          <div className="mt-1 text-sm font-black text-[#26313d]">{fmtMoney(total)}</div>
+        </div>
+      </div>
+      <div className="p-5">
+        {points.length > 1 ? (
+          <div className="grid grid-cols-[24px_68px_minmax(0,1fr)] gap-2">
+            <div className="flex h-56 items-center justify-center overflow-visible">
+              <span className="-rotate-90 whitespace-nowrap text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">Сума продажів, грн</span>
+            </div>
+            <div className="relative h-56 text-[9px] font-semibold text-[#7d8994]">
+              {axis.ticks.map((value) => <span key={value} className="absolute right-0 -translate-y-1/2 tabular-nums" style={{ top: `${chartY(value, axis.max)}%` }}>{fmtCompactMoney(value)}</span>)}
+            </div>
+            <div className="min-w-0">
+              <div className="relative h-56 rounded-xl border border-[#edf1f4] bg-[linear-gradient(180deg,#f7fbff_0%,#fff_100%)]">
+                {hovered && (
+                  <div className="pointer-events-none absolute top-2 z-20 min-w-[180px] rounded-xl border border-[#cbdfee] bg-white p-3 text-[10px] shadow-lg" style={{ left: `${hoveredLeft}%`, transform: `translateX(${hoveredLeft > 80 ? "-100%" : hoveredLeft < 20 ? "0" : "-50%"})` }}>
+                    <div className="font-black text-[#26313d]">{fmtIsoDateShort(hovered.date)}</div>
+                    <div className="mt-2 flex justify-between gap-4 text-[#6e7a86]"><span>Продано</span><b className="text-[#26313d]">{fmtNum(hovered.goods)} шт</b></div>
+                    <div className="mt-1 flex justify-between gap-4 text-[#6e7a86]"><span>Сума</span><b className="text-[#118dff]">{fmtMoney(hovered.revenue)}</b></div>
+                  </div>
+                )}
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" role="img" aria-label="Графік продажів по днях">
+                  {axis.ticks.map((value) => <line key={value} x1="2" x2="98" y1={chartY(value, axis.max)} y2={chartY(value, axis.max)} stroke="#e7edf3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
+                  <line x1="2" x2="2" y1="8" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <line x1="2" x2="98" y1="92" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <polyline points={coordinates} fill="none" stroke="#118dff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                </svg>
+                {points.map((point, index) => {
+                  const x = chartX(index, points.length);
+                  const y = chartY(point.revenue, axis.max);
+                  return <button key={point.date} type="button" aria-label={`${fmtIsoDateShort(point.date)}: ${fmtNum(point.goods)} шт, ${fmtMoney(point.revenue)}`} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} onFocus={() => setHoveredIndex(index)} onBlur={() => setHoveredIndex(null)} onClick={() => setHoveredIndex(index)} className="absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full outline-none" style={{ left: `${x}%`, top: `${y}%` }}>
+                    <span className={`block rounded-full border-2 border-[#118dff] bg-white shadow-sm transition-all ${hoveredIndex === index ? "h-2.5 w-2.5 ring-2 ring-[#118dff]/20" : "h-2 w-2"}`} />
+                  </button>;
+                })}
+              </div>
+              <div className="relative mt-2 h-4 text-[9px] font-semibold text-[#7d8994]">{xLabels.map((index) => <span key={points[index].date} className="absolute whitespace-nowrap" style={{ left: `${chartX(index, points.length)}%`, transform: `translateX(${index === 0 ? "0" : index === points.length - 1 ? "-100%" : "-50%"})` }}>{fmtIsoDateShort(points[index].date)}</span>)}</div>
+              <div className="mt-1 text-center text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">Дата відвантаження</div>
+            </div>
+          </div>
+        ) : (
+          <div className="py-16 text-center text-xs text-[#8a939c]">Недостатньо даних для графіка</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OrdersTrendChart({ days }: { days: SalesDataset["summary"]["ordersByDate"] }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const points = days.slice(-31);
+  const maxValue = Math.max(1, ...points.map((point) => point.docs));
+  const coordinates = points.map((point, index) => {
+    const x = chartX(index, points.length);
+    const y = chartY(point.docs, maxValue);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+  const total = points.reduce((sum, point) => sum + point.docs, 0);
+  const hovered = hoveredIndex == null ? null : points[hoveredIndex];
+  const hoveredLeft = hoveredIndex == null ? 0 : chartX(hoveredIndex, points.length);
+  const xLabels = chartLabelIndices(points.length);
+  const yTicks = [1, 0.75, 0.5, 0.25, 0];
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+        <div><h2 className="text-sm font-black text-[#26313d]">Оформлені замовлення по днях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Наведіть на точку, щоб побачити total і розподіл по менеджерах</p></div>
+        <div className="text-right"><div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div><div className="mt-1 text-sm font-black text-[#26313d]">{fmtNum(total)} замовлень</div></div>
+      </div>
+      <div className="p-5">
+        {points.length > 1 ? (
+          <div className="grid grid-cols-[24px_50px_minmax(0,1fr)] gap-2">
+            <div className="flex h-56 items-center justify-center overflow-visible">
+              <span className="-rotate-90 whitespace-nowrap text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">Кількість замовлень</span>
+            </div>
+            <div className="relative h-56 text-[9px] font-semibold text-[#7d8994]">
+              {yTicks.map((ratio) => <span key={ratio} className="absolute right-0 -translate-y-1/2 tabular-nums" style={{ top: `${8 + (1 - ratio) * 84}%` }}>{fmtNum(Math.round(maxValue * ratio))}</span>)}
+            </div>
+            <div className="min-w-0">
+              <div className="relative h-56 rounded-xl border border-[#edf1f4] bg-[linear-gradient(180deg,#f7fbff_0%,#fff_100%)]">
+                {hovered && <div className="pointer-events-none absolute top-2 z-20 min-w-[230px] rounded-xl border border-[#d6caed] bg-white p-3 text-[10px] shadow-lg" style={{ left: `${hoveredLeft}%`, transform: `translateX(${hoveredLeft > 80 ? "-100%" : hoveredLeft < 20 ? "0" : "-50%"})` }}>
+                  <div className="flex justify-between gap-4 font-black text-[#26313d]"><span>{fmtIsoDateShort(hovered.date)}</span><span>{fmtNum(hovered.docs)} total</span></div>
+                  <div className="mt-2 space-y-1 border-t border-[#edf0f2] pt-2">{hovered.managers.map((manager) => <div key={manager.seller} className="flex justify-between gap-4 text-[#6e7a86]"><span className="max-w-[170px] truncate">{manager.seller}</span><b className="text-[#6b46c1]">{fmtNum(manager.docs)}</b></div>)}</div>
+                </div>}
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" role="img" aria-label="Графік оформлених замовлень по днях">
+                  {yTicks.map((ratio) => <line key={ratio} x1="2" x2="98" y1={8 + (1 - ratio) * 84} y2={8 + (1 - ratio) * 84} stroke="#e7edf3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
+                  <line x1="2" x2="2" y1="8" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <line x1="2" x2="98" y1="92" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <polyline points={coordinates} fill="none" stroke="#805ad5" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                </svg>
+                {points.map((point, index) => {
+                  const x = chartX(index, points.length);
+                  const y = chartY(point.docs, maxValue);
+                  return <button key={point.date} type="button" aria-label={`${fmtIsoDateShort(point.date)}: ${fmtNum(point.docs)} замовлень`} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} onFocus={() => setHoveredIndex(index)} onBlur={() => setHoveredIndex(null)} onClick={() => setHoveredIndex(index)} className="absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full outline-none" style={{ left: `${x}%`, top: `${y}%` }}>
+                    <span className={`block rounded-full border-2 border-[#805ad5] bg-white shadow-sm transition-all ${hoveredIndex === index ? "h-2.5 w-2.5 ring-2 ring-[#805ad5]/20" : "h-2 w-2"}`} />
+                  </button>;
+                })}
+              </div>
+              <div className="relative mt-2 h-4 text-[9px] font-semibold text-[#7d8994]">{xLabels.map((index) => <span key={points[index].date} className="absolute whitespace-nowrap" style={{ left: `${chartX(index, points.length)}%`, transform: `translateX(${index === 0 ? "0" : index === points.length - 1 ? "-100%" : "-50%"})` }}>{fmtIsoDateShort(points[index].date)}</span>)}</div>
+              <div className="mt-1 text-center text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">Дата оформлення</div>
+            </div>
+          </div>
+        ) : <div className="py-16 text-center text-xs text-[#8a939c]">Недостатньо даних для графіка</div>}
+      </div>
+    </section>
+  );
+}
+
+function ConversionRanking({ title, rows }: { title: string; rows: SalesConversionRow[] }) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="border-b border-[#e5e8eb] px-4 py-3"><h3 className="text-xs font-black text-[#26313d]">{title}</h3><p className="mt-1 text-[9px] text-[#8a939c]">Топ-20 за конверсією</p></div>
+      <div className="divide-y divide-[#edf0f2]">
+        {rows.map((row, index) => <div key={row.key} className="grid grid-cols-[24px_minmax(0,1fr)_70px] items-center gap-2 px-4 py-2.5 text-[10px]">
+          <span className="text-[#9aa3ac]">{index + 1}</span>
+          <div className="min-w-0"><div className="truncate font-bold text-[#3b4753]" title={row.label}>{row.url ? <a href={row.url} target="_blank" rel="noreferrer" className="hover:text-[#118dff]">{row.label}</a> : row.label}</div><div className="mt-0.5 text-[9px] text-[#929ba4]">{fmtNum(row.soldQty)} продано / {fmtNum(row.views)} переглядів</div></div>
+          <span className="text-right font-black text-[#16865c]">{fmtPct(row.conversionPct)}</span>
+        </div>)}
+        {!rows.length && <div className="px-4 py-8 text-center text-[10px] text-[#8a939c]">Немає даних</div>}
+      </div>
+    </section>
+  );
+}
+
+function StatusSummaryList({
+  title,
+  subtitle,
+  rows,
+  labelKey,
+  tone = "#118dff",
+  shareLabel = "від документів",
+}: {
+  title: string;
+  subtitle: string;
+  rows: Array<{ docs: number; revenue: number } & Record<string, string | number>>;
+  labelKey: "state" | "reason";
+  tone?: string;
+  shareLabel?: string;
+}) {
+  const totalDocs = rows.reduce((sum, row) => sum + row.docs, 0);
+  const maxDocs = Math.max(1, ...rows.map((row) => row.docs));
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="border-b border-[#e5e8eb] px-5 py-4">
+        <h2 className="text-sm font-black text-[#26313d]">{title}</h2>
+        <p className="mt-1 text-[10px] text-[#8a939c]">{subtitle}</p>
+      </div>
+      <div className="divide-y divide-[#edf0f2]">
+        {rows.map((row, index) => (
+          <div key={`${String(row[labelKey])}-${index}`} className="grid gap-3 px-5 py-3.5 md:grid-cols-[minmax(180px,1fr)_minmax(120px,1.2fr)_90px_150px] md:items-center">
+            <div className="min-w-0">
+              <div className="truncate text-xs font-bold text-[#33404c]" title={String(row[labelKey])}>{String(row[labelKey])}</div>
+              <div className="mt-0.5 text-[9px] text-[#98a1aa]">{totalDocs ? fmtPct((row.docs / totalDocs) * 100) : "—"} {shareLabel}</div>
+            </div>
+            <ProgressBar value={(row.docs / maxDocs) * 100} color={tone} />
+            <div className="text-right text-xs font-black tabular-nums text-[#33404c]">{fmtNum(row.docs)}</div>
+            <div className="text-right text-xs font-bold tabular-nums text-[#63707c]">{fmtMoney(row.revenue)}</div>
+          </div>
+        ))}
+        {!rows.length && <div className="px-5 py-10 text-center text-xs text-[#8a939c]">Немає даних за обраний період</div>}
+      </div>
+    </section>
+  );
+}
+
 export function SalesDashboard() {
   const initialRange = useMemo(() => currentMonthRange(), []);
+  const [view, setView] = useState<SalesDashboardView>("overview");
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
-  const [productSet, setProductSet] = useState<{ ids: number[]; rawText: string } | null>(null);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
-  const [showProductSetModal, setShowProductSetModal] = useState(false);
-  const [savedSets, setSavedSets] = useState<SavedProductSet[]>([]);
-  const [setName, setSetName] = useState("");
   const [data, setData] = useState<SalesDataset | null>(null);
+  const [comparisonData, setComparisonData] = useState<SalesDataset | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(true);
+  const [rankingMetric, setRankingMetric] = useState<RankingMetric>("revenue");
   const [webMetrics, setWebMetrics] = useState<SalesWebMetricsDataset | null>(null);
   const [webMetricsError, setWebMetricsError] = useState<string | null>(null);
   const [webMetricsLoading, setWebMetricsLoading] = useState(true);
@@ -865,20 +997,13 @@ export function SalesDashboard() {
   const [categoryProducts, setCategoryProducts] = useState<Record<string, CategoryProductSummary[]>>({});
   const [loadingCategory, setLoadingCategory] = useState<string | null>(null);
   const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [expandedBrand, setExpandedBrand] = useState<string | null>(null);
+  const [brandProducts, setBrandProducts] = useState<Record<string, CategoryProductSummary[]>>({});
+  const [loadingBrand, setLoadingBrand] = useState<string | null>(null);
+  const [brandError, setBrandError] = useState<string | null>(null);
   const [selectedManager, setSelectedManager] = useState<string | null>(null);
+  const [selectedDocumentSegment, setSelectedDocumentSegment] = useState<DocumentSegment>("Усі");
   const hasLoadedRef = useRef(false);
-
-  useEffect(() => {
-    try {
-      const value = JSON.parse(localStorage.getItem(SALES_SETS_KEY) || "[]");
-      if (Array.isArray(value)) setSavedSets(value);
-    } catch {}
-  }, []);
-
-  const persistSavedSets = (next: SavedProductSet[]) => {
-    setSavedSets(next);
-    localStorage.setItem(SALES_SETS_KEY, JSON.stringify(next));
-  };
 
   useEffect(() => {
     let alive = true;
@@ -892,27 +1017,16 @@ export function SalesDashboard() {
     setCategoryProducts({});
     setLoadingCategory(null);
     setCategoryError(null);
-    const request = productSet?.ids.length
-      ? fetch("/api/sales", {
-          method: "POST",
-          signal: controller.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: dateFrom || undefined,
-            to: dateTo || undefined,
-            productCodes: productSet.ids,
-            statuses: selectedStatuses,
-            compact: true,
-          }),
-        })
-      : (() => {
-          const params = new URLSearchParams();
-          if (dateFrom) params.set("from", dateFrom);
-          if (dateTo) params.set("to", dateTo);
-          params.set("compact", "1");
-          selectedStatuses.forEach((status) => params.append("status", status));
-          return fetch(`/api/sales?${params.toString()}`, { signal: controller.signal });
-        })();
+    setExpandedBrand(null);
+    setBrandProducts({});
+    setLoadingBrand(null);
+    setBrandError(null);
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    params.set("compact", "1");
+    selectedStatuses.forEach((status) => params.append("status", status));
+    const request = fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
       .then(async (res) => {
         const json = await res.json();
@@ -940,7 +1054,44 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, productSet, selectedStatuses]);
+  }, [dateFrom, dateTo, selectedStatuses]);
+
+  useEffect(() => {
+    if (!dateFrom || !dateTo) {
+      setComparisonData(null);
+      setComparisonLoading(false);
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      from: shiftIsoYear(dateFrom, -1),
+      to: shiftIsoYear(dateTo, -1),
+      compact: "1",
+    });
+    selectedStatuses.forEach((status) => params.append("status", status));
+    setComparisonLoading(true);
+    fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити порівняння");
+        return payload as SalesDataset;
+      })
+      .then((payload) => {
+        if (alive) setComparisonData(payload);
+      })
+      .catch((reason: unknown) => {
+        if (!alive || (reason instanceof DOMException && reason.name === "AbortError")) return;
+        setComparisonData(null);
+      })
+      .finally(() => {
+        if (alive) setComparisonLoading(false);
+      });
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [dateFrom, dateTo, selectedStatuses]);
 
   useEffect(() => {
     const category = expandedCategory;
@@ -949,26 +1100,11 @@ export function SalesDashboard() {
     const controller = new AbortController();
     setLoadingCategory(category);
     setCategoryError(null);
-    const request = productSet?.ids.length
-      ? fetch("/api/sales/category-products", {
-          method: "POST",
-          signal: controller.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            category,
-            from: dateFrom || undefined,
-            to: dateTo || undefined,
-            productCodes: productSet.ids,
-            statuses: selectedStatuses,
-          }),
-        })
-      : (() => {
-          const params = new URLSearchParams({ category });
-          if (dateFrom) params.set("from", dateFrom);
-          if (dateTo) params.set("to", dateTo);
-          selectedStatuses.forEach((status) => params.append("status", status));
-          return fetch(`/api/sales/category-products?${params.toString()}`, { signal: controller.signal });
-        })();
+    const params = new URLSearchParams({ category });
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    selectedStatuses.forEach((status) => params.append("status", status));
+    const request = fetch(`/api/sales/category-products?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
       .then(async (response) => {
         const payload = await response.json();
@@ -991,9 +1127,46 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [categoryProducts, dateFrom, dateTo, expandedCategory, productSet, selectedStatuses]);
+  }, [categoryProducts, dateFrom, dateTo, expandedCategory, selectedStatuses]);
 
   useEffect(() => {
+    const brand = expandedBrand;
+    if (!brand || Object.prototype.hasOwnProperty.call(brandProducts, brand)) return;
+    let alive = true;
+    const controller = new AbortController();
+    setLoadingBrand(brand);
+    setBrandError(null);
+    const params = new URLSearchParams({ brand });
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    selectedStatuses.forEach((status) => params.append("status", status));
+    const request = fetch(`/api/sales/brand-products?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
+    request
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити товари бренду");
+        return payload as CategoryProductsResponse;
+      })
+      .then((payload) => {
+        if (!alive) return;
+        setBrandProducts((current) => ({ ...current, [payload.category]: payload.items }));
+      })
+      .catch((reason: unknown) => {
+        if (!alive) return;
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setBrandError(reason instanceof Error ? reason.message : "Не вдалося завантажити товари бренду");
+      })
+      .finally(() => {
+        if (alive) setLoadingBrand(null);
+      });
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [brandProducts, dateFrom, dateTo, expandedBrand, selectedStatuses]);
+
+  useEffect(() => {
+    if (view !== "web") return;
     let alive = true;
     const controller = new AbortController();
     const fallbackRange = yearToDateRange();
@@ -1004,6 +1177,7 @@ export function SalesDashboard() {
     setWebMetricsLoading(true);
     fetch(`/api/sales/web-metrics?${params.toString()}`, {
       signal: controller.signal,
+      cache: "no-store",
     })
       .then(async (res) => {
         const json = await res.json();
@@ -1028,16 +1202,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo]);
-  const maxBrandRevenue = useMemo(
-    () => Math.max(1, ...(data?.summary.brands || []).map((item) => item.revenue)),
-    [data],
-  );
-  const maxCategoryRevenue = useMemo(
-    () => Math.max(1, ...(data?.summary.categories || []).map((item) => item.revenue)),
-    [data],
-  );
-
+  }, [dateFrom, dateTo, view]);
   useEffect(() => {
     if (!data || !expandedCategory) return;
     if (!data.summary.categories.some((item) => item.label === expandedCategory)) {
@@ -1104,262 +1269,228 @@ export function SalesDashboard() {
   };
   const resetStatuses = () => setSelectedStatuses([]);
 
+  const activeView = SALES_VIEW_ITEMS.find((item) => item.id === view) || SALES_VIEW_ITEMS[0];
+  const selectedManagerData = selectedManager
+    ? data.summary.managers.find((manager) => manager.seller === selectedManager)
+    : null;
+  const currentTile = data.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
+  const currentPlumbing = data.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
+  const previousTile = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
+  const previousPlumbing = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
+  const selectedSegmentSummary = selectedDocumentSegment === "Усі"
+    ? null
+    : data.summary.documentStatusesBySegment.find((item) => item.segment === selectedDocumentSegment);
+  const visibleStatusRows = selectedDocumentSegment === "Усі" ? data.summary.states : selectedSegmentSummary?.states || [];
+  const visibleCancelReasonRows = selectedDocumentSegment === "Усі" ? data.summary.cancelReasons || [] : selectedSegmentSummary?.cancelReasons || [];
+  const statusDocsTotal = visibleStatusRows.reduce((sum, item) => sum + item.docs, 0);
+  const statusRevenueTotal = visibleStatusRows.reduce((sum, item) => sum + item.revenue, 0);
+  const canceledStatusRows = visibleStatusRows.filter((item) => item.state.toLocaleLowerCase("uk").includes("скасован"));
+  const canceledStatusDocs = canceledStatusRows.reduce((sum, item) => sum + item.docs, 0);
+  const canceledStatusRevenue = canceledStatusRows.reduce((sum, item) => sum + item.revenue, 0);
+  const pageDescriptions: Record<SalesDashboardView, string> = {
+    overview: "Виконання плану й динаміка повністю відвантажених замовлень.",
+    web: "Шлях користувача від відвідування сайту до оформленого замовлення.",
+    brands: "Продажі за брендами з деталізацією до рівня товару.",
+    categories: "Продажі за категоріями з деталізацією до рівня товару.",
+    department: "Плани, результативність і статуси замовлень по менеджерах.",
+    statuses: "Повна структура документів за статусами, кількістю та сумою.",
+    cancellations: "Причини скасувань, їхня частка, кількість і сума.",
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-black m-0" style={{ color: "var(--text)" }}>Аналіз продаж</h1>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          {refreshing && (
-            <div className="text-xs rounded-lg border px-3 py-2" style={{ borderColor: "rgba(17,141,255,.28)", color: "#075985", background: "rgba(17,141,255,.08)" }}>
-              Оновлення…
+    <div className="min-h-[calc(100dvh-104px)] overflow-hidden rounded-2xl border border-[#dfe4ea] bg-[#f4f5f3] text-[#27313c] shadow-sm">
+      <div className="grid min-h-[calc(100dvh-104px)] grid-cols-1 lg:grid-cols-[224px_minmax(0,1fr)]">
+        <aside className="bg-[#17202a] px-3 py-5 text-white lg:min-h-full">
+          <div className="mb-7 flex items-center gap-3 px-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#118dff] text-lg font-black">A</span>
+            <div>
+              <div className="text-sm font-black tracking-[.12em]">АГРОМАТ</div>
+              <div className="text-[9px] font-semibold uppercase tracking-[.2em] text-[#91a0af]">Sales analytics</div>
             </div>
-          )}
-          {error && (
-            <div className="text-xs rounded-lg border px-3 py-2" style={{ borderColor: "rgba(239,68,68,.35)", color: "#b91c1c", background: "rgba(239,68,68,.08)" }}>
-              {error}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-        <div className="flex items-end gap-3 flex-wrap">
-          <div>
-            <label className="block text-xs font-semibold mb-1" style={{ color: "var(--text-dim)" }}>З дати відвантаження</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(event) => setDateFrom(event.target.value)}
-              className="h-9 rounded-lg border px-3 text-sm"
-              style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}
-            />
           </div>
-          <div>
-            <label className="block text-xs font-semibold mb-1" style={{ color: "var(--text-dim)" }}>По дату відвантаження</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(event) => setDateTo(event.target.value)}
-              className="h-9 rounded-lg border px-3 text-sm"
-              style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}
-            />
-          </div>
-          <button type="button" onClick={applyCurrentMonth} className="h-9 rounded-lg px-3 text-xs font-bold border" style={{ borderColor: "var(--border)", background: "#118dff", color: "#fff" }}>
-            Поточний місяць
-          </button>
-          <button type="button" onClick={applyPreviousMonth} className="h-9 rounded-lg px-3 text-xs font-bold border" style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}>
-            Минулий місяць
-          </button>
-          <button type="button" onClick={applyAllPeriod} className="h-9 rounded-lg px-3 text-xs font-bold border" style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}>
-            Весь період
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowProductSetModal(true)}
-            className="h-9 rounded-lg px-3 text-xs font-bold border"
-            style={{ borderColor: productSet ? "#118dff" : "var(--border)", background: productSet ? "#118dff" : "var(--bg-input)", color: productSet ? "#fff" : "var(--text)" }}
-          >
-            Додати набір товарів{productSet ? ` (${fmtNum(productSet.ids.length)})` : ""}
-          </button>
-          {productSet && (
-            <button type="button" onClick={() => setProductSet(null)} className="h-9 rounded-lg px-3 text-xs font-bold border" style={{ borderColor: "rgba(239,68,68,.35)", background: "rgba(239,68,68,.08)", color: "#b91c1c" }}>
-              Скинути набір
-            </button>
-          )}
-          <div className="text-xs ml-auto" style={{ color: "var(--text-dim)" }}>
-            Обрано: <b style={{ color: "var(--text)" }}>{data.filter.label}</b>
-          </div>
-        </div>
-        {productSet && (
-          <div className="mt-3 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: "rgba(17,141,255,.28)", background: "rgba(17,141,255,.08)", color: "var(--text-dim)" }}>
-            Набір товарів: запитано <b style={{ color: "var(--text)" }}>{fmtNum(productSet.ids.length)}</b>, знайдено у продажах <b style={{ color: "var(--text)" }}>{fmtNum(data.filter.matchedProductCodes.length)}</b>.
-          </div>
-        )}
-        {productSet && (
-          <div className="mt-3 flex gap-2 flex-wrap">
-            <input value={setName} onChange={(event) => setSetName(event.target.value)} placeholder="Назва сегмента"
-              className="h-9 rounded-lg border px-3 text-xs" style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }} />
-            <button type="button" onClick={() => {
-              const name = setName.trim();
-              if (!name) return;
-              const next = { id: `${Date.now()}`, name, ...productSet, createdAt: Date.now() };
-              persistSavedSets([next, ...savedSets.filter((item) => item.name.toLowerCase() !== name.toLowerCase())]);
-              setSetName("");
-            }} className="h-9 rounded-lg px-3 text-xs font-bold border" style={{ borderColor: "#118dff", background: "#118dff", color: "#fff" }}>
-              Зберегти сегмент
-            </button>
-          </div>
-        )}
-        {savedSets.length > 0 && (
-          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {savedSets.map((set) => (
-              <div key={set.id} className="rounded-lg border px-3 py-2 flex items-center gap-2" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
-                <button type="button" onClick={() => setProductSet({ ids: set.ids, rawText: set.rawText })} className="text-left border-0 bg-transparent flex-1 min-w-0">
-                  <div className="text-xs font-bold truncate" style={{ color: "var(--text)" }}>{set.name}</div>
-                  <div className="text-[10px]" style={{ color: "var(--text-dim)" }}>{fmtNum(set.ids.length)} IDD</div>
+          <nav className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
+            {SALES_VIEW_ITEMS.map((item, index) => {
+              const active = view === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setView(item.id)}
+                  className="min-w-[190px] rounded-xl border-0 px-3 py-3 text-left transition lg:min-w-0"
+                  style={{ background: active ? "#25384d" : "transparent", boxShadow: active ? "inset 3px 0 #118dff" : "none" }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black" style={{ color: active ? "#fff" : "#82909e", background: active ? "#118dff" : "#222d38" }}>{index + 1}</span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold" style={{ color: active ? "#fff" : "#bac2ca" }}>{item.label}</div>
+                      <div className="mt-0.5 truncate text-[9px] text-[#758391]">{item.hint}</div>
+                    </div>
+                  </div>
                 </button>
-                <button type="button" title="Скопіювати всі IDD" onClick={() => copyText(set.ids.join("\n"))} className="h-8 px-2 rounded-lg border text-xs" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>Копіювати</button>
-                <button type="button" title="Видалити" onClick={() => persistSavedSets(savedSets.filter((item) => item.id !== set.id))} className="h-8 px-2 rounded-lg border text-xs" style={{ borderColor: "rgba(239,68,68,.35)", color: "#b91c1c", background: "rgba(239,68,68,.08)" }}>×</button>
-              </div>
-            ))}
+              );
+            })}
+          </nav>
+          <div className="mt-8 rounded-xl border border-[#304152] bg-[#1d2a36] p-3">
+            <div className="text-[9px] font-bold uppercase tracking-[.14em] text-[#7f90a0]">Поточний фільтр</div>
+            <div className="mt-2 text-[10px] font-bold leading-4 text-[#dce8f3]">{data.filter.label}</div>
+            <div className="mt-1 text-[9px] leading-4 text-[#8192a2]">Дані продажів оновлюються з облікової системи щодня.</div>
           </div>
-        )}
-      </section>
+        </aside>
 
-      <StatusFilter
-        selectedStatuses={selectedStatuses}
-        onReset={resetStatuses}
-        onToggle={toggleStatus}
-      />
-
-      <section className="rounded-xl border p-5" style={{ borderColor: "rgba(17,141,255,.28)", background: "linear-gradient(135deg, rgba(17,141,255,.10), rgba(34,197,94,.10))", boxShadow: "var(--shadow-sm)" }}>
-        <div className="grid gap-5 xl:items-center">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-normal" style={{ color: "var(--text-dim)" }}>
-              План місяця · {plan.month}
+        <main className="min-w-0">
+          <header className="flex flex-col gap-3 border-b border-[#e1e4e8] bg-white px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="text-xs text-[#8b949e]">Аналіз продажів&nbsp; / &nbsp;<b className="text-[#27313c]">{activeView.label}</b></div>
+            <div className="flex flex-wrap items-center gap-2">
+              {refreshing && <span className="rounded-lg bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2]">Оновлення…</span>}
+              <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">облікова система + GA4</b></span>
             </div>
-            <div className="mt-2 flex items-end gap-3 flex-wrap">
-              <div className="text-3xl font-black" style={{ color: "var(--text)" }}>{fmtMoney(plan.revenue)}</div>
-              <div className="text-sm pb-1" style={{ color: "var(--text-dim)" }}>
-                {plan.plan ? `з плану ${fmtMoney(plan.plan)}` : "план ще не заданий"}
+          </header>
+
+          <div className="p-4 sm:p-5 xl:p-6">
+            <section className="mb-5 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div>
+                <div className="mb-1 text-[10px] font-black uppercase tracking-[.2em] text-[#118dff]">Sales intelligence</div>
+                <h1 className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">{activeView.label}</h1>
+                <p className="mt-1 text-xs text-[#737d87]">{pageDescriptions[view]}</p>
               </div>
-            </div>
-            <div className="mt-4">
-              <ProgressBar value={planPct} color={planPct >= 100 ? "#22c55e" : "#118dff"} />
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3 text-xs">
-              <div style={{ color: "var(--text-dim)" }}>Виконання: <b style={{ color: "var(--text)" }}>{fmtPct(plan.completionPct)}</b></div>
-              <div style={{ color: "var(--text-dim)" }}>Прогноз: <b style={{ color: "var(--text)" }}>{plan.forecastRevenue ? fmtMoney(plan.forecastRevenue) : "—"}</b></div>
-              <div style={{ color: "var(--text-dim)" }}>Прогноз плану: <b style={{ color: "var(--text)" }}>{fmtPct(forecastPct)}</b></div>
-            </div>
-            <div className="mt-4 grid gap-2 md:grid-cols-2">
-              {plan.segments.filter((segment) => segment.segment !== "Інше").map((segment) => (
-                <div key={segment.segment} className="rounded-lg border p-3" style={{ borderColor: "var(--border)", background: "rgba(255,255,255,.54)" }}>
-                  <div className="text-xs font-bold" style={{ color: "var(--text)" }}>{segment.segment}</div>
-                  <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>{fmtMoney(segment.revenue)} з {fmtMoney(segment.plan)}</div>
-                  <div className="mt-2"><ProgressBar value={segment.completionPct || 0} color="#118dff" /></div>
-                  <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>{fmtPct(segment.completionPct)} · {fmtNum(segment.goods)} шт</div>
+              <div className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-bold ${view === "web" && webMetrics?.mode === "demo" ? "border-[#f1d18f] bg-[#fff8e8] text-[#9b6817]" : "border-[#cfe3f5] bg-[#eef7ff] text-[#176aa8]"}`}>
+                <span className={`h-2 w-2 rounded-full ${view === "web" && webMetrics?.mode === "demo" ? "bg-[#e39a25]" : "bg-[#20a66a]"}`} /> {view === "web" && webMetrics?.mode === "demo" ? "Тестові дані" : "Актуальні дані"}
+              </div>
+            </section>
+
+            {error && <div className="mb-4 rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
+
+            <section className="mb-5 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="min-w-[150px] flex-1 sm:max-w-[190px]">
+                  <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата від</span>
+                  <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
+                </label>
+                <label className="min-w-[150px] flex-1 sm:max-w-[190px]">
+                  <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата до</span>
+                  <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
+                </label>
+                <button type="button" onClick={applyCurrentMonth} className="h-9 rounded-lg border-0 bg-[#118dff] px-3 text-[10px] font-bold text-white">Поточний місяць</button>
+                <button type="button" onClick={applyPreviousMonth} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Минулий місяць</button>
+                <button type="button" onClick={applyAllPeriod} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Весь період</button>
+                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{data.filter.label}</b></div>
+              </div>
+            </section>
+
+            {view === "overview" && (
+              <div className="space-y-4">
+                <section className="overflow-hidden rounded-2xl border border-[#9cccf6] bg-[linear-gradient(135deg,#eef7ff_0%,#f2fbf6_100%)] p-5 shadow-sm">
+                  <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_330px] xl:items-center">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-[10px] font-black uppercase tracking-[.16em] text-[#5882a7]">Загальне виконання плану · {fmtMonth(plan.month)}</div>
+                        <span className="rounded-full bg-white/80 px-2 py-1 text-[9px] font-bold text-[#1771b5]">Повністю відвантажено</span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-end gap-3">
+                        <div className="text-3xl font-black tracking-tight text-[#202a35] sm:text-4xl">{fmtMoney(plan.revenue)}</div>
+                        <div className="pb-1 text-xs text-[#687784]">{plan.plan ? `із ${fmtMoney(plan.plan)}` : "план ще не заданий"}</div>
+                      </div>
+                      <div className="mt-5"><ProgressBar value={planPct} color={planPct >= 100 ? "#20a66a" : "#118dff"} /></div>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                        <div><div className="text-[9px] font-bold uppercase text-[#7f8c97]">Виконання</div><div className="mt-1 text-lg font-black text-[#26313d]">{fmtPct(plan.completionPct)}</div></div>
+                        <div><div className="text-[9px] font-bold uppercase text-[#7f8c97]">Прогноз</div><div className="mt-1 text-lg font-black text-[#26313d]">{plan.forecastRevenue ? fmtMoney(plan.forecastRevenue) : "—"}</div></div>
+                        <div><div className="text-[9px] font-bold uppercase text-[#7f8c97]">Прогноз плану</div><div className="mt-1 text-lg font-black text-[#26313d]">{fmtPct(forecastPct)}</div></div>
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      {plan.segments.filter((segment) => segment.segment !== "Інше").map((segment) => (
+                        <div key={segment.segment} className="rounded-xl border border-white/80 bg-white/75 p-3">
+                          <div className="flex items-center justify-between gap-3 text-[10px]"><b className="text-[#33404c]">{segment.segment}</b><span className="font-black text-[#1771b5]">{fmtPct(segment.completionPct)}</span></div>
+                          <div className="mt-1 text-[9px] text-[#7e8994]">{fmtMoney(segment.revenue)} із {fmtMoney(segment.plan)}</div>
+                          <div className="mt-2"><ProgressBar value={segment.completionPct || 0} color="#118dff" /></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <SalesMetricCard label="Продажі · до минулого року" value={fmtMoney(data.summary.shippedRevenue)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedRevenue, comparisonData?.summary.shippedRevenue || 0, fmtMoney)} symbol={comparisonData && data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "↗" : "↘"} tone={comparisonData && data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "#20a66a" : "#e45858"} />
+                  <SalesMetricCard label="Відвантажено документів" value={fmtNum(data.summary.shippedDocs)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedDocs, comparisonData?.summary.shippedDocs || 0, fmtNum)} symbol="D" tone="#118dff" />
+                  <SalesMetricCard label="Відвантажено товарів" value={fmtNum(data.summary.shippedGoods)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedGoods, comparisonData?.summary.shippedGoods || 0, (value) => `${fmtNum(value)} шт`)} symbol="#" tone="#805ad5" />
+                  <SalesMetricCard label="Плитка" value={fmtMoney(currentTile?.revenue || 0)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentTile?.revenue || 0, previousTile?.revenue || 0, fmtMoney)} symbol="P" tone="#e39a25" />
+                  <SalesMetricCard label="Сантехніка" value={fmtMoney(currentPlumbing?.revenue || 0)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentPlumbing?.revenue || 0, previousPlumbing?.revenue || 0, fmtMoney)} symbol="S" tone="#20a66a" />
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
+                <SalesTrendChart days={data.summary.byDate} />
+                <OrdersTrendChart days={data.summary.ordersByDate || []} />
+              </div>
+            )}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Сума документів" value={fmtMoney(data.summary.selected.revenue)} hint={`${fmtNum(data.summary.selected.docs)} документів · ${statusLabel}`} accent="#118dff" />
-        <KpiCard label="Товарів у документах" value={fmtNum(data.summary.selected.goods)} hint={`за фільтром ${statusLabel}`} accent="#22c55e" />
-        <KpiCard label="Повернення" value={fmtMoney(data.summary.selected.returnedRevenue)} accent="#f59e0b" />
-        <KpiCard label="Скасовано" value={fmtNum(data.summary.selected.canceledDocs)} hint={fmtMoney(data.summary.selected.canceledRevenue)} accent="#ef4444" />
+            {view === "web" && (
+              <div className="space-y-4">
+                {webMetrics?.mode === "demo" && <div className="rounded-xl border border-[#f1d18f] bg-[#fff8e8] p-4 text-xs text-[#805b1d]"><div className="font-black uppercase tracking-[.1em]">Тестові дані</div><div className="mt-1 leading-relaxed">{webMetrics.notice}</div></div>}
+                <div className="grid gap-3 md:grid-cols-3">
+                  <SalesMetricCard label="Користувачі за період" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtNum(webMetrics?.totals.visits || 0)} hint="GA4-сесії з України" symbol="U" tone="#805ad5" />
+                  <SalesMetricCard label="Товарів у кошику" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtNum(webMetrics?.totals.cartItems || 0)} hint={webMetricsError ? "GA4 не підключено локально" : `${fmtNum(webMetrics?.totals.carts || 0)} кошиків · середнє ${fmtDecimal(webMetrics?.totals.avgCartItems ?? null)}`} symbol="C" tone="#e39a25" />
+                  <SalesMetricCard label="Кількість замовлень" value={fmtNum(data.summary.selected.docs)} hint={`${fmtMoney(data.summary.selected.revenue)} обороту`} symbol="O" tone="#20a66a" />
+                </div>
+                {webMetricsError && <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs text-[#b73535]">Вебаналітика недоступна: {webMetricsError}</div>}
+                <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+                    <div><h2 className="text-sm font-black text-[#26313d]">Вебаналітика по місяцях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Кошик фіксується в момент початку оформлення · джерело production: BigQuery + каталог «Аналізу карток товару»</p></div>
+                    {webMetrics?.dataThrough && <span className="text-[10px] text-[#7b8691]">Дані по {fmtIsoDateShort(webMetrics.dataThrough)}</span>}
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[650px] border-collapse text-xs">
+                      <thead className="bg-[#f7f9fb] text-[#75808b]"><tr><th className="px-5 py-3 text-left">Місяць</th><th className="px-4 py-3 text-right">Користувачі</th><th className="px-4 py-3 text-right">Кошики</th><th className="px-4 py-3 text-right">Товарів у кошиках</th><th className="px-5 py-3 text-right">Середнє</th></tr></thead>
+                      <tbody>{(webMetrics?.months || []).map((month) => <tr key={month.month} className="border-t border-[#edf0f2]"><td className="px-5 py-3 font-bold text-[#33404c]">{fmtMonth(month.month)}</td><td className="px-4 py-3 text-right tabular-nums">{fmtNum(month.visits)}</td><td className="px-4 py-3 text-right tabular-nums text-[#687582]">{fmtNum(month.carts)}</td><td className="px-4 py-3 text-right tabular-nums text-[#687582]">{fmtNum(month.cartItems)}</td><td className="px-5 py-3 text-right font-black tabular-nums text-[#b26f11]">{fmtDecimal(month.avgCartItems)}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </section>
+                {!webMetricsError && webMetrics?.conversions && (
+                  <section>
+                    <div className="mb-3"><h2 className="text-sm font-black text-[#26313d]">Топ конверсій</h2><p className="mt-1 text-[10px] text-[#8a939c]">{webMetrics.conversions.definition} · мінімум {fmtNum(webMetrics.conversions.minimumViews)} переглядів</p></div>
+                    <div className="grid gap-4 xl:grid-cols-3">
+                      <ConversionRanking title="Категорії" rows={webMetrics.conversions.categories} />
+                      <ConversionRanking title="Бренди" rows={webMetrics.conversions.brands} />
+                      <ConversionRanking title="Товари" rows={webMetrics.conversions.products} />
+                    </div>
+                  </section>
+                )}
+              </div>
+            )}
+
+            {view === "brands" && <CategoryRankingList title="Продажі за брендами" itemNoun="бренд" color="#20a66a" items={data.summary.brands} comparisonItems={comparisonData?.summary.brands || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={brandProducts} expandedCategory={expandedBrand} loadingCategory={loadingBrand} categoryError={brandError} onToggleCategory={(brand) => setExpandedBrand((current) => current === brand ? null : brand)} />}
+
+            {view === "categories" && <CategoryRankingList title="Продажі за категоріями" itemNoun="категорію" color="#e39a25" items={data.summary.categories} comparisonItems={comparisonData?.summary.categories || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={categoryProducts} expandedCategory={expandedCategory} loadingCategory={loadingCategory} categoryError={categoryError} onToggleCategory={(category) => setExpandedCategory((current) => current === category ? null : category)} />}
+
+            {view === "department" && (
+              <div className="space-y-4">
+                <ManagerPlanOverview managers={data.summary.managers || []} month={plan.month} selectedSeller={selectedManager} onSelectSeller={setSelectedManager} />
+                <DocumentStatusOverview states={selectedManagerData?.states || data.summary.states} cancelReasons={selectedManagerData?.cancelReasons || data.summary.cancelReasons || []} documentStatusesBySegment={[]} title={`Статуси та скасування · ${selectedManager || "Усі менеджери"}`} showSegmentFilter={false} />
+              </div>
+            )}
+
+            {view === "statuses" && (
+              <div className="space-y-4">
+                <DocumentSegmentFilter value={selectedDocumentSegment} onChange={setSelectedDocumentSegment} />
+                <StatusFilter selectedStatuses={selectedStatuses} onReset={resetStatuses} onToggle={toggleStatus} />
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <SalesMetricCard label="Усього документів" value={fmtNum(statusDocsTotal)} hint={`сегмент: ${selectedDocumentSegment}`} symbol="Σ" tone="#118dff" />
+                  <SalesMetricCard label="Сума документів" value={fmtMoney(statusRevenueTotal)} hint={`${statusLabel} · ${selectedDocumentSegment}`} symbol="₴" tone="#20a66a" />
+                  <SalesMetricCard label="Скасовано" value={fmtNum(canceledStatusDocs)} hint={fmtMoney(canceledStatusRevenue)} symbol="×" tone="#e45858" />
+                </div>
+                <StatusSummaryList title={`Статуси документів · ${selectedDocumentSegment}`} subtitle="Кількість, частка та сума по кожному статусу всередині вибраного сегмента" rows={visibleStatusRows} labelKey="state" />
+              </div>
+            )}
+
+            {view === "cancellations" && (
+              <div className="space-y-4">
+                <DocumentSegmentFilter value={selectedDocumentSegment} onChange={setSelectedDocumentSegment} />
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <SalesMetricCard label="Скасованих документів" value={fmtNum(canceledStatusDocs)} hint={`сегмент: ${selectedDocumentSegment}`} symbol="×" tone="#e45858" />
+                  <SalesMetricCard label="Сума скасувань" value={fmtMoney(canceledStatusRevenue)} hint="втрачений оборот" symbol="₴" tone="#e39a25" />
+                  <SalesMetricCard label="Частка скасувань" value={statusDocsTotal ? fmtPct((canceledStatusDocs / statusDocsTotal) * 100) : "—"} hint="від документів сегмента" symbol="%" tone="#805ad5" />
+                </div>
+                <StatusSummaryList title={`Причини скасування · ${selectedDocumentSegment}`} subtitle="Частка кожної причини серед скасувань вибраного сегмента" rows={visibleCancelReasonRows} labelKey="reason" tone="#e45858" shareLabel="від скасувань" />
+              </div>
+            )}
+          </div>
+        </main>
       </div>
-
-      <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
-        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-          <div>
-            <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Помісячна вебаналітика · Україна</div>
-            <div className="mt-1 text-xs" style={{ color: "var(--text-dim)" }}>
-              Відвідування = GA4-сесії; кошик = склад товарів у момент початку оформлення.
-            </div>
-          </div>
-          {webMetrics?.dataThrough && (
-            <div className="text-xs" style={{ color: "var(--text-dim)" }}>
-              Дані по {fmtIsoDateShort(webMetrics.dataThrough)}
-            </div>
-          )}
-        </div>
-        {webMetricsLoading && (
-          <div className="py-6 text-center text-xs" style={{ color: "var(--text-dim)" }}>Завантаження GA4…</div>
-        )}
-        {!webMetricsLoading && webMetricsError && (
-          <div className="rounded-lg border px-3 py-3 text-xs" style={{ borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>
-            Вебаналітика недоступна: {webMetricsError}
-          </div>
-        )}
-        {!webMetricsLoading && webMetrics && (
-          <>
-            <div className="mb-3 grid gap-3 sm:grid-cols-2">
-              <KpiCard label="Відвідування сайту" value={fmtNum(webMetrics.totals.visits)} hint="сесії з України за обраний період" accent="#7c3aed" />
-              <KpiCard label="Середня кількість товарів у е-кошику" value={fmtDecimal(webMetrics.totals.avgCartItems)} hint={`${fmtNum(webMetrics.totals.carts)} кошиків на етапі checkout`} accent="#f59e0b" />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse">
-                <thead style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>
-                  <tr>
-                    <th className="text-left px-3 py-2">Місяць</th>
-                    <th className="text-right px-3 py-2">Відвідування</th>
-                    <th className="text-right px-3 py-2">Кошики</th>
-                    <th className="text-right px-3 py-2">Товарів у кошиках</th>
-                    <th className="text-right px-3 py-2">Середня к-ть товарів</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {webMetrics.months.map((month) => (
-                    <tr key={month.month} className="border-t" style={{ borderColor: "var(--border)" }}>
-                      <td className="px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text)" }}>{fmtMonth(month.month)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(month.visits)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(month.carts)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--text-dim)" }}>{fmtNum(month.cartItems)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-bold" style={{ color: "#b45309" }}>{fmtDecimal(month.avgCartItems)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </section>
-
-      <SalesByDateDisclosure
-        days={data.summary.byDate}
-      />
-
-      <RankingList title="Бренди" items={data.summary.brands} maxRevenue={maxBrandRevenue} color="#22c55e" />
-
-      <section className="grid gap-4 xl:grid-cols-2">
-        <CategoryRankingList
-          items={data.summary.categories}
-          productsByCategory={categoryProducts}
-          maxRevenue={maxCategoryRevenue}
-          expandedCategory={expandedCategory}
-          loadingCategory={loadingCategory}
-          categoryError={categoryError}
-          onToggleCategory={(category) => setExpandedCategory((current) => (current === category ? null : category))}
-        />
-        <DocumentStatusOverview
-          states={data.summary.states}
-          cancelReasons={data.summary.cancelReasons || []}
-          documentStatusesBySegment={data.summary.documentStatusesBySegment || []}
-        />
-      </section>
-
-      <ManagerPlanOverview
-        managers={data.summary.managers || []}
-        month={plan.month}
-        selectedSeller={selectedManager}
-        onSelectSeller={setSelectedManager}
-      />
-
-      <DocumentStatusOverview
-        states={selectedManager
-          ? data.summary.managers.find((manager) => manager.seller === selectedManager)?.states || []
-          : data.summary.states}
-        cancelReasons={selectedManager
-          ? data.summary.managers.find((manager) => manager.seller === selectedManager)?.cancelReasons || []
-          : data.summary.cancelReasons || []}
-        documentStatusesBySegment={[]}
-        title={`Статуси документів і причини скасування · ${selectedManager || "Усі менеджери"}`}
-        showSegmentFilter={false}
-      />
-
-      {showProductSetModal && (
-        <ProductSetModal
-          initialText={productSet?.rawText || ""}
-          onApply={(ids, rawText) => setProductSet({ ids, rawText })}
-          onClose={() => setShowProductSetModal(false)}
-        />
-      )}
     </div>
   );
 }

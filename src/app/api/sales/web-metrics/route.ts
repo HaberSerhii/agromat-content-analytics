@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readSalesWebMetrics } from "@/lib/sales-web-metrics";
+import { buildDemoSalesWebMetrics, readSalesWebMetrics } from "@/lib/sales-web-metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +16,11 @@ function currentKyivDate() {
 }
 
 export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const today = currentKyivDate();
+  const from = url.searchParams.get("from") || `${today.slice(0, 4)}-01-01`;
+  const to = url.searchParams.get("to") || today;
   try {
-    const url = new URL(req.url);
-    const today = currentKyivDate();
-    const from = url.searchParams.get("from") || `${today.slice(0, 4)}-01-01`;
-    const to = url.searchParams.get("to") || today;
     const dataset = await readSalesWebMetrics({ from, to });
     return NextResponse.json(dataset, {
       headers: {
@@ -28,7 +28,21 @@ export async function GET(req: Request) {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Не вдалося завантажити вебаналітику";
-    return NextResponse.json({ error: message }, { status: 500 });
+    if (process.env.NODE_ENV === "production") {
+      console.error("[sales-web-metrics] live source unavailable", error);
+      return NextResponse.json({ error: "Не вдалося завантажити production-вебаналітику. Спробуйте пізніше." }, { status: 503 });
+    }
+    console.warn("[sales-web-metrics] live source unavailable; serving demo data", error);
+    try {
+      return NextResponse.json(buildDemoSalesWebMetrics({ from, to }), {
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Agromat-Data-Mode": "demo",
+        },
+      });
+    } catch (rangeError) {
+      const message = rangeError instanceof Error ? rangeError.message : "Некоректний період";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   }
 }

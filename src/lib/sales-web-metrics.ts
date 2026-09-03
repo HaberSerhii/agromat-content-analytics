@@ -3,6 +3,8 @@ import {
   bigQueryCacheDay,
   readThroughBigQueryCache,
 } from "@/lib/bigquery-result-cache";
+import { readAllLite } from "@/lib/products-store";
+import { readCompletedSalesProductQuantities } from "@/lib/sales-s3";
 
 export type SalesWebMetricMonth = {
   month: string;
@@ -13,6 +15,8 @@ export type SalesWebMetricMonth = {
 };
 
 export type SalesWebMetricsDataset = {
+  mode: "live" | "demo";
+  notice: string | null;
   filter: {
     from: string;
     to: string;
@@ -30,6 +34,22 @@ export type SalesWebMetricsDataset = {
     cartItems: number;
     avgCartItems: number | null;
   };
+  conversions: {
+    definition: string;
+    minimumViews: number;
+    categories: SalesConversionRow[];
+    brands: SalesConversionRow[];
+    products: SalesConversionRow[];
+  };
+};
+
+export type SalesConversionRow = {
+  key: string;
+  label: string;
+  views: number;
+  soldQty: number;
+  conversionPct: number;
+  url?: string;
 };
 
 type QueryRow = {
@@ -40,6 +60,15 @@ type QueryRow = {
   avg_cart_items: number | string | null;
   data_through: string | { value?: string } | null;
 };
+
+type ProductViewQueryRow = {
+  goods_ref: number | string | null;
+  views: number | string | null;
+};
+
+const MIN_CONVERSION_VIEWS = 20;
+const CONVERSION_LIMIT = 20;
+const DEMO_NOTICE = "Тестові дані для локального перегляду. У production метрики беруться з BigQuery та каталогу товарів — тих самих джерел, що й «Аналіз карток товару».";
 
 function projectId() {
   return process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413";
@@ -154,29 +183,224 @@ ORDER BY calendar.month
 `;
 }
 
+function buildProductViewsSql() {
+  const project = projectId().replace(/`/g, "");
+  const dataset = datasetId().replace(/`/g, "");
+  return `
+SELECT
+  SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) AS goods_ref,
+  COUNT(*) AS views
+FROM \`${project}.${dataset}.events_*\` AS event
+CROSS JOIN UNNEST(event.items) AS item
+WHERE _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
+  AND event.event_name = 'view_item'
+  AND event.geo.country = 'Ukraine'
+  AND SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) IS NOT NULL
+GROUP BY goods_ref
+`;
+}
+
+function conversionPct(soldQty: number, views: number) {
+  return views > 0 ? (soldQty / views) * 100 : 0;
+}
+
+function monthKeys(from: string, to: string) {
+  const start = parseIsoDate(from);
+  const end = parseIsoDate(to);
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1, 12));
+  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1, 12));
+  const result: string[] = [];
+  while (cursor <= last) {
+    result.push(cursor.toISOString().slice(0, 7));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return result;
+}
+
+function demoConversionRows(labels: string[], kind: "category" | "brand" | "product"): SalesConversionRow[] {
+  const baseViews = kind === "category" ? 8_400 : kind === "brand" ? 6_200 : 1_450;
+  const viewStep = kind === "category" ? 247 : kind === "brand" ? 193 : 47;
+  return labels.map((label, index) => {
+    const views = baseViews - index * viewStep;
+    const targetConversion = 12.6 - index * 0.48;
+    const soldQty = Math.max(1, Math.round(views * targetConversion / 100));
+    return {
+      key: `${kind}-${index + 1}`,
+      label,
+      views,
+      soldQty,
+      conversionPct: conversionPct(soldQty, views),
+    };
+  });
+}
+
+export function buildDemoSalesWebMetrics(input: { from: string; to: string }): SalesWebMetricsDataset {
+  const range = normalizeRange(input.from, input.to);
+  const months = monthKeys(range.from, range.to).map((month, index): SalesWebMetricMonth => {
+    const visits = 24_800 + index * 2_140 + (index % 3) * 780;
+    const carts = Math.round(visits * (0.079 + (index % 4) * 0.004));
+    const avgCartItems = 2.34 + (index % 5) * 0.13;
+    const cartItems = Math.round(carts * avgCartItems);
+    return { month, visits, carts, cartItems, avgCartItems: cartItems / carts };
+  });
+  const totals = months.reduce(
+    (summary, month) => ({
+      visits: summary.visits + month.visits,
+      carts: summary.carts + month.carts,
+      cartItems: summary.cartItems + month.cartItems,
+      avgCartItems: null,
+    }),
+    { visits: 0, carts: 0, cartItems: 0, avgCartItems: null as number | null },
+  );
+  totals.avgCartItems = totals.carts > 0 ? totals.cartItems / totals.carts : null;
+
+  const categories = [
+    "Плитка для підлоги", "Керамограніт", "Змішувачі", "Унітази", "Раковини",
+    "Ванни", "Душові системи", "Інсталяції", "Меблі для ванної", "Ламінат",
+    "Вініл", "Мозаїка", "Клінкер", "Водонагрівачі", "Кухонні мийки",
+    "Дзеркала", "Рушникосушки", "Сифони", "Клеї", "Затирки",
+  ];
+  const brands = [
+    "Cersanit", "Grohe", "Geberit", "Hansgrohe", "Devit", "Baldocer", "Opoczno",
+    "Villeroy & Boch", "Kaldewei", "Cerrad", "Primera", "Viega", "Tece", "Paffoni",
+    "Simas", "EcoFlow", "Ceramika Gres", "Mainzu", "APE", "Golden Tile",
+  ];
+  const products = [
+    "Керамограніт Urban Sand 60×60", "Змішувач Eurosmart для умивальника", "Інсталяція Duofix комплект",
+    "Унітаз підвісний City Clean", "Плитка Calacatta White 60×120", "Душова система Raindance",
+    "Раковина накладна Forma 55", "Ванна акрилова Comfort 170", "Кухонна мийка Linea 50",
+    "Тумба з умивальником Loft 80", "Ламінат Oak Natural 8 мм", "Дзеркало LED Smart 80",
+    "Змішувач для кухні Focus", "Керамограніт Stone Grey 30×60", "Рушникосушка Classic 500",
+    "Сифон для умивальника Compact", "Мозаїка Marble Mix", "Клей для плитки ProFlex 25 кг",
+    "Затирка Color 2 кг", "Клінкер фасадний Terra",
+  ];
+
+  return {
+    mode: "demo",
+    notice: DEMO_NOTICE,
+    filter: { ...range, country: "Ukraine" },
+    definition: {
+      visits: "Демонстраційні GA4-сесії (session_start)",
+      averageCartItems: "Демонстраційна середня кількість товарів у begin_checkout",
+    },
+    dataThrough: range.to,
+    months,
+    totals,
+    conversions: {
+      definition: "Продані одиниці у повністю завершених замовленнях / перегляди картки товару",
+      minimumViews: MIN_CONVERSION_VIEWS,
+      categories: demoConversionRows(categories, "category"),
+      brands: demoConversionRows(brands, "brand"),
+      products: demoConversionRows(products, "product"),
+    },
+  };
+}
+
+async function readConversionRankings(range: { from: string; to: string }) {
+  const cacheKey = `${range.from}:${range.to}`;
+  const [viewRows, products, soldQtyByCode] = await Promise.all([
+    readThroughBigQueryCache<ProductViewQueryRow[]>({
+      namespace: "sales-conversion-product-views",
+      key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
+      load: async () => {
+        const bigQuery = new BigQuery({ projectId: projectId() });
+        const [rows] = await bigQuery.query({
+          query: buildProductViewsSql(),
+          params: {
+            suffixFrom: range.from.replaceAll("-", ""),
+            suffixTo: range.to.replaceAll("-", ""),
+          },
+          location: "EU",
+          maximumBytesBilled: "50000000000",
+        });
+        return rows as ProductViewQueryRow[];
+      },
+    }),
+    readAllLite(),
+    readCompletedSalesProductQuantities(range),
+  ]);
+  const productsByGoodsRef = new Map(products.map((product) => [product.goodsRef, product]));
+  const categoryTotals = new Map<string, { views: number; soldQty: number }>();
+  const brandTotals = new Map<string, { views: number; soldQty: number }>();
+  const productRows: SalesConversionRow[] = [];
+
+  for (const row of viewRows) {
+    const goodsRef = scalar(row.goods_ref);
+    const views = scalar(row.views);
+    const product = productsByGoodsRef.get(goodsRef);
+    if (!product || views <= 0) continue;
+    const soldQty = soldQtyByCode.get(product.code) || 0;
+    const category = product.categoryName || "Без категорії";
+    const brand = product.brand || "Без бренду";
+    const categoryTotal = categoryTotals.get(category) || { views: 0, soldQty: 0 };
+    categoryTotal.views += views;
+    categoryTotal.soldQty += soldQty;
+    categoryTotals.set(category, categoryTotal);
+    const brandTotal = brandTotals.get(brand) || { views: 0, soldQty: 0 };
+    brandTotal.views += views;
+    brandTotal.soldQty += soldQty;
+    brandTotals.set(brand, brandTotal);
+    if (views >= MIN_CONVERSION_VIEWS && soldQty > 0) {
+      productRows.push({
+        key: String(product.code),
+        label: product.name,
+        views,
+        soldQty,
+        conversionPct: conversionPct(soldQty, views),
+        url: product.url,
+      });
+    }
+  }
+
+  const groupedRows = (totals: Map<string, { views: number; soldQty: number }>): SalesConversionRow[] => (
+    [...totals.entries()]
+      .filter(([, value]) => value.views >= MIN_CONVERSION_VIEWS && value.soldQty > 0)
+      .map(([label, value]) => ({
+        key: label,
+        label,
+        views: value.views,
+        soldQty: value.soldQty,
+        conversionPct: conversionPct(value.soldQty, value.views),
+      }))
+      .sort((left, right) => right.conversionPct - left.conversionPct || right.soldQty - left.soldQty)
+      .slice(0, CONVERSION_LIMIT)
+  );
+  productRows.sort((left, right) => right.conversionPct - left.conversionPct || right.soldQty - left.soldQty);
+  return {
+    definition: "Продані одиниці у повністю завершених замовленнях / перегляди картки товару",
+    minimumViews: MIN_CONVERSION_VIEWS,
+    categories: groupedRows(categoryTotals),
+    brands: groupedRows(brandTotals),
+    products: productRows.slice(0, CONVERSION_LIMIT),
+  };
+}
+
 export async function readSalesWebMetrics(input: {
   from: string;
   to: string;
 }): Promise<SalesWebMetricsDataset> {
   const range = normalizeRange(input.from, input.to);
   const cacheKey = `${range.from}:${range.to}`;
-  const rows = await readThroughBigQueryCache<QueryRow[]>({
-    namespace: "sales-web-metrics",
-    key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
-    load: async () => {
-      const bigQuery = new BigQuery({ projectId: projectId() });
-      const [queryRows] = await bigQuery.query({
-        query: buildSql(),
-        params: {
-          suffixFrom: range.from.replaceAll("-", ""),
-          suffixTo: range.to.replaceAll("-", ""),
-        },
-        location: "EU",
-        maximumBytesBilled: "50000000000",
-      });
-      return queryRows as QueryRow[];
-    },
-  });
+  const [rows, conversions] = await Promise.all([
+    readThroughBigQueryCache<QueryRow[]>({
+      namespace: "sales-web-metrics",
+      key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
+      load: async () => {
+        const bigQuery = new BigQuery({ projectId: projectId() });
+        const [queryRows] = await bigQuery.query({
+          query: buildSql(),
+          params: {
+            suffixFrom: range.from.replaceAll("-", ""),
+            suffixTo: range.to.replaceAll("-", ""),
+          },
+          location: "EU",
+          maximumBytesBilled: "50000000000",
+        });
+        return queryRows as QueryRow[];
+      },
+    }),
+    readConversionRankings(range),
+  ]);
   const months = rows.map((row): SalesWebMetricMonth => ({
     month: dateScalar(row.month) || "",
     visits: scalar(row.visits),
@@ -195,6 +419,8 @@ export async function readSalesWebMetrics(input: {
   );
   totals.avgCartItems = totals.carts > 0 ? totals.cartItems / totals.carts : null;
   const value: SalesWebMetricsDataset = {
+    mode: "live",
+    notice: null,
     filter: { ...range, country: "Ukraine" },
     definition: {
       visits: "Унікальні GA4-сесії (session_start)",
@@ -203,6 +429,7 @@ export async function readSalesWebMetrics(input: {
     dataThrough: dateScalar(rows[0]?.data_through ?? null),
     months,
     totals,
+    conversions,
   };
   return value;
 }

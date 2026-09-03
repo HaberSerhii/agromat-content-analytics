@@ -55,6 +55,12 @@ export type SalesDateSummary = {
   revenue: number;
 };
 
+export type SalesOrderDateSummary = {
+  date: string;
+  docs: number;
+  managers: Array<{ seller: string; docs: number }>;
+};
+
 export type SalesMonthSummary = {
   month: string;
   docs: number;
@@ -148,8 +154,10 @@ export type SalesDataset = {
     };
     plan: SalesPlanSummary;
     byDate: SalesDateSummary[];
+    ordersByDate: SalesOrderDateSummary[];
     months: SalesMonthSummary[];
     segments: SalesBucketSummary[];
+    shippedSegments: SalesBucketSummary[];
     brands: SalesBucketSummary[];
     categories: SalesBucketSummary[];
     categoryProducts: Record<string, SalesProductSummary[]>;
@@ -568,10 +576,6 @@ function finishBuckets(map: Map<string, MutableBucket>) {
     .sort((a, b) => b.revenue - a.revenue);
 }
 
-function topBuckets(map: Map<string, MutableBucket>, limit: number) {
-  return finishBuckets(map).slice(0, limit);
-}
-
 function finishSegmentBuckets(map: Map<string, MutableBucket>) {
   const buckets = new Map(finishBuckets(map).map((bucket) => [bucket.label, bucket]));
   return SALES_PLAN_SEGMENTS.map((segment) => buckets.get(segment) || {
@@ -612,6 +616,18 @@ function addDate(map: Map<string, SalesDateSummary>, date: string, row: SalesRow
   map.set(date, item);
 }
 
+function addOrderDate(
+  map: Map<string, { date: string; docs: number; managers: Map<string, number> }>,
+  date: string,
+  seller: string,
+) {
+  const item = map.get(date) || { date, docs: 0, managers: new Map<string, number>() };
+  item.docs += 1;
+  const manager = managerLabel(seller);
+  item.managers.set(manager, (item.managers.get(manager) || 0) + 1);
+  map.set(date, item);
+}
+
 function addState(map: Map<string, { state: string; docs: number; revenue: number }>, state: string, revenue: number) {
   const label = state || "Без статусу";
   const item = map.get(label) || { state: label, docs: 0, revenue: 0 };
@@ -633,11 +649,12 @@ function addCategoryProduct(
   item: ParsedSalesItem,
   row: SalesRow,
   fallbackRevenue: number,
+  groupKey = item.category,
 ) {
-  let products = map.get(item.category);
+  let products = map.get(groupKey);
   if (!products) {
     products = new Map<string, MutableSalesProductSummary>();
-    map.set(item.category, products);
+    map.set(groupKey, products);
   }
   const key = item.code || `${item.name}:${item.brand}`;
   const current = products.get(key) || {
@@ -855,10 +872,12 @@ function buildDataset(
   const matchedProductCodes = new Set<number>();
   const filteredRows: ParsedSalesRow[] = [];
   const byDate = new Map<string, SalesDateSummary>();
+  const ordersByDate = new Map<string, { date: string; docs: number; managers: Map<string, number> }>();
   const months = new Map<string, SalesMonthSummary>();
   const allMonths = new Map<string, SalesMonthSummary>();
   const allReturnedRevenueByMonth = new Map<string, number>();
   const segments = new Map<string, MutableBucket>();
+  const shippedSegments = new Map<string, MutableBucket>();
   const allSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
   const brands = new Map<string, MutableBucket>();
   const categories = new Map<string, MutableBucket>();
@@ -909,6 +928,14 @@ function buildDataset(
 
   for (const row of rows) {
     const goodsCodes = row.goodsCodeNumbers;
+    if (
+      matchesProductCodes(goodsCodes, productCodeSet)
+      && (statusSet.size === 0 || statusSet.has(row.state || "Без статусу"))
+      && isWithinOptionalFilter(row.createdDate, filter)
+      && !isExcludedAnalyticsOrder(row)
+    ) {
+      addOrderDate(ordersByDate, row.createdDate, row.seller);
+    }
     if (matchesProductCodes(goodsCodes, productCodeSet)) {
       const statusDate = row.shippedDate || row.createdDate;
       const statusIgnoresDate = isShipmentAllowed(row.state);
@@ -972,13 +999,6 @@ function buildDataset(
       }
 
       addBucket(segments, row.planGroup, row, row.docsSum, row.goodsCount);
-      for (const item of row.items) {
-        addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount);
-        addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount);
-        if (categoryProductsMode === "all" || categoryProductsMode === item.category) {
-          addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
-        }
-      }
     }
 
     if (!isShipped(row) || !row.shippedDate) continue;
@@ -995,6 +1015,15 @@ function buildDataset(
     addBucket(allMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
+    if (isWithinOptionalFilter(row.shippedDate, filter) && !isExcludedAnalyticsOrder(row)) {
+      for (const item of row.items) {
+        addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
+        addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
+        if (categoryProductsMode === "all" || categoryProductsMode === item.category) {
+          addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
+        }
+      }
+    }
     if (!isExcludedAnalyticsOrder(row)) {
       let managerMonthRevenue = managerPlanRevenueByMonth.get(shippedMonth);
       if (!managerMonthRevenue) {
@@ -1025,6 +1054,7 @@ function buildDataset(
     shippedDocs += 1;
     shippedGoods += row.goodsCount;
     shippedRevenue += row.docsSum;
+    addBucket(shippedSegments, row.planGroup, row, row.docsSum, row.goodsCount);
     if (!firstShippedDate || row.shippedDate < firstShippedDate) firstShippedDate = row.shippedDate;
     if (!lastShippedDate || row.shippedDate > lastShippedDate) lastShippedDate = row.shippedDate;
 
@@ -1035,8 +1065,8 @@ function buildDataset(
   const monthList = [...months.values()].sort((a, b) => a.month.localeCompare(b.month));
   const allMonthList = [...allMonths.values()].sort((a, b) => a.month.localeCompare(b.month));
   const segmentList = finishSegmentBuckets(segments);
-  const brandList = topBuckets(brands, 25);
-  const categoryList = topBuckets(categories, 25);
+  const brandList = finishBuckets(brands);
+  const categoryList = finishBuckets(categories);
   const productCategories = categoryProductsMode === "all"
     ? categoryList
     : categoryProductsMode === false
@@ -1146,8 +1176,18 @@ function buildDataset(
       },
       plan: buildPlanSummary(planMonthList, planReturnedRevenue, planMonthSegments, planMonth),
       byDate: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+      ordersByDate: [...ordersByDate.values()]
+        .map((item) => ({
+          date: item.date,
+          docs: item.docs,
+          managers: [...item.managers.entries()]
+            .map(([seller, docs]) => ({ seller, docs }))
+            .sort((left, right) => right.docs - left.docs),
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
       months: monthList,
       segments: segmentList,
+      shippedSegments: finishSegmentBuckets(shippedSegments),
       brands: brandList,
       categories: categoryList,
       categoryProducts: categoryProductList,
@@ -1164,41 +1204,36 @@ function buildDataset(
   };
 }
 
-function buildCategoryProducts(
+function buildDimensionProducts(
   rows: ParsedSalesRow[],
-  category: string,
+  dimension: "category" | "brand",
+  value: string,
   dateFilter?: SalesDateFilter,
 ): SalesProductSummary[] {
   const filter = getEffectiveFilter(dateFilter);
   const productCodeSet = new Set(filter.productCodes);
-  const statusSet = new Set(filter.statuses);
-  const categoryRevenue = new Map<string, number>();
-  const categoryProducts = new Map<string, Map<string, MutableSalesProductSummary>>();
+  const dimensionRevenue = new Map<string, number>();
+  const dimensionProducts = new Map<string, Map<string, MutableSalesProductSummary>>();
 
   for (const row of rows) {
     if (!matchesProductCodes(row.goodsCodeNumbers, productCodeSet)) continue;
-    if (statusSet.size > 0 && !statusSet.has(row.state || "Без статусу")) continue;
-    const analysisDate = row.shippedDate || row.createdDate;
-    const statusIgnoresDate = statusSet.has("відвантаження дозволено") && isShipmentAllowed(row.state);
-    if (!isWithinOptionalFilter(analysisDate, filter) && !statusIgnoresDate) continue;
+    if (!isShipped(row) || !row.shippedDate) continue;
+    if (!isWithinOptionalFilter(row.shippedDate, filter)) continue;
     if (isExcludedAnalyticsOrder(row)) continue;
 
     for (const item of row.items) {
       const revenue = item.revenue || row.docsSum / row.goodsCount;
-      categoryRevenue.set(item.category, (categoryRevenue.get(item.category) || 0) + revenue);
-      if (item.category === category) {
-        addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
+      const dimensionValue = item[dimension] || (dimension === "brand" ? "Без бренду" : "Без категорії");
+      dimensionRevenue.set(dimensionValue, (dimensionRevenue.get(dimensionValue) || 0) + revenue);
+      if (dimensionValue === value) {
+        addCategoryProduct(dimensionProducts, item, row, row.docsSum / row.goodsCount, dimensionValue);
       }
     }
   }
 
-  const isTopCategory = [...categoryRevenue.entries()]
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 25)
-    .some(([label]) => label === category);
-  if (!isTopCategory) return [];
+  if (!dimensionRevenue.has(value)) return [];
 
-  return [...(categoryProducts.get(category) || new Map()).values()]
+  return [...(dimensionProducts.get(value) || new Map()).values()]
     .map((product) => ({
       code: product.code,
       name: product.name,
@@ -1286,7 +1321,15 @@ export async function readSalesCategoryProducts(
   filter?: SalesDateFilter,
 ): Promise<SalesProductSummary[]> {
   const { rows } = await readCachedSalesRows();
-  return buildCategoryProducts(rows, category, filter);
+  return buildDimensionProducts(rows, "category", category, filter);
+}
+
+export async function readSalesBrandProducts(
+  brand: string,
+  filter?: SalesDateFilter,
+): Promise<SalesProductSummary[]> {
+  const { rows } = await readCachedSalesRows();
+  return buildDimensionProducts(rows, "brand", brand, filter);
 }
 
 // Product quantities from documents that completed their whole lifecycle
