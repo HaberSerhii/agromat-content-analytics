@@ -744,15 +744,17 @@ function SalesMetricCard({
   hint,
   symbol,
   tone,
+  description,
 }: {
   label: string;
   value: string;
   hint: string;
   symbol: string;
   tone: string;
+  description?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm" title={description}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-[10px] font-black uppercase tracking-[.12em] text-[#7b8691]">{label}</div>
@@ -1277,6 +1279,12 @@ export function SalesDashboard() {
   const currentPlumbing = data.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
   const previousTile = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
   const previousPlumbing = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
+  const averageCheck = data.summary.shippedDocs > 0
+    ? data.summary.shippedRevenue / data.summary.shippedDocs
+    : null;
+  const previousAverageCheck = comparisonData && comparisonData.summary.shippedDocs > 0
+    ? comparisonData.summary.shippedRevenue / comparisonData.summary.shippedDocs
+    : null;
   const selectedSegmentSummary = selectedDocumentSegment === "Усі"
     ? null
     : data.summary.documentStatusesBySegment.find((item) => item.segment === selectedDocumentSegment);
@@ -1411,6 +1419,10 @@ export function SalesDashboard() {
                   <SalesMetricCard label="Продажі · до минулого року" value={fmtMoney(data.summary.shippedRevenue)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedRevenue, comparisonData?.summary.shippedRevenue || 0, fmtMoney)} symbol={comparisonData && data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "↗" : "↘"} tone={comparisonData && data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "#20a66a" : "#e45858"} />
                   <SalesMetricCard label="Відвантажено документів" value={fmtNum(data.summary.shippedDocs)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedDocs, comparisonData?.summary.shippedDocs || 0, fmtNum)} symbol="D" tone="#118dff" />
                   <SalesMetricCard label="Відвантажено товарів" value={fmtNum(data.summary.shippedGoods)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedGoods, comparisonData?.summary.shippedGoods || 0, (value) => `${fmtNum(value)} шт`)} symbol="#" tone="#805ad5" />
+                  <SalesMetricCard label="Середній чек" value={averageCheck == null ? "—" : fmtMoney(averageCheck)} hint={comparisonLoading ? "Завантаження порівняння…" : averageCheck == null ? "Немає відвантажених документів" : previousAverageCheck == null ? "Немає даних для порівняння" : yearComparisonHint(averageCheck, previousAverageCheck, fmtMoney)} symbol="₴" tone="#168b9b" description="Сума продажів до вирахування повернень / кількість повністю відвантажених документів за обраний період." />
+                  <SalesMetricCard label="Повернення" value={fmtMoney(data.summary.returnedRevenue)} hint={comparisonLoading ? "Завантаження порівняння…" : comparisonData ? yearComparisonHint(data.summary.returnedRevenue, comparisonData.summary.returnedRevenue, fmtMoney) : "Немає даних для порівняння"} symbol="↩" tone="#e45858" description="Сума повернень за документами, повністю відвантаженими в обраний період. Відбір за датою відвантаження, не за датою повернення." />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
                   <SalesMetricCard label="Плитка" value={fmtMoney(currentTile?.revenue || 0)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentTile?.revenue || 0, previousTile?.revenue || 0, fmtMoney)} symbol="P" tone="#e39a25" />
                   <SalesMetricCard label="Сантехніка" value={fmtMoney(currentPlumbing?.revenue || 0)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentPlumbing?.revenue || 0, previousPlumbing?.revenue || 0, fmtMoney)} symbol="S" tone="#20a66a" />
                 </div>
