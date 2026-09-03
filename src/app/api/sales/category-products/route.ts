@@ -24,7 +24,7 @@ async function categoryProductsResponse(
         : filter.statuses || "",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-category-products-json-v2",
+      namespace: "sales-category-products-json-v3",
       key,
       ttlMs: 60_000,
       maxEntries: 32,

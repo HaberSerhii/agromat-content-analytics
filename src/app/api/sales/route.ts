@@ -38,7 +38,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean) {
         : filter.statuses || "",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-json-v6",
+      namespace: "sales-json-v7",
       key,
       ttlMs: compact ? 20 * 60_000 : 5 * 60_000,
       maxEntries: 16,

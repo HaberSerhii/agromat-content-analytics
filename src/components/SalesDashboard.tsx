@@ -295,7 +295,7 @@ function CategoryRankingList({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
         <div>
           <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-black text-[#26313d]">{title} · {fmtNum(items.length)}</span><span className="rounded-full bg-[#eaf8f1] px-2 py-1 text-[9px] font-black text-[#16865c]">Повністю відвантажено</span></div>
-          <div className="mt-1 text-[10px] text-[#8a939c]">Усі повністю відвантажені позиції за період · натисніть на {itemNoun}, щоб переглянути товари</div>
+          <div className="mt-1 text-[10px] text-[#8a939c]">Документи створені й повністю відвантажені за обраний період · без доставки · натисніть на {itemNoun}, щоб переглянути товари</div>
         </div>
         <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
           {(["goods", "revenue"] as RankingMetric[]).map((value) => (

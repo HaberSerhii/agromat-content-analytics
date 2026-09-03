@@ -21,7 +21,7 @@ async function brandProductsResponse(brand: string, filter: SalesDateFilter) {
         : filter.statuses || "",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-brand-products-json-v2",
+      namespace: "sales-brand-products-json-v3",
       key,
       ttlMs: 60_000,
       maxEntries: 32,

@@ -1,6 +1,7 @@
 import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getMonthlyManagerPlan, getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
 import { readAllLite } from "@/lib/products-store";
+import { isDeliverySalesItem, isDimensionOrderInPeriod } from "@/lib/sales-dimension-filter";
 import type {
   PromotionSalesDataset,
   PromotionSalesDailySummary,
@@ -1015,8 +1016,9 @@ function buildDataset(
     addBucket(allMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
-    if (isWithinOptionalFilter(row.shippedDate, filter) && !isExcludedAnalyticsOrder(row)) {
+    if (isDimensionOrderInPeriod(row, filter) && !isExcludedAnalyticsOrder(row)) {
       for (const item of row.items) {
+        if (isDeliverySalesItem(item)) continue;
         addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
         addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
         if (categoryProductsMode === "all" || categoryProductsMode === item.category) {
@@ -1217,11 +1219,11 @@ function buildDimensionProducts(
 
   for (const row of rows) {
     if (!matchesProductCodes(row.goodsCodeNumbers, productCodeSet)) continue;
-    if (!isShipped(row) || !row.shippedDate) continue;
-    if (!isWithinOptionalFilter(row.shippedDate, filter)) continue;
+    if (!isDimensionOrderInPeriod(row, filter)) continue;
     if (isExcludedAnalyticsOrder(row)) continue;
 
     for (const item of row.items) {
+      if (isDeliverySalesItem(item)) continue;
       const revenue = item.revenue || row.docsSum / row.goodsCount;
       const dimensionValue = item[dimension] || (dimension === "brand" ? "Без бренду" : "Без категорії");
       dimensionRevenue.set(dimensionValue, (dimensionRevenue.get(dimensionValue) || 0) + revenue);
