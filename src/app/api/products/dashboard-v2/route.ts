@@ -2,6 +2,10 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 import { listContentProductReviews } from "@/lib/content-reviews-store";
+import {
+  CONTENT_REVIEW_MANAGERS,
+  type ContentReviewManager,
+} from "@/lib/content-review-types";
 import { listAssignedNewProductCodes } from "@/lib/new-product-assignments-store";
 import {
   isHiddenNewProductDate,
@@ -39,7 +43,11 @@ type DashboardFilters = {
   categoryId?: number | null;
   brandId?: number | null;
   statusId?: number | null;
-  processingStatus?: "all" | "processed" | "unprocessed";
+  processingStatus?:
+    | "all"
+    | "processed"
+    | "unprocessed"
+    | ContentReviewManager;
   minPrice?: number | null;
   maxPrice?: number | null;
   minStock?: number | null;
@@ -744,13 +752,16 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
           ? Number(input.statusId)
           : null,
     processingStatus:
-      input.view === "products" && input.processingStatus === "processed"
-        ? "processed"
-        : input.view === "products" && input.processingStatus === "all"
-          ? "all"
-          : input.view === "products"
-            ? "unprocessed"
-            : "all",
+      input.view !== "products"
+        ? "all"
+        : input.processingStatus === "all" ||
+            input.processingStatus === "processed" ||
+            input.processingStatus === "unprocessed" ||
+            CONTENT_REVIEW_MANAGERS.includes(
+              input.processingStatus as ContentReviewManager,
+            )
+          ? input.processingStatus || "unprocessed"
+          : "unprocessed",
     minPrice: Number.isFinite(input.minPrice) ? Number(input.minPrice) : null,
     maxPrice: Number.isFinite(input.maxPrice) ? Number(input.maxPrice) : null,
     minStock: Number.isFinite(input.minStock) ? Number(input.minStock) : null,
@@ -783,7 +794,7 @@ async function buildDashboard(input: DashboardFilters) {
     attrIndex,
     requiredAttrs,
     assignedNewProductCodes,
-    processedProductCodes,
+    processedReviews,
   ] = await Promise.all([
     readAllLite(),
     readLiteSyncedAt(),
@@ -799,11 +810,13 @@ async function buildDashboard(input: DashboardFilters) {
       ? listAssignedNewProductCodes()
       : Promise.resolve(new Set<number>()),
     filters.view === "products"
-      ? listContentProductReviews().then(
-          (reviews) => new Set(reviews.map((review) => review.code)),
-        )
-      : Promise.resolve(new Set<number>()),
+      ? listContentProductReviews()
+      : Promise.resolve([]),
   ]);
+  const processedManagerByCode = new Map(
+    processedReviews.map((review) => [review.code, review.manager]),
+  );
+  const processedProductCodes = new Set(processedManagerByCode.keys());
   const comparisonDate =
     snapshots.find((snapshot) => snapshot.date < today)?.date || null;
   const monthBaselineDate = snapshots.find(
@@ -941,12 +954,23 @@ async function buildDashboard(input: DashboardFilters) {
 
   const search = filters.search.toLocaleLowerCase("uk");
   const bulkIds = new Set(filters.bulkIds);
-  const matchesFacetFilters = (product: ProductLite) => {
-    if (filters.categoryId != null && product.categoryId !== filters.categoryId)
+  const matchesFacetFilters = (
+    product: ProductLite,
+    ignoredFacet?: "category" | "brand" | "status",
+  ) => {
+    if (
+      ignoredFacet !== "category" &&
+      filters.categoryId != null &&
+      product.categoryId !== filters.categoryId
+    )
       return false;
-    if (filters.brandId != null && product.brandId !== filters.brandId)
+    if (
+      ignoredFacet !== "brand" &&
+      filters.brandId != null &&
+      product.brandId !== filters.brandId
+    )
       return false;
-    if (filters.statusId != null) {
+    if (ignoredFacet !== "status" && filters.statusId != null) {
       if (
         filters.statusId === -1
           ? !product.deleted
@@ -956,21 +980,34 @@ async function buildDashboard(input: DashboardFilters) {
     }
     return true;
   };
-  const filtered = products
-    .filter((product) => {
-      if (!matchesFacetFilters(product)) return false;
+  const matchesBaseFilters = (product: ProductLite, ignoredFacet?: "category" | "brand" | "status" | "processing") => {
       if (
+        !matchesFacetFilters(
+          product,
+          ignoredFacet === "processing" ? undefined : ignoredFacet,
+        )
+      )
+        return false;
+      if (
+        ignoredFacet !== "processing" &&
         filters.view === "products" &&
         filters.processingStatus === "processed" &&
         !processedProductCodes.has(product.code)
-      )
-        return false;
+      ) return false;
       if (
+        ignoredFacet !== "processing" &&
         filters.view === "products" &&
         filters.processingStatus === "unprocessed" &&
         processedProductCodes.has(product.code)
-      )
-        return false;
+      ) return false;
+      if (
+        ignoredFacet !== "processing" &&
+        filters.view === "products" &&
+        filters.processingStatus !== "all" &&
+        filters.processingStatus !== "processed" &&
+        filters.processingStatus !== "unprocessed" &&
+        processedManagerByCode.get(product.code) !== filters.processingStatus
+      ) return false;
       if (
         filters.view === "new" &&
         (isHiddenNewProductDate(product.firstSeenAt) ||
@@ -978,7 +1015,6 @@ async function buildDashboard(input: DashboardFilters) {
           assignedNewProductCodes.has(product.code))
       )
         return false;
-      if (filters.view === "categories") return true;
       if (
         search &&
         !`${product.code} ${product.goodsRef} ${product.sku || ""} ${product.name} ${product.brand}`
@@ -1008,7 +1044,9 @@ async function buildDashboard(input: DashboardFilters) {
       )
         return false;
       return true;
-    })
+    };
+  const filtered = products
+    .filter((product) => matchesBaseFilters(product))
     .sort((left, right) => right.firstSeenAt.localeCompare(left.firstSeenAt));
 
   const attributeNameById = new Map<number, string>();
@@ -1046,15 +1084,15 @@ async function buildDashboard(input: DashboardFilters) {
   const categoryMap = new Map<number, { name: string; count: number }>();
   const brandMap = new Map<number, { name: string; count: number }>();
   const statusMap = new Map<number, { name: string; count: number }>();
-  // Keep selectors complete even when the dashboard starts with a default
-  // status filter. The selected dataset is still filtered below.
-  for (const product of products) {
+  for (const product of products.filter((item) => matchesBaseFilters(item, "category"))) {
     const category = categoryMap.get(product.categoryId) || {
       name: product.categoryName || product.categoryPath || "Без категорії",
       count: 0,
     };
     category.count++;
     categoryMap.set(product.categoryId, category);
+  }
+  for (const product of products.filter((item) => matchesBaseFilters(item, "brand"))) {
     if (product.brandId != null) {
       const brand = brandMap.get(product.brandId) || {
         name: product.brand || "Без бренду",
@@ -1063,6 +1101,8 @@ async function buildDashboard(input: DashboardFilters) {
       brand.count++;
       brandMap.set(product.brandId, brand);
     }
+  }
+  for (const product of products.filter((item) => matchesBaseFilters(item, "status"))) {
     const statusId = product.deleted ? -1 : product.statusId;
     const status = statusMap.get(statusId) || {
       name: product.deleted ? "Архів" : product.statusName,
@@ -1071,6 +1111,30 @@ async function buildDashboard(input: DashboardFilters) {
     status.count++;
     statusMap.set(statusId, status);
   }
+  const processingFacetProducts = products.filter((item) =>
+    matchesBaseFilters(item, "processing"),
+  );
+  const processingFacets = [
+    {
+      key: "unprocessed",
+      name: "Не оброблені менеджером",
+      count: processingFacetProducts.filter(
+        (product) => !processedProductCodes.has(product.code),
+      ).length,
+    },
+    ...CONTENT_REVIEW_MANAGERS.map((manager) => ({
+      key: manager,
+      name: manager,
+      count: processingFacetProducts.filter(
+        (product) => processedManagerByCode.get(product.code) === manager,
+      ).length,
+    })),
+    {
+      key: "all",
+      name: "Усі товари",
+      count: processingFacetProducts.length,
+    },
+  ];
 
   const categoryAnalysis = [] as Array<{
     categoryId: number;
@@ -1115,7 +1179,9 @@ async function buildDashboard(input: DashboardFilters) {
     }>,
   };
   if (filters.view === "categories") {
-    const previousFiltered = previousProducts.filter(matchesFacetFilters);
+    const previousFiltered = previousProducts.filter((product) =>
+      matchesFacetFilters(product),
+    );
     const previousByCategory = new Map<number, ProductLite[]>();
     for (const product of previousFiltered) {
       const rows = previousByCategory.get(product.categoryId) || [];
@@ -1672,6 +1738,7 @@ async function buildDashboard(input: DashboardFilters) {
       categories: facetRows(categoryMap),
       brands: facetRows(brandMap),
       statuses: facetRows(statusMap),
+      processing: processingFacets,
       colors: CHART_COLORS,
     },
     rows: outputRows.slice(offset, offset + filters.limit).map((product) => ({

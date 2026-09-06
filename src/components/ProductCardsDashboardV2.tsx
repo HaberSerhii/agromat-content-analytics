@@ -144,6 +144,7 @@ type DashboardResponse = {
     categories: FacetRow[];
     brands: FacetRow[];
     statuses: FacetRow[];
+    processing: FacetRow[];
     colors: string[];
   };
   rows: ProductRow[];
@@ -214,7 +215,11 @@ type DashboardView =
   | "results";
 type ResultMode = "new-products" | "merchandising" | "search";
 type ProductSignal = "highImpressions" | "lowCtr" | "lowAtc" | "poorContent";
-type ProcessingStatus = "all" | "processed" | "unprocessed";
+type ProcessingStatus =
+  | "all"
+  | "processed"
+  | "unprocessed"
+  | ContentReviewManager;
 type MetricKey = "newProducts" | "inactiveProducts" | "promoProducts" | "ctr";
 type ContentManager = ContentReviewManager;
 type ContentAction = ContentReviewAction;
@@ -226,7 +231,11 @@ const PAGE_SIZE = 25;
 const DEFAULT_STATUS_ID = "5";
 const PROCESSING_FILTER_OPTIONS: FacetRow[] = [
   { key: "unprocessed", name: "Не оброблені менеджером", count: 0 },
-  { key: "processed", name: "Оброблені менеджером", count: 0 },
+  ...CONTENT_REVIEW_MANAGERS.map((manager) => ({
+    key: manager,
+    name: manager,
+    count: 0,
+  })),
   { key: "all", name: "Усі товари", count: 0 },
 ];
 const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
@@ -2024,8 +2033,9 @@ export function ProductCardsDashboardV2() {
   const [categoryId, setCategoryId] = useState("");
   const [brandId, setBrandId] = useState("");
   const [statusId, setStatusId] = useState(DEFAULT_STATUS_ID);
-  const [processingStatus, setProcessingStatus] =
-    useState<ProcessingStatus>("unprocessed");
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>(
+    "unprocessed",
+  );
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [minStock, setMinStock] = useState("");
@@ -2285,7 +2295,7 @@ export function ProductCardsDashboardV2() {
     maxStock ||
     productSignal,
   );
-  const facetOptions = allFacets || data?.facets;
+  const facetOptions = data?.facets || allFacets;
   const activeFilterLabel = [
     facetOptions?.categories.find((item) => item.key === categoryId)?.name,
     facetOptions?.brands.find((item) => item.key === brandId)?.name,
@@ -2306,8 +2316,9 @@ export function ProductCardsDashboardV2() {
         : "",
     activeProductSignal?.label || "",
     view === "products" && processingStatus !== "unprocessed"
-      ? PROCESSING_FILTER_OPTIONS.find((item) => item.key === processingStatus)
-          ?.name || ""
+      ? (facetOptions?.processing || PROCESSING_FILTER_OPTIONS).find(
+          (item) => item.key === processingStatus,
+        )?.name || ""
       : "",
   ]
     .filter(Boolean)
@@ -2971,7 +2982,7 @@ export function ProductCardsDashboardV2() {
         {view === "products" && (
           <StyledSelect
             value={processingStatus}
-            options={PROCESSING_FILTER_OPTIONS}
+            options={facetOptions?.processing || PROCESSING_FILTER_OPTIONS}
             placeholder="Не оброблені менеджером"
             searchPlaceholder="Знайти тип обробки…"
             onChange={(value) =>
