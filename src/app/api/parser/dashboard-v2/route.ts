@@ -604,8 +604,8 @@ export async function GET(request: Request) {
 
     const filtered = base.currentRows.filter((row) => matchesFilters(row));
     if (view === "new-feed") {
-      filtered.sort((left, right) => String(base.newProductQueue.get(left.productId)?.queuedAt || "")
-        .localeCompare(String(base.newProductQueue.get(right.productId)?.queuedAt || "")));
+      filtered.sort((left, right) => String(base.newProductQueue.get(right.productId)?.queuedAt || "")
+        .localeCompare(String(base.newProductQueue.get(left.productId)?.queuedAt || "")));
     }
     const categories = facetValues(base.currentRows.filter((row) => matchesFilters(row, "category")), "category");
     const brands = facetValues(base.currentRows.filter((row) => matchesFilters(row, "brand")), "brand");
