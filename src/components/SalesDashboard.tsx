@@ -181,6 +181,7 @@ type SalesConversionRow = {
   key: string;
   label: string;
   views: number;
+  orderedQty: number;
   soldQty: number;
   conversionPct: number;
   url?: string;
@@ -925,11 +926,11 @@ function OrdersTrendChart({ days }: { days: SalesDataset["summary"]["ordersByDat
 function ConversionRanking({ title, rows }: { title: string; rows: SalesConversionRow[] }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
-      <div className="border-b border-[#e5e8eb] px-4 py-3"><h3 className="text-xs font-black text-[#26313d]">{title}</h3><p className="mt-1 text-[9px] text-[#8a939c]">Топ-20 за конверсією</p></div>
+      <div className="border-b border-[#e5e8eb] px-4 py-3"><h3 className="text-xs font-black text-[#26313d]">{title}</h3><p className="mt-1 text-[9px] text-[#8a939c]">Топ-20 за конверсією оформлених замовлень</p></div>
       <div className="divide-y divide-[#edf0f2]">
         {rows.map((row, index) => <div key={row.key} className="grid grid-cols-[24px_minmax(0,1fr)_70px] items-center gap-2 px-4 py-2.5 text-[10px]">
           <span className="text-[#9aa3ac]">{index + 1}</span>
-          <div className="min-w-0"><div className="truncate font-bold text-[#3b4753]" title={row.label}>{row.url ? <a href={row.url} target="_blank" rel="noreferrer" className="hover:text-[#118dff]">{row.label}</a> : row.label}</div><div className="mt-0.5 text-[9px] text-[#929ba4]">{fmtNum(row.soldQty)} продано / {fmtNum(row.views)} переглядів</div></div>
+          <div className="min-w-0"><div className="truncate font-bold text-[#3b4753]" title={row.label}>{row.url ? <a href={row.url} target="_blank" rel="noreferrer" className="hover:text-[#118dff]">{row.label}</a> : row.label}</div><div className="mt-0.5 text-[9px] text-[#929ba4]">{fmtNum(row.orderedQty)} замовлено · {fmtNum(row.soldQty)} факт · {fmtNum(row.views)} переглядів</div></div>
           <span className="text-right font-black text-[#16865c]">{fmtPct(row.conversionPct)}</span>
         </div>)}
         {!rows.length && <div className="px-4 py-8 text-center text-[10px] text-[#8a939c]">Немає даних</div>}
@@ -1288,6 +1289,7 @@ export function SalesDashboard() {
   const selectedSegmentSummary = selectedDocumentSegment === "Усі"
     ? null
     : data.summary.documentStatusesBySegment.find((item) => item.segment === selectedDocumentSegment);
+  const formedOrders = data.summary.states.find((item) => item.state.toLocaleLowerCase("uk").includes("сформ"));
   const visibleStatusRows = selectedDocumentSegment === "Усі" ? data.summary.states : selectedSegmentSummary?.states || [];
   const visibleCancelReasonRows = selectedDocumentSegment === "Усі" ? data.summary.cancelReasons || [] : selectedSegmentSummary?.cancelReasons || [];
   const statusDocsTotal = visibleStatusRows.reduce((sum, item) => sum + item.docs, 0);
@@ -1434,15 +1436,16 @@ export function SalesDashboard() {
             {view === "web" && (
               <div className="space-y-4">
                 {webMetrics?.mode === "demo" && <div className="rounded-xl border border-[#f1d18f] bg-[#fff8e8] p-4 text-xs text-[#805b1d]"><div className="font-black uppercase tracking-[.1em]">Тестові дані</div><div className="mt-1 leading-relaxed">{webMetrics.notice}</div></div>}
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <SalesMetricCard label="Користувачі за період" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtNum(webMetrics?.totals.visits || 0)} hint="GA4-сесії з України" symbol="U" tone="#805ad5" />
                   <SalesMetricCard label="Товарів у кошику" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtNum(webMetrics?.totals.cartItems || 0)} hint={webMetricsError ? "GA4 не підключено локально" : `${fmtNum(webMetrics?.totals.carts || 0)} кошиків · середнє ${fmtDecimal(webMetrics?.totals.avgCartItems ?? null)}`} symbol="C" tone="#e39a25" />
-                  <SalesMetricCard label="Кількість замовлень" value={fmtNum(data.summary.selected.docs)} hint={`${fmtMoney(data.summary.selected.revenue)} обороту`} symbol="O" tone="#20a66a" />
+                  <SalesMetricCard label="Замовлення сформовано" value={fmtNum(formedOrders?.docs || 0)} hint={`${fmtMoney(formedOrders?.revenue || 0)} · статус «Сформовано»`} symbol="O" tone="#20a66a" description="Замовлення, сформовані на сайті за обраний період." />
+                  <SalesMetricCard label="Факт продажів" value={fmtMoney(data.summary.shippedRevenue)} hint={`Повністю відвантажено · ${fmtNum(data.summary.shippedGoods)} шт${data.summary.lastShippedDate ? ` · до ${fmtIsoDateShort(data.summary.lastShippedDate)}` : ""}`} symbol="₴" tone="#168b9b" description="Фактичні продажі за повністю відвантаженими документами за обраний період." />
                 </div>
                 {webMetricsError && <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs text-[#b73535]">Вебаналітика недоступна: {webMetricsError}</div>}
                 <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
-                    <div><h2 className="text-sm font-black text-[#26313d]">Вебаналітика по місяцях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Кошик фіксується в момент початку оформлення · джерело production: BigQuery + каталог «Аналізу карток товару»</p></div>
+                    <div><h2 className="text-sm font-black text-[#26313d]">Вебаналітика по місяцях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Кошик фіксується в момент початку оформлення · категорії, бренди й товари нижче рахуються за замовленнями зі статусом «Сформовано»</p></div>
                     {webMetrics?.dataThrough && <span className="text-[10px] text-[#7b8691]">Дані по {fmtIsoDateShort(webMetrics.dataThrough)}</span>}
                   </div>
                   <div className="overflow-x-auto">

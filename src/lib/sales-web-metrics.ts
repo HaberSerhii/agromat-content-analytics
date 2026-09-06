@@ -4,7 +4,10 @@ import {
   readThroughBigQueryCache,
 } from "@/lib/bigquery-result-cache";
 import { readAllLite } from "@/lib/products-store";
-import { readCompletedSalesProductQuantities } from "@/lib/sales-s3";
+import {
+  readCompletedSalesProductQuantities,
+  readFormedSalesProductQuantities,
+} from "@/lib/sales-s3";
 
 export type SalesWebMetricMonth = {
   month: string;
@@ -47,6 +50,7 @@ export type SalesConversionRow = {
   key: string;
   label: string;
   views: number;
+  orderedQty: number;
   soldQty: number;
   conversionPct: number;
   url?: string;
@@ -223,13 +227,14 @@ function demoConversionRows(labels: string[], kind: "category" | "brand" | "prod
   return labels.map((label, index) => {
     const views = baseViews - index * viewStep;
     const targetConversion = 12.6 - index * 0.48;
-    const soldQty = Math.max(1, Math.round(views * targetConversion / 100));
+    const orderedQty = Math.max(1, Math.round(views * targetConversion / 100));
     return {
       key: `${kind}-${index + 1}`,
       label,
       views,
-      soldQty,
-      conversionPct: conversionPct(soldQty, views),
+      orderedQty,
+      soldQty: Math.round(orderedQty * 0.82),
+      conversionPct: conversionPct(orderedQty, views),
     };
   });
 }
@@ -298,7 +303,7 @@ export function buildDemoSalesWebMetrics(input: { from: string; to: string }): S
 
 async function readConversionRankings(range: { from: string; to: string }) {
   const cacheKey = `${range.from}:${range.to}`;
-  const [viewRows, products, soldQtyByCode] = await Promise.all([
+  const [viewRows, products, orderedQtyByCode, soldQtyByCode] = await Promise.all([
     readThroughBigQueryCache<ProductViewQueryRow[]>({
       namespace: "sales-conversion-product-views",
       key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
@@ -317,11 +322,12 @@ async function readConversionRankings(range: { from: string; to: string }) {
       },
     }),
     readAllLite(),
+    readFormedSalesProductQuantities(range),
     readCompletedSalesProductQuantities(range),
   ]);
   const productsByGoodsRef = new Map(products.map((product) => [product.goodsRef, product]));
-  const categoryTotals = new Map<string, { views: number; soldQty: number }>();
-  const brandTotals = new Map<string, { views: number; soldQty: number }>();
+  const categoryTotals = new Map<string, { views: number; orderedQty: number; soldQty: number }>();
+  const brandTotals = new Map<string, { views: number; orderedQty: number; soldQty: number }>();
   const productRows: SalesConversionRow[] = [];
 
   for (const row of viewRows) {
@@ -329,45 +335,50 @@ async function readConversionRankings(range: { from: string; to: string }) {
     const views = scalar(row.views);
     const product = productsByGoodsRef.get(goodsRef);
     if (!product || views <= 0) continue;
+    const orderedQty = orderedQtyByCode.get(product.code) || 0;
     const soldQty = soldQtyByCode.get(product.code) || 0;
     const category = product.categoryName || "Без категорії";
     const brand = product.brand || "Без бренду";
-    const categoryTotal = categoryTotals.get(category) || { views: 0, soldQty: 0 };
+    const categoryTotal = categoryTotals.get(category) || { views: 0, orderedQty: 0, soldQty: 0 };
     categoryTotal.views += views;
+    categoryTotal.orderedQty += orderedQty;
     categoryTotal.soldQty += soldQty;
     categoryTotals.set(category, categoryTotal);
-    const brandTotal = brandTotals.get(brand) || { views: 0, soldQty: 0 };
+    const brandTotal = brandTotals.get(brand) || { views: 0, orderedQty: 0, soldQty: 0 };
     brandTotal.views += views;
+    brandTotal.orderedQty += orderedQty;
     brandTotal.soldQty += soldQty;
     brandTotals.set(brand, brandTotal);
-    if (views >= MIN_CONVERSION_VIEWS && soldQty > 0) {
+    if (views >= MIN_CONVERSION_VIEWS && orderedQty > 0) {
       productRows.push({
         key: String(product.code),
         label: product.name,
         views,
+        orderedQty,
         soldQty,
-        conversionPct: conversionPct(soldQty, views),
+        conversionPct: conversionPct(orderedQty, views),
         url: product.url,
       });
     }
   }
 
-  const groupedRows = (totals: Map<string, { views: number; soldQty: number }>): SalesConversionRow[] => (
+  const groupedRows = (totals: Map<string, { views: number; orderedQty: number; soldQty: number }>): SalesConversionRow[] => (
     [...totals.entries()]
-      .filter(([, value]) => value.views >= MIN_CONVERSION_VIEWS && value.soldQty > 0)
+      .filter(([, value]) => value.views >= MIN_CONVERSION_VIEWS && value.orderedQty > 0)
       .map(([label, value]) => ({
         key: label,
         label,
         views: value.views,
+        orderedQty: value.orderedQty,
         soldQty: value.soldQty,
-        conversionPct: conversionPct(value.soldQty, value.views),
+        conversionPct: conversionPct(value.orderedQty, value.views),
       }))
-      .sort((left, right) => right.conversionPct - left.conversionPct || right.soldQty - left.soldQty)
+      .sort((left, right) => right.conversionPct - left.conversionPct || right.orderedQty - left.orderedQty)
       .slice(0, CONVERSION_LIMIT)
   );
-  productRows.sort((left, right) => right.conversionPct - left.conversionPct || right.soldQty - left.soldQty);
+  productRows.sort((left, right) => right.conversionPct - left.conversionPct || right.orderedQty - left.orderedQty);
   return {
-    definition: "Продані одиниці у повністю завершених замовленнях / перегляди картки товару",
+    definition: "Оформлені одиниці у замовленнях зі статусом «Сформовано» / перегляди картки товару; факт — повністю відвантажені одиниці",
     minimumViews: MIN_CONVERSION_VIEWS,
     categories: groupedRows(categoryTotals),
     brands: groupedRows(brandTotals),

@@ -1365,6 +1365,35 @@ export async function readCompletedSalesProductQuantities(input: {
   return quantities;
 }
 
+// Product quantities from orders that were created on the website and still
+// have the «Сформовано» status. These are the quantities used by web-sales
+// rankings; they must not be confused with completed/actual sales.
+export async function readFormedSalesProductQuantities(input: {
+  from: string;
+  to: string;
+}): Promise<Map<number, number>> {
+  const { rows } = await readCachedSalesRows();
+  const normalizedFrom = normalizeDateFilter(input.from) || input.from;
+  const normalizedTo = normalizeDateFilter(input.to) || input.to;
+  const rangeFrom = normalizedFrom <= normalizedTo ? normalizedFrom : normalizedTo;
+  const rangeTo = normalizedFrom <= normalizedTo ? normalizedTo : normalizedFrom;
+  const quantities = new Map<number, number>();
+
+  for (const row of rows) {
+    if (!row.state.toLocaleLowerCase("uk").includes("сформ")) continue;
+    if (isExcludedAnalyticsOrder(row)) continue;
+    const createdDate = normalizeShippedDate(row.createdDate);
+    if (!createdDate || createdDate < rangeFrom || createdDate > rangeTo) continue;
+    for (const item of row.items) {
+      const code = parseInt(item.code, 10);
+      if (!Number.isFinite(code) || code <= 0) continue;
+      quantities.set(code, (quantities.get(code) || 0) + item.qty);
+    }
+  }
+
+  return quantities;
+}
+
 export async function readUniqueSalesDocumentsForProductGroups(input: {
   from: string;
   to: string;
