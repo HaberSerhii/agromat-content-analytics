@@ -57,6 +57,7 @@ interface PriceRow {
   ourUrl: string | null;
   status: string | null;
   byCompetitor: Record<number, PriceCell>;
+  isActive?: boolean;
   matchChange?: MatchChange | null;
   newProductSearch?: NewProductSearchState | null;
 }
@@ -87,8 +88,15 @@ interface PricesPayload {
 
 interface ProductRow {
   id: number;
+  code: number | null;
+  goods_ref: number | null;
+  sku: string | null;
+  name: string;
   brand: string | null;
   category: string | null;
+  actual_price: number | null;
+  url: string | null;
+  agromat_status: string | null;
   is_active: boolean | null;
 }
 
@@ -108,7 +116,22 @@ interface SegmentValues {
 interface MetricValues extends SegmentValues {
   deltaTile: number;
   deltaSanitary: number;
+  addedTile: number;
+  removedTile: number;
+  addedSanitary: number;
+  removedSanitary: number;
 }
+
+type ChangeDirection = "added" | "removed";
+type SegmentedChangeIds = {
+  tile: { added: Set<number>; removed: Set<number> };
+  sanitary: { added: Set<number>; removed: Set<number> };
+};
+
+type DailyDrilldownIds = Record<
+  "feed" | "matched" | "vtmFeed" | "vtmMatched" | "agromatLower" | "agromatHigher",
+  SegmentedChangeIds
+>;
 
 interface FacetValue {
   value: string;
@@ -134,6 +157,7 @@ interface DashboardBase {
   currentRows: PriceRow[];
   previousRows: PriceRow[];
   changedProductIds: Set<number>;
+  dailyDrilldownIds: DailyDrilldownIds;
   newProductQueue: Map<number, NewProductSearchState>;
   matchChanges: Map<number, MatchChange>;
   overview: {
@@ -179,6 +203,53 @@ function emptySegments(): SegmentValues {
   return { tile: 0, sanitary: 0 };
 }
 
+function emptySegmentedChangeIds(): SegmentedChangeIds {
+  return {
+    tile: { added: new Set<number>(), removed: new Set<number>() },
+    sanitary: { added: new Set<number>(), removed: new Set<number>() },
+  };
+}
+
+function addSegmentedChange(
+  changes: SegmentedChangeIds,
+  category: string | null | undefined,
+  direction: ChangeDirection,
+  productId: number,
+) {
+  changes[segmentOf(category)][direction].add(productId);
+}
+
+function metric(
+  current: SegmentValues,
+  previous: SegmentValues,
+  changes?: SegmentedChangeIds,
+): MetricValues {
+  const deltaTile = current.tile - previous.tile;
+  const deltaSanitary = current.sanitary - previous.sanitary;
+  return {
+    ...current,
+    deltaTile,
+    deltaSanitary,
+    addedTile: changes?.tile.added.size ?? Math.max(0, deltaTile),
+    removedTile: changes?.tile.removed.size ?? Math.max(0, -deltaTile),
+    addedSanitary: changes?.sanitary.added.size ?? Math.max(0, deltaSanitary),
+    removedSanitary: changes?.sanitary.removed.size ?? Math.max(0, -deltaSanitary),
+  };
+}
+
+function serializeDailyDrilldownIds(changes: SegmentedChangeIds) {
+  return {
+    tile: {
+      added: [...changes.tile.added],
+      removed: [...changes.tile.removed],
+    },
+    sanitary: {
+      added: [...changes.sanitary.added],
+      removed: [...changes.sanitary.removed],
+    },
+  };
+}
+
 function countBySegment<T>(rows: T[], predicate: (row: T) => boolean, category: (row: T) => string | null): SegmentValues {
   const result = emptySegments();
   for (const row of rows) {
@@ -186,14 +257,6 @@ function countBySegment<T>(rows: T[], predicate: (row: T) => boolean, category: 
     result[segmentOf(category(row))] += 1;
   }
   return result;
-}
-
-function metric(current: SegmentValues, previous: SegmentValues): MetricValues {
-  return {
-    ...current,
-    deltaTile: current.tile - previous.tile,
-    deltaSanitary: current.sanitary - previous.sanitary,
-  };
 }
 
 function validCompetitorPrices(row: PriceRow, competitorIds?: Set<number>): number[] {
@@ -218,7 +281,9 @@ function matchChanges(currentRows: PriceRow[], previousRows: PriceRow[]): Map<nu
     const before = previousByProduct.get(row.productId);
     const matchedNow = hasMatch(row);
     const matchedBefore = before ? hasMatch(before) : false;
-    if (matchedNow !== matchedBefore) result.set(row.productId, matchedNow ? "added" : "removed");
+    if (matchedNow !== matchedBefore && (before || matchedNow)) {
+      result.set(row.productId, matchedNow ? "added" : "removed");
+    }
   }
   return result;
 }
@@ -325,7 +390,7 @@ async function fetchAllProducts(): Promise<ProductRow[]> {
   for (let from = 0; from < 50_000; from += PAGE_SIZE) {
     const { data, error } = await db
       .from("products")
-      .select("id, brand, category, is_active")
+      .select("id, code, goods_ref, sku, name, brand, category, actual_price, url, agromat_status, is_active")
       .order("id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);
@@ -406,6 +471,7 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
   const feedNow = countBySegment(activeProducts, () => true, (row) => row.category);
   const feedDelta = emptySegments();
   const vtmFeedDelta = emptySegments();
+  const feedChanges = emptySegmentedChangeIds();
   for (const event of auditRows) {
     if (!event.product_id || !["sync_added", "inactive", "reactivated"].includes(event.action)) continue;
     const product = productById.get(event.product_id);
@@ -414,6 +480,16 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
     const segment = segmentOf(product.category);
     feedDelta[segment] += direction;
     if (isVtm(product)) vtmFeedDelta[segment] += direction;
+    addSegmentedChange(feedChanges, product.category, direction > 0 ? "added" : "removed", product.id);
+  }
+  const vtmFeedChanges = emptySegmentedChangeIds();
+  for (const segment of ["tile", "sanitary"] as const) {
+    for (const direction of ["added", "removed"] as const) {
+      for (const productId of feedChanges[segment][direction]) {
+        const product = productById.get(productId);
+        if (product && isVtm(product)) vtmFeedChanges[segment][direction].add(productId);
+      }
+    }
   }
   const feedBefore = {
     tile: feedNow.tile - feedDelta.tile,
@@ -425,6 +501,39 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
     sanitary: vtmFeedNow.sanitary - vtmFeedDelta.sanitary,
   };
 
+  // Keep products that were deactivated today available for an exact negative
+  // feed drilldown. They stay hidden from normal views via isActive=false.
+  const currentRowIds = new Set(current.rows.map((row) => row.productId));
+  for (const segment of ["tile", "sanitary"] as const) {
+    for (const productId of feedChanges[segment].removed) {
+      const product = productById.get(productId);
+      if (!product || product.is_active !== false || currentRowIds.has(productId)) continue;
+      current.rows.push({
+        productId: product.id,
+        code: product.code,
+        goodsRef: product.goods_ref,
+        sku: product.sku,
+        name: product.name,
+        brand: product.brand,
+        category: product.category,
+        ourPrice: product.actual_price,
+        ourUrl: product.url,
+        status: product.agromat_status,
+        byCompetitor: Object.fromEntries(current.competitors.map((competitor) => [competitor.id, {
+          price: null,
+          observedPrice: null,
+          status: null,
+          url: null,
+          confidence: null,
+          foundBrand: null,
+          reviewReason: null,
+        }])),
+        isActive: false,
+      });
+      currentRowIds.add(productId);
+    }
+  }
+
   const currentMatched = countBySegment(current.rows, hasMatch, (row) => row.category);
   const previousMatched = countBySegment(prior.rows || [], hasMatch, (row) => row.category);
   const currentVtmMatched = countBySegment(current.rows, (row) => isVtm(row) && hasMatch(row), (row) => row.category);
@@ -434,7 +543,39 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
   const currentHigher = countBySegment(current.rows, agromatIsHigher, (row) => row.category);
   const previousHigher = countBySegment(prior.rows || [], agromatIsHigher, (row) => row.category);
   const currentMatchChanges = matchChanges(current.rows, prior.rows || []);
+  const previousByProduct = new Map(prior.rows.map((row) => [row.productId, row]));
+  const matchedChanges = emptySegmentedChangeIds();
+  const lowerChanges = emptySegmentedChangeIds();
+  const higherChanges = emptySegmentedChangeIds();
+  for (const row of current.rows) {
+    const before = previousByProduct.get(row.productId);
+    const currentMatched = hasMatch(row);
+    const previousMatched = before ? hasMatch(before) : false;
+    if (currentMatched !== previousMatched) {
+      addSegmentedChange(matchedChanges, row.category, currentMatched ? "added" : "removed", row.productId);
+    }
 
+    const currentLower = agromatIsLower(row);
+    const previousLower = before ? agromatIsLower(before) : false;
+    if (currentLower !== previousLower) {
+      addSegmentedChange(lowerChanges, row.category, currentLower ? "added" : "removed", row.productId);
+    }
+
+    const currentHigher = agromatIsHigher(row);
+    const previousHigher = before ? agromatIsHigher(before) : false;
+    if (currentHigher !== previousHigher) {
+      addSegmentedChange(higherChanges, row.category, currentHigher ? "added" : "removed", row.productId);
+    }
+  }
+  const vtmMatchedChanges = emptySegmentedChangeIds();
+  for (const segment of ["tile", "sanitary"] as const) {
+    for (const direction of ["added", "removed"] as const) {
+      for (const productId of matchedChanges[segment][direction]) {
+        const row = current.rows.find((item) => item.productId === productId);
+        if (row && isVtm(row)) vtmMatchedChanges[segment][direction].add(productId);
+      }
+    }
+  }
   const parserRuns = auditRows.filter((row) => row.action === "parser_run");
   const latestRunByAdapter = new Map<string, AuditRow>();
   for (const run of parserRuns) {
@@ -481,15 +622,23 @@ async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> 
     currentRows: current.rows,
     previousRows: prior.rows || [],
     changedProductIds: changedProducts(current.rows, prior.rows || []),
+    dailyDrilldownIds: {
+      feed: feedChanges,
+      matched: matchedChanges,
+      vtmFeed: vtmFeedChanges,
+      vtmMatched: vtmMatchedChanges,
+      agromatLower: lowerChanges,
+      agromatHigher: higherChanges,
+    },
     newProductQueue,
     matchChanges: currentMatchChanges,
     overview: {
-      feed: metric(feedNow, feedBefore),
-      matched: metric(currentMatched, previousMatched),
-      vtmFeed: metric(vtmFeedNow, vtmFeedBefore),
-      vtmMatched: metric(currentVtmMatched, previousVtmMatched),
-      agromatLower: metric(currentLower, previousLower),
-      agromatHigher: metric(currentHigher, previousHigher),
+      feed: metric(feedNow, feedBefore, feedChanges),
+      matched: metric(currentMatched, previousMatched, matchedChanges),
+      vtmFeed: metric(vtmFeedNow, vtmFeedBefore, vtmFeedChanges),
+      vtmMatched: metric(currentVtmMatched, previousVtmMatched, vtmMatchedChanges),
+      agromatLower: metric(currentLower, previousLower, lowerChanges),
+      agromatHigher: metric(currentHigher, previousHigher, higherChanges),
     },
     categories: [...new Set(current.rows.map((row) => row.category).filter((value): value is string => Boolean(value)))].sort((a, b) => a.localeCompare(b, "uk")),
     brands: [...new Set(current.rows.map((row) => row.brand).filter((value): value is string => Boolean(value)))].sort((a, b) => a.localeCompare(b, "uk")),
@@ -516,6 +665,7 @@ function rowMatchesView(
   vtmOnly = false,
   segmentFilter: Segment | "all" = "all",
 ): boolean {
+  if (row.isActive === false) return false;
   if (vtmOnly && !isVtm(row)) return false;
   if (segmentFilter !== "all" && segmentOf(row.category) !== segmentFilter) return false;
   if (view === "changed") return base.changedProductIds.has(row.productId);
@@ -578,6 +728,7 @@ export async function GET(request: Request) {
     const segmentFilter: Segment | "all" = requestedSegment === "tile" || requestedSegment === "sanitary"
       ? requestedSegment
       : "all";
+    const drilldown = query.get("drilldown") === "1";
     const ids = parseIdSet(query.get("ids"));
     const requestedView = query.get("view") || "overview";
     const legacyView = requestedView === "below-median"
@@ -590,7 +741,8 @@ export async function GET(request: Request) {
       : "overview";
 
     const matchesFilters = (row: PriceRow, omit?: "category" | "brand") => {
-      if (!rowMatchesView(row, view, base, vtmOnly, segmentFilter)) return false;
+      if (!drilldown && !rowMatchesView(row, view, base, vtmOnly, segmentFilter)) return false;
+      if (drilldown && ids.size === 0) return false;
       if (omit !== "category" && category && row.category !== category) return false;
       if (omit !== "brand" && brand && row.brand !== brand) return false;
       if (ids.size && !ids.has(row.productId) && !ids.has(row.code || -1) && !ids.has(row.goodsRef || -1)) return false;
@@ -620,6 +772,7 @@ export async function GET(request: Request) {
       filtered.sort((left, right) => String(base.newProductQueue.get(right.productId)?.queuedAt || "")
         .localeCompare(String(base.newProductQueue.get(left.productId)?.queuedAt || "")));
     }
+    const previousByProduct = new Map(base.previousRows.map((row) => [row.productId, row]));
     const categories = facetValues(base.currentRows.filter((row) => matchesFilters(row, "category")), "category");
     const brands = facetValues(base.currentRows.filter((row) => matchesFilters(row, "brand")), "brand");
     const violationRows = filtered;
@@ -631,7 +784,6 @@ export async function GET(request: Request) {
         return count + (row.ourPrice != null && competitorPrice != null && competitorPrice < row.ourPrice * PRICE_VIOLATION_RATIO ? 1 : 0);
       }, 0),
     })).sort((a, b) => b.count - a.count);
-    const previousByProduct = new Map(base.previousRows.map((row) => [row.productId, row]));
     const start = (page - 1) * limit;
     const responseRows = filtered.slice(start, start + limit).map((row) => {
       const before = previousByProduct.get(row.productId);
@@ -650,6 +802,9 @@ export async function GET(request: Request) {
       currentDate: base.currentDate,
       previousDate: base.previousDate,
       overview: base.overview,
+      dailyDrilldownIds: Object.fromEntries(
+        Object.entries(base.dailyDrilldownIds).map(([key, changes]) => [key, serializeDailyDrilldownIds(changes)]),
+      ),
       competitors: base.competitors,
       categories,
       brands,

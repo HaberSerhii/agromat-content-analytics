@@ -15,7 +15,17 @@ interface MetricValues {
   sanitary: number;
   deltaTile: number;
   deltaSanitary: number;
+  addedTile: number;
+  removedTile: number;
+  addedSanitary: number;
+  removedSanitary: number;
 }
+
+type ChangeDirection = "added" | "removed";
+type DailyDrilldownIds = Record<string, {
+  tile: Record<ChangeDirection, number[]>;
+  sanitary: Record<ChangeDirection, number[]>;
+}>;
 
 interface Competitor {
   id: number;
@@ -79,6 +89,7 @@ interface DashboardResponse {
     agromatLower: MetricValues;
     agromatHigher: MetricValues;
   };
+  dailyDrilldownIds: DailyDrilldownIds;
   competitors: Competitor[];
   categories: FacetValue[];
   brands: FacetValue[];
@@ -320,9 +331,25 @@ function MetricCard({ label, symbol, tone, value, onDeltaClick }: {
   symbol: string;
   tone: string;
   value: MetricValues;
-  onDeltaClick?: (segment: "tile" | "sanitary") => void;
+  onDeltaClick?: (segment: "tile" | "sanitary", direction: ChangeDirection) => void;
 }) {
   const deltaTitle = onDeltaClick ? `Показати вибірку: ${label}` : undefined;
+  const renderChanges = (segment: "tile" | "sanitary") => {
+    const added = segment === "tile" ? value.addedTile : value.addedSanitary;
+    const removed = segment === "tile" ? value.removedTile : value.removedSanitary;
+    const fallbackDelta = segment === "tile" ? value.deltaTile : value.deltaSanitary;
+    const hasDirectionalData = Number.isFinite(added) && Number.isFinite(removed);
+    if (!hasDirectionalData) {
+      return <DeltaBadge value={fallbackDelta} onClick={onDeltaClick ? () => onDeltaClick(segment, fallbackDelta >= 0 ? "added" : "removed") : undefined} title={deltaTitle} />;
+    }
+    if (added === 0 && removed === 0) return <DeltaBadge value={0} onClick={onDeltaClick ? () => onDeltaClick(segment, "added") : undefined} title={deltaTitle} />;
+    return (
+      <>
+        {added > 0 && <DeltaBadge value={added} onClick={onDeltaClick ? () => onDeltaClick(segment, "added") : undefined} title={`${deltaTitle || "Показати вибірку"}: додано ${added}`} />}
+        {removed > 0 && <DeltaBadge value={-removed} onClick={onDeltaClick ? () => onDeltaClick(segment, "removed") : undefined} title={`${deltaTitle || "Показати вибірку"}: прибрано ${removed}`} />}
+      </>
+    );
+  };
   return (
     <article className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_1px_2px_rgba(20,32,50,.04)]">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -336,14 +363,14 @@ function MetricCard({ label, symbol, tone, value, onDeltaClick }: {
           <div className="mb-1 text-[10px] font-bold uppercase tracking-[.13em] text-[#9aa2ab]">Плитка</div>
           <div className="flex items-center gap-2">
             <strong className="text-2xl font-black tracking-tight text-[#202a35]">{formatNumber(value.tile)}</strong>
-            <DeltaBadge value={value.deltaTile} onClick={onDeltaClick ? () => onDeltaClick("tile") : undefined} title={deltaTitle} />
+            <div className="flex items-center gap-1">{renderChanges("tile")}</div>
           </div>
         </div>
         <div className="border-l border-[#e8ebef] pl-3">
           <div className="mb-1 text-[10px] font-bold uppercase tracking-[.13em] text-[#9aa2ab]">Сантехніка</div>
           <div className="flex items-center gap-2">
             <strong className="text-2xl font-black tracking-tight text-[#202a35]">{formatNumber(value.sanitary)}</strong>
-            <DeltaBadge value={value.deltaSanitary} onClick={onDeltaClick ? () => onDeltaClick("sanitary") : undefined} title={deltaTitle} />
+            <div className="flex items-center gap-1">{renderChanges("sanitary")}</div>
           </div>
         </div>
       </div>
@@ -414,6 +441,7 @@ export function CompetitorDashboardV2() {
   const [view, setView] = useState<ViewMode>("overview");
   const [vtmOnly, setVtmOnly] = useState(false);
   const [segmentFilter, setSegmentFilter] = useState<SegmentFilter>("all");
+  const [metricDrilldown, setMetricDrilldown] = useState(false);
   const [category, setCategory] = useState("");
   const [brand, setBrand] = useState("");
   const [priceMode, setPriceMode] = useState("all");
@@ -492,6 +520,7 @@ export function CompetitorDashboardV2() {
     if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
     if (vtmOnly) query.set("vtm", "1");
     if (segmentFilter !== "all") query.set("segment", segmentFilter);
+    if (metricDrilldown) query.set("drilldown", "1");
     setLoading(true);
     setError("");
     fetch(`/api/parser/dashboard-v2?${query}`, { signal: controller.signal })
@@ -510,7 +539,7 @@ export function CompetitorDashboardV2() {
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [brand, category, competitorPriceMode, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
+  }, [brand, category, competitorPriceMode, metricDrilldown, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
 
   useEffect(() => setPage(1), [brand, category, competitorPriceMode, priceMode, productIds, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
 
@@ -573,6 +602,7 @@ export function CompetitorDashboardV2() {
     setBrand("");
     setVtmOnly(false);
     setSegmentFilter("all");
+    setMetricDrilldown(false);
     setPriceMode("all");
     setCompetitorPriceMode("all");
     setSelectedCompetitors(new Set());
@@ -591,6 +621,7 @@ export function CompetitorDashboardV2() {
 
   function applyProductSet() {
     const normalized = setDraft.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean).join(",");
+    setMetricDrilldown(false);
     setProductIds(normalized);
     setSetModalOpen(false);
     setNotice(normalized ? `Застосовано набір з ${normalized.split(",").length} IDD` : "Набір очищено");
@@ -609,6 +640,7 @@ export function CompetitorDashboardV2() {
     if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
     if (vtmOnly) query.set("vtm", "1");
     if (segmentFilter !== "all") query.set("segment", segmentFilter);
+    if (metricDrilldown) query.set("drilldown", "1");
     return query;
   }
 
@@ -631,9 +663,10 @@ export function CompetitorDashboardV2() {
     setNotice(nextId ? `Фільтр порушень: ${competitor}.` : "Фільтр порушень вимкнено.");
   }
 
-  function openMetricSelection(metric: keyof DashboardResponse["overview"], segment: "tile" | "sanitary") {
+  function openMetricSelection(metric: keyof DashboardResponse["overview"], segment: "tile" | "sanitary", direction: ChangeDirection) {
     const allCompetitorIds = new Set((data?.competitors || []).map((competitor) => competitor.id));
     const segmentLabel = segment === "tile" ? "Плитка" : "Сантехніка";
+    const ids = data?.dailyDrilldownIds?.[metric]?.[segment]?.[direction] || [];
     const nextView: ViewMode = metric === "feed" || metric === "vtmFeed"
       ? "overview"
       : metric === "matched" || metric === "vtmMatched"
@@ -643,6 +676,7 @@ export function CompetitorDashboardV2() {
     setView(nextView);
     setVtmOnly(metric === "vtmFeed" || metric === "vtmMatched");
     setSegmentFilter(segment);
+    setMetricDrilldown(true);
     setPriceMode(metric === "agromatLower" ? "lower" : metric === "agromatHigher" ? "higher" : "all");
     setCompetitorPriceMode("all");
     setSelectedCompetitors(allCompetitorIds);
@@ -650,10 +684,10 @@ export function CompetitorDashboardV2() {
     setBrand("");
     setSearchDraft("");
     setSearch("");
-    setProductIds("");
+    setProductIds(ids.join(","));
     setViolationCompetitorId(0);
     setPage(1);
-    setNotice(`${METRICS.find((item) => item.key === metric)?.label || "Вибірка"} · ${segmentLabel}. Показано всі конкуренти.`);
+    setNotice(`${METRICS.find((item) => item.key === metric)?.label || "Вибірка"} · ${segmentLabel} · ${direction === "added" ? "додано" : "прибрано"} ${ids.length} товарів. Показано всі конкуренти.`);
   }
 
   function openPagePicker() {
@@ -1148,7 +1182,7 @@ export function CompetitorDashboardV2() {
               return (
                 <button
                   key={item.id}
-                  onClick={() => setView(item.id)}
+                  onClick={() => { setView(item.id); setMetricDrilldown(false); }}
                   className="min-w-[170px] rounded-xl border-0 px-3 py-3 text-left transition lg:min-w-0"
                   style={{ background: active ? "#25384d" : "transparent", boxShadow: active ? "inset 3px 0 #118dff" : "none" }}
                 >
@@ -1221,8 +1255,8 @@ export function CompetitorDashboardV2() {
                   label={item.label}
                   symbol={item.symbol}
                   tone={item.tone}
-                  value={data?.overview[item.key] || { tile: 0, sanitary: 0, deltaTile: 0, deltaSanitary: 0 }}
-                  onDeltaClick={(segment) => openMetricSelection(item.key, segment)}
+                  value={data?.overview[item.key] || { tile: 0, sanitary: 0, deltaTile: 0, deltaSanitary: 0, addedTile: 0, removedTile: 0, addedSanitary: 0, removedSanitary: 0 }}
+                  onDeltaClick={(segment, direction) => openMetricSelection(item.key, segment, direction)}
                 />
               ))}
             </section>
