@@ -214,6 +214,7 @@ type DashboardView =
   | "results";
 type ResultMode = "new-products" | "merchandising" | "search";
 type ProductSignal = "highImpressions" | "lowCtr" | "lowAtc" | "poorContent";
+type ProcessingStatus = "all" | "processed" | "unprocessed";
 type MetricKey = "newProducts" | "inactiveProducts" | "promoProducts" | "ctr";
 type ContentManager = ContentReviewManager;
 type ContentAction = ContentReviewAction;
@@ -223,6 +224,11 @@ type ReviewOutcome = "growth" | "flat" | "decline" | "waiting";
 
 const PAGE_SIZE = 25;
 const DEFAULT_STATUS_ID = "5";
+const PROCESSING_FILTER_OPTIONS: FacetRow[] = [
+  { key: "unprocessed", name: "Не оброблені менеджером", count: 0 },
+  { key: "processed", name: "Оброблені менеджером", count: 0 },
+  { key: "all", name: "Усі товари", count: 0 },
+];
 const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "Головна сторінка" },
   { id: "new", label: "Нові товари", hint: "Уперше з’явилися на сайті" },
@@ -2018,6 +2024,8 @@ export function ProductCardsDashboardV2() {
   const [categoryId, setCategoryId] = useState("");
   const [brandId, setBrandId] = useState("");
   const [statusId, setStatusId] = useState(DEFAULT_STATUS_ID);
+  const [processingStatus, setProcessingStatus] =
+    useState<ProcessingStatus>("unprocessed");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [minStock, setMinStock] = useState("");
@@ -2087,6 +2095,7 @@ export function ProductCardsDashboardV2() {
     categoryId,
     brandId,
     statusId,
+    processingStatus,
     minPrice,
     maxPrice,
     minStock,
@@ -2120,6 +2129,7 @@ export function ProductCardsDashboardV2() {
             brandId: brandId ? Number(brandId) : null,
             statusId:
               view === "new" ? null : statusId ? Number(statusId) : null,
+            processingStatus: view === "products" ? processingStatus : "all",
             minPrice: minPrice ? Number(minPrice) : null,
             maxPrice: maxPrice ? Number(maxPrice) : null,
             minStock: minStock ? Number(minStock) : null,
@@ -2151,6 +2161,7 @@ export function ProductCardsDashboardV2() {
       categoryId,
       brandId,
       statusId,
+      processingStatus,
       minPrice,
       maxPrice,
       minStock,
@@ -2246,6 +2257,7 @@ export function ProductCardsDashboardV2() {
     setCategoryId("");
     setBrandId("");
     setStatusId(DEFAULT_STATUS_ID);
+    setProcessingStatus("unprocessed");
     setMinPrice("");
     setMaxPrice("");
     setMinStock("");
@@ -2266,6 +2278,7 @@ export function ProductCardsDashboardV2() {
     categoryId ||
     brandId ||
     statusId !== DEFAULT_STATUS_ID ||
+    processingStatus !== "unprocessed" ||
     minPrice ||
     maxPrice ||
     minStock ||
@@ -2292,6 +2305,10 @@ export function ProductCardsDashboardV2() {
         ? `набір IDD: ${bulkIds.length}`
         : "",
     activeProductSignal?.label || "",
+    view === "products" && processingStatus !== "unprocessed"
+      ? PROCESSING_FILTER_OPTIONS.find((item) => item.key === processingStatus)
+          ?.name || ""
+      : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -2576,6 +2593,7 @@ export function ProductCardsDashboardV2() {
         categoryId: categoryId ? Number(categoryId) : null,
         brandId: brandId ? Number(brandId) : null,
         statusId: statusId ? Number(statusId) : null,
+        processingStatus,
         minStock: minStock ? Number(minStock) : null,
         maxStock: maxStock ? Number(maxStock) : null,
         productSignal: productSignal || null,
@@ -2948,6 +2966,17 @@ export function ProductCardsDashboardV2() {
             placeholder="Усі статуси товару"
             searchPlaceholder="Знайти статус…"
             onChange={setStatusId}
+          />
+        )}
+        {view === "products" && (
+          <StyledSelect
+            value={processingStatus}
+            options={PROCESSING_FILTER_OPTIONS}
+            placeholder="Не оброблені менеджером"
+            searchPlaceholder="Знайти тип обробки…"
+            onChange={(value) =>
+              setProcessingStatus((value || "all") as ProcessingStatus)
+            }
           />
         )}
       </div>

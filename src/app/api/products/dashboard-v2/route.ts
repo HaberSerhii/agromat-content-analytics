@@ -1,6 +1,7 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
+import { listContentProductReviews } from "@/lib/content-reviews-store";
 import { listAssignedNewProductCodes } from "@/lib/new-product-assignments-store";
 import {
   isHiddenNewProductDate,
@@ -38,6 +39,7 @@ type DashboardFilters = {
   categoryId?: number | null;
   brandId?: number | null;
   statusId?: number | null;
+  processingStatus?: "all" | "processed" | "unprocessed";
   minPrice?: number | null;
   maxPrice?: number | null;
   minStock?: number | null;
@@ -741,6 +743,14 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
         : Number.isFinite(input.statusId)
           ? Number(input.statusId)
           : null,
+    processingStatus:
+      input.view === "products" && input.processingStatus === "processed"
+        ? "processed"
+        : input.view === "products" && input.processingStatus === "all"
+          ? "all"
+          : input.view === "products"
+            ? "unprocessed"
+            : "all",
     minPrice: Number.isFinite(input.minPrice) ? Number(input.minPrice) : null,
     maxPrice: Number.isFinite(input.maxPrice) ? Number(input.maxPrice) : null,
     minStock: Number.isFinite(input.minStock) ? Number(input.minStock) : null,
@@ -773,6 +783,7 @@ async function buildDashboard(input: DashboardFilters) {
     attrIndex,
     requiredAttrs,
     assignedNewProductCodes,
+    processedProductCodes,
   ] = await Promise.all([
     readAllLite(),
     readLiteSyncedAt(),
@@ -786,6 +797,11 @@ async function buildDashboard(input: DashboardFilters) {
       : Promise.resolve({} as RequiredAttrsConfig),
     filters.view === "new"
       ? listAssignedNewProductCodes()
+      : Promise.resolve(new Set<number>()),
+    filters.view === "products"
+      ? listContentProductReviews().then(
+          (reviews) => new Set(reviews.map((review) => review.code)),
+        )
       : Promise.resolve(new Set<number>()),
   ]);
   const comparisonDate =
@@ -943,6 +959,18 @@ async function buildDashboard(input: DashboardFilters) {
   const filtered = products
     .filter((product) => {
       if (!matchesFacetFilters(product)) return false;
+      if (
+        filters.view === "products" &&
+        filters.processingStatus === "processed" &&
+        !processedProductCodes.has(product.code)
+      )
+        return false;
+      if (
+        filters.view === "products" &&
+        filters.processingStatus === "unprocessed" &&
+        processedProductCodes.has(product.code)
+      )
+        return false;
       if (
         filters.view === "new" &&
         (isHiddenNewProductDate(product.firstSeenAt) ||
@@ -1689,6 +1717,8 @@ export async function GET(request: Request) {
       maxStock: params.has("maxStock") ? Number(params.get("maxStock")) : null,
       productSignal: (params.get("productSignal") ||
         null) as DashboardFilters["productSignal"],
+      processingStatus: (params.get("processingStatus") ||
+        undefined) as DashboardFilters["processingStatus"],
     }),
     {
       headers: {
