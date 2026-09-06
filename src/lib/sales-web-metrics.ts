@@ -5,16 +5,16 @@ import {
 } from "@/lib/bigquery-result-cache";
 import { readAllLite } from "@/lib/products-store";
 import {
-  readCompletedSalesProductQuantities,
-  readFormedSalesProductQuantities,
+  readCompletedSalesProductOrderRefs,
 } from "@/lib/sales-s3";
 
 export type SalesWebMetricMonth = {
   month: string;
   visits: number;
-  carts: number;
-  cartItems: number;
-  avgCartItems: number | null;
+  addToCartSessions: number;
+  addToCartItems: number;
+  sessionToCartPct: number;
+  avgCartItemsPerSession: number | null;
 };
 
 export type SalesWebMetricsDataset = {
@@ -27,19 +27,20 @@ export type SalesWebMetricsDataset = {
   };
   definition: {
     visits: string;
-    averageCartItems: string;
+    addToCart: string;
+    sessionToCart: string;
   };
   dataThrough: string | null;
   months: SalesWebMetricMonth[];
   totals: {
     visits: number;
-    carts: number;
-    cartItems: number;
-    avgCartItems: number | null;
+    addToCartSessions: number;
+    addToCartItems: number;
+    sessionToCartPct: number;
+    avgCartItemsPerSession: number | null;
   };
   conversions: {
     definition: string;
-    minimumViews: number;
     categories: SalesConversionRow[];
     brands: SalesConversionRow[];
     products: SalesConversionRow[];
@@ -49,9 +50,9 @@ export type SalesWebMetricsDataset = {
 export type SalesConversionRow = {
   key: string;
   label: string;
-  views: number;
-  orderedQty: number;
-  soldQty: number;
+  addToCartSessions: number;
+  addToCartItems: number;
+  actualOrders: number;
   conversionPct: number;
   url?: string;
 };
@@ -59,18 +60,20 @@ export type SalesConversionRow = {
 type QueryRow = {
   month: string | { value?: string } | null;
   visits: number | string | null;
-  carts: number | string | null;
-  cart_items: number | string | null;
-  avg_cart_items: number | string | null;
+  add_to_cart_sessions: number | string | null;
+  add_to_cart_items: number | string | null;
+  session_to_cart_pct: number | string | null;
+  avg_cart_items_per_session: number | string | null;
   data_through: string | { value?: string } | null;
 };
 
-type ProductViewQueryRow = {
+type ProductAddToCartQueryRow = {
   goods_ref: number | string | null;
-  views: number | string | null;
+  session_key: string | null;
+  add_to_cart_items: number | string | null;
+  total_sessions: number | string | null;
 };
 
-const MIN_CONVERSION_VIEWS = 20;
 const CONVERSION_LIMIT = 20;
 const DEMO_NOTICE = "Тестові дані для локального перегляду. У production метрики беруться з BigQuery та каталогу товарів — тих самих джерел, що й «Аналіз карток товару».";
 
@@ -133,7 +136,7 @@ base AS (
     items
   FROM \`${project}.${dataset}.events_*\`
   WHERE _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
-    AND event_name IN ('session_start', 'begin_checkout')
+    AND event_name IN ('session_start', 'add_to_cart')
     AND geo.country = 'Ukraine'
 ),
 visits AS (
@@ -149,24 +152,36 @@ visits AS (
     AND user_pseudo_id IS NOT NULL
   GROUP BY month
 ),
-cart_events AS (
+add_to_cart_events AS (
   SELECT
     DATE_TRUNC(event_day, MONTH) AS month,
-    event_timestamp,
-    user_pseudo_id,
-    SUM(COALESCE(item.quantity, 1)) AS cart_items
+    CONCAT(
+      user_pseudo_id,
+      '/',
+      COALESCE(ga_session_id, CAST(event_timestamp AS STRING))
+    ) AS session_key,
+    SUM(COALESCE(item.quantity, 1)) AS add_to_cart_items
   FROM base
   CROSS JOIN UNNEST(items) AS item
-  WHERE event_name = 'begin_checkout'
-  GROUP BY month, event_timestamp, user_pseudo_id
+  WHERE event_name = 'add_to_cart'
+    AND user_pseudo_id IS NOT NULL
+  GROUP BY month, session_key, event_timestamp
 ),
-carts AS (
+add_to_cart_sessions AS (
   SELECT
     month,
-    COUNT(*) AS carts,
-    SUM(cart_items) AS cart_items,
-    AVG(cart_items) AS avg_cart_items
-  FROM cart_events
+    session_key,
+    SUM(add_to_cart_items) AS add_to_cart_items
+  FROM add_to_cart_events
+  GROUP BY month, session_key
+),
+add_to_cart_summary AS (
+  SELECT
+    month,
+    COUNT(*) AS add_to_cart_sessions,
+    SUM(add_to_cart_items) AS add_to_cart_items,
+    AVG(add_to_cart_items) AS avg_cart_items_per_session
+  FROM add_to_cart_sessions
   GROUP BY month
 ),
 freshness AS (
@@ -175,37 +190,71 @@ freshness AS (
 SELECT
   FORMAT_DATE('%Y-%m', calendar.month) AS month,
   COALESCE(visits.visits, 0) AS visits,
-  COALESCE(carts.carts, 0) AS carts,
-  COALESCE(carts.cart_items, 0) AS cart_items,
-  carts.avg_cart_items,
+  COALESCE(add_to_cart_summary.add_to_cart_sessions, 0) AS add_to_cart_sessions,
+  COALESCE(add_to_cart_summary.add_to_cart_items, 0) AS add_to_cart_items,
+  SAFE_DIVIDE(COALESCE(add_to_cart_summary.add_to_cart_sessions, 0), COALESCE(visits.visits, 0)) * 100 AS session_to_cart_pct,
+  add_to_cart_summary.avg_cart_items_per_session,
   FORMAT_DATE('%Y-%m-%d', freshness.data_through) AS data_through
 FROM calendar
 LEFT JOIN visits USING (month)
-LEFT JOIN carts USING (month)
+LEFT JOIN add_to_cart_summary USING (month)
 CROSS JOIN freshness
 ORDER BY calendar.month
 `;
 }
 
-function buildProductViewsSql() {
+function buildProductAddToCartSql() {
   const project = projectId().replace(/`/g, "");
   const dataset = datasetId().replace(/`/g, "");
   return `
+WITH total_sessions AS (
+  SELECT COUNT(DISTINCT CONCAT(
+    user_pseudo_id,
+    '/',
+    COALESCE(
+      CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING),
+      CAST(event_timestamp AS STRING)
+    )
+  )) AS total_sessions
+  FROM \`${project}.${dataset}.events_*\`
+  WHERE _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
+    AND event_name = 'session_start'
+    AND geo.country = 'Ukraine'
+    AND user_pseudo_id IS NOT NULL
+),
+cart_rows AS (
 SELECT
   SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) AS goods_ref,
-  COUNT(*) AS views
+  CONCAT(
+    event.user_pseudo_id,
+    '/',
+    COALESCE(
+      CAST((SELECT value.int_value FROM UNNEST(event.event_params) WHERE key = 'ga_session_id') AS STRING),
+      CAST(event.event_timestamp AS STRING)
+    )
+  ) AS session_key,
+  SUM(COALESCE(item.quantity, 1)) AS add_to_cart_items
 FROM \`${project}.${dataset}.events_*\` AS event
 CROSS JOIN UNNEST(event.items) AS item
 WHERE _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
-  AND event.event_name = 'view_item'
+  AND event.event_name = 'add_to_cart'
   AND event.geo.country = 'Ukraine'
+  AND event.user_pseudo_id IS NOT NULL
   AND SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) IS NOT NULL
-GROUP BY goods_ref
+GROUP BY goods_ref, session_key
+)
+SELECT
+  cart_rows.goods_ref,
+  cart_rows.session_key,
+  cart_rows.add_to_cart_items,
+  total_sessions.total_sessions
+FROM cart_rows
+CROSS JOIN total_sessions
 `;
 }
 
-function conversionPct(soldQty: number, views: number) {
-  return views > 0 ? (soldQty / views) * 100 : 0;
+function conversionPct(addToCartSessions: number, totalSessions: number) {
+  return totalSessions > 0 ? (addToCartSessions / totalSessions) * 100 : 0;
 }
 
 function monthKeys(from: string, to: string) {
@@ -222,19 +271,19 @@ function monthKeys(from: string, to: string) {
 }
 
 function demoConversionRows(labels: string[], kind: "category" | "brand" | "product"): SalesConversionRow[] {
-  const baseViews = kind === "category" ? 8_400 : kind === "brand" ? 6_200 : 1_450;
-  const viewStep = kind === "category" ? 247 : kind === "brand" ? 193 : 47;
+  const baseSessions = kind === "category" ? 24_800 : kind === "brand" ? 18_600 : 6_400;
+  const sessionStep = kind === "category" ? 247 : kind === "brand" ? 193 : 47;
+  const totalSessions = 240_000;
   return labels.map((label, index) => {
-    const views = baseViews - index * viewStep;
-    const targetConversion = 12.6 - index * 0.48;
-    const orderedQty = Math.max(1, Math.round(views * targetConversion / 100));
+    const addToCartSessions = Math.max(1, baseSessions - index * sessionStep);
+    const addToCartItems = Math.round(addToCartSessions * (1.35 + (index % 4) * 0.12));
     return {
       key: `${kind}-${index + 1}`,
       label,
-      views,
-      orderedQty,
-      soldQty: Math.round(orderedQty * 0.82),
-      conversionPct: conversionPct(orderedQty, views),
+      addToCartSessions,
+      addToCartItems,
+      actualOrders: Math.max(1, Math.round(addToCartSessions * 0.16)),
+      conversionPct: conversionPct(addToCartSessions, totalSessions),
     };
   });
 }
@@ -243,21 +292,38 @@ export function buildDemoSalesWebMetrics(input: { from: string; to: string }): S
   const range = normalizeRange(input.from, input.to);
   const months = monthKeys(range.from, range.to).map((month, index): SalesWebMetricMonth => {
     const visits = 24_800 + index * 2_140 + (index % 3) * 780;
-    const carts = Math.round(visits * (0.079 + (index % 4) * 0.004));
-    const avgCartItems = 2.34 + (index % 5) * 0.13;
-    const cartItems = Math.round(carts * avgCartItems);
-    return { month, visits, carts, cartItems, avgCartItems: cartItems / carts };
+    const addToCartSessions = Math.round(visits * (0.079 + (index % 4) * 0.004));
+    const avgCartItemsPerSession = 1.34 + (index % 5) * 0.13;
+    const addToCartItems = Math.round(addToCartSessions * avgCartItemsPerSession);
+    return {
+      month,
+      visits,
+      addToCartSessions,
+      addToCartItems,
+      sessionToCartPct: conversionPct(addToCartSessions, visits),
+      avgCartItemsPerSession: addToCartItems / addToCartSessions,
+    };
   });
   const totals = months.reduce(
     (summary, month) => ({
       visits: summary.visits + month.visits,
-      carts: summary.carts + month.carts,
-      cartItems: summary.cartItems + month.cartItems,
-      avgCartItems: null,
+      addToCartSessions: summary.addToCartSessions + month.addToCartSessions,
+      addToCartItems: summary.addToCartItems + month.addToCartItems,
+      sessionToCartPct: 0,
+      avgCartItemsPerSession: null,
     }),
-    { visits: 0, carts: 0, cartItems: 0, avgCartItems: null as number | null },
+    {
+      visits: 0,
+      addToCartSessions: 0,
+      addToCartItems: 0,
+      sessionToCartPct: 0,
+      avgCartItemsPerSession: null as number | null,
+    },
   );
-  totals.avgCartItems = totals.carts > 0 ? totals.cartItems / totals.carts : null;
+  totals.sessionToCartPct = conversionPct(totals.addToCartSessions, totals.visits);
+  totals.avgCartItemsPerSession = totals.addToCartSessions > 0
+    ? totals.addToCartItems / totals.addToCartSessions
+    : null;
 
   const categories = [
     "Плитка для підлоги", "Керамограніт", "Змішувачі", "Унітази", "Раковини",
@@ -286,14 +352,14 @@ export function buildDemoSalesWebMetrics(input: { from: string; to: string }): S
     filter: { ...range, country: "Ukraine" },
     definition: {
       visits: "Демонстраційні GA4-сесії (session_start)",
-      averageCartItems: "Демонстраційна середня кількість товарів у begin_checkout",
+      addToCart: "Демонстраційні GA4-додавання в кошик (add_to_cart)",
+      sessionToCart: "Демонстраційна частка сесій з add_to_cart від усіх сесій",
     },
     dataThrough: range.to,
     months,
     totals,
     conversions: {
-      definition: "Продані одиниці у повністю завершених замовленнях / перегляди картки товару",
-      minimumViews: MIN_CONVERSION_VIEWS,
+      definition: "Сесії з add_to_cart / усі GA4-сесії; факт — кількість повністю відвантажених замовлень",
       categories: demoConversionRows(categories, "category"),
       brands: demoConversionRows(brands, "brand"),
       products: demoConversionRows(products, "product"),
@@ -303,14 +369,14 @@ export function buildDemoSalesWebMetrics(input: { from: string; to: string }): S
 
 async function readConversionRankings(range: { from: string; to: string }) {
   const cacheKey = `${range.from}:${range.to}`;
-  const [viewRows, products, orderedQtyByCode, soldQtyByCode] = await Promise.all([
-    readThroughBigQueryCache<ProductViewQueryRow[]>({
-      namespace: "sales-conversion-product-views",
+  const [cartRows, products, actualOrderRefsByCode] = await Promise.all([
+    readThroughBigQueryCache<ProductAddToCartQueryRow[]>({
+      namespace: "sales-conversion-add-to-cart",
       key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
       load: async () => {
         const bigQuery = new BigQuery({ projectId: projectId() });
         const [rows] = await bigQuery.query({
-          query: buildProductViewsSql(),
+          query: buildProductAddToCartSql(),
           params: {
             suffixFrom: range.from.replaceAll("-", ""),
             suffixTo: range.to.replaceAll("-", ""),
@@ -318,68 +384,75 @@ async function readConversionRankings(range: { from: string; to: string }) {
           location: "EU",
           maximumBytesBilled: "50000000000",
         });
-        return rows as ProductViewQueryRow[];
+        return rows as ProductAddToCartQueryRow[];
       },
     }),
     readAllLite(),
-    readFormedSalesProductQuantities(range),
-    readCompletedSalesProductQuantities(range),
+    readCompletedSalesProductOrderRefs(range),
   ]);
   const productsByGoodsRef = new Map(products.map((product) => [product.goodsRef, product]));
-  const categoryTotals = new Map<string, { views: number; orderedQty: number; soldQty: number }>();
-  const brandTotals = new Map<string, { views: number; orderedQty: number; soldQty: number }>();
+  const categoryTotals = new Map<string, { sessions: Set<string>; items: number; actualOrders: Set<string> }>();
+  const brandTotals = new Map<string, { sessions: Set<string>; items: number; actualOrders: Set<string> }>();
+  const productTotals = new Map<number, { sessions: Set<string>; items: number }>();
+  let totalSessions = 0;
   const productRows: SalesConversionRow[] = [];
 
-  for (const row of viewRows) {
+  for (const row of cartRows) {
     const goodsRef = scalar(row.goods_ref);
-    const views = scalar(row.views);
     const product = productsByGoodsRef.get(goodsRef);
-    if (!product || views <= 0) continue;
-    const orderedQty = orderedQtyByCode.get(product.code) || 0;
-    const soldQty = soldQtyByCode.get(product.code) || 0;
+    if (!product || !row.session_key) continue;
+    totalSessions = Math.max(totalSessions, scalar(row.total_sessions));
+    const addToCartItems = scalar(row.add_to_cart_items);
+    const productTotal = productTotals.get(product.code) || { sessions: new Set<string>(), items: 0 };
+    productTotal.sessions.add(row.session_key);
+    productTotal.items += addToCartItems;
+    productTotals.set(product.code, productTotal);
     const category = product.categoryName || "Без категорії";
     const brand = product.brand || "Без бренду";
-    const categoryTotal = categoryTotals.get(category) || { views: 0, orderedQty: 0, soldQty: 0 };
-    categoryTotal.views += views;
-    categoryTotal.orderedQty += orderedQty;
-    categoryTotal.soldQty += soldQty;
+    const actualOrders = actualOrderRefsByCode.get(product.code) || new Set<string>();
+    const categoryTotal = categoryTotals.get(category) || { sessions: new Set<string>(), items: 0, actualOrders: new Set<string>() };
+    categoryTotal.sessions.add(row.session_key);
+    categoryTotal.items += addToCartItems;
+    for (const order of actualOrders) categoryTotal.actualOrders.add(order);
     categoryTotals.set(category, categoryTotal);
-    const brandTotal = brandTotals.get(brand) || { views: 0, orderedQty: 0, soldQty: 0 };
-    brandTotal.views += views;
-    brandTotal.orderedQty += orderedQty;
-    brandTotal.soldQty += soldQty;
+    const brandTotal = brandTotals.get(brand) || { sessions: new Set<string>(), items: 0, actualOrders: new Set<string>() };
+    brandTotal.sessions.add(row.session_key);
+    brandTotal.items += addToCartItems;
+    for (const order of actualOrders) brandTotal.actualOrders.add(order);
     brandTotals.set(brand, brandTotal);
-    if (views >= MIN_CONVERSION_VIEWS && orderedQty > 0) {
-      productRows.push({
-        key: String(product.code),
-        label: product.name,
-        views,
-        orderedQty,
-        soldQty,
-        conversionPct: conversionPct(orderedQty, views),
-        url: product.url,
-      });
-    }
   }
 
-  const groupedRows = (totals: Map<string, { views: number; orderedQty: number; soldQty: number }>): SalesConversionRow[] => (
+  for (const [code, value] of productTotals) {
+    const product = products.find((item) => item.code === code);
+    if (!product) continue;
+    productRows.push({
+      key: String(product.code),
+      label: product.name,
+      addToCartSessions: value.sessions.size,
+      addToCartItems: value.items,
+      actualOrders: actualOrderRefsByCode.get(code)?.size || 0,
+      conversionPct: conversionPct(value.sessions.size, totalSessions),
+      url: product.url,
+    });
+  }
+
+  const groupedRows = (totals: Map<string, { sessions: Set<string>; items: number; actualOrders: Set<string> }>): SalesConversionRow[] => (
     [...totals.entries()]
-      .filter(([, value]) => value.views >= MIN_CONVERSION_VIEWS && value.orderedQty > 0)
+      .filter(([, value]) => value.sessions.size > 0)
       .map(([label, value]) => ({
         key: label,
         label,
-        views: value.views,
-        orderedQty: value.orderedQty,
-        soldQty: value.soldQty,
-        conversionPct: conversionPct(value.orderedQty, value.views),
+        addToCartSessions: value.sessions.size,
+        addToCartItems: value.items,
+        actualOrders: value.actualOrders.size,
+        conversionPct: conversionPct(value.sessions.size, totalSessions),
       }))
-      .sort((left, right) => right.conversionPct - left.conversionPct || right.orderedQty - left.orderedQty)
+      .sort((left, right) => right.conversionPct - left.conversionPct || right.addToCartSessions - left.addToCartSessions)
       .slice(0, CONVERSION_LIMIT)
   );
-  productRows.sort((left, right) => right.conversionPct - left.conversionPct || right.orderedQty - left.orderedQty);
+  productRows.sort((left, right) => right.conversionPct - left.conversionPct || right.addToCartSessions - left.addToCartSessions);
   return {
-    definition: "Оформлені одиниці у замовленнях зі статусом «Сформовано» / перегляди картки товару; факт — повністю відвантажені одиниці",
-    minimumViews: MIN_CONVERSION_VIEWS,
+    definition: "Сесії з add_to_cart / усі GA4-сесії; факт — кількість повністю відвантажених замовлень",
     categories: groupedRows(categoryTotals),
     brands: groupedRows(brandTotals),
     products: productRows.slice(0, CONVERSION_LIMIT),
@@ -415,27 +488,39 @@ export async function readSalesWebMetrics(input: {
   const months = rows.map((row): SalesWebMetricMonth => ({
     month: dateScalar(row.month) || "",
     visits: scalar(row.visits),
-    carts: scalar(row.carts),
-    cartItems: scalar(row.cart_items),
-    avgCartItems: row.avg_cart_items == null ? null : scalar(row.avg_cart_items),
+    addToCartSessions: scalar(row.add_to_cart_sessions),
+    addToCartItems: scalar(row.add_to_cart_items),
+    sessionToCartPct: scalar(row.session_to_cart_pct),
+    avgCartItemsPerSession: row.avg_cart_items_per_session == null ? null : scalar(row.avg_cart_items_per_session),
   }));
   const totals = months.reduce(
     (summary, month) => ({
       visits: summary.visits + month.visits,
-      carts: summary.carts + month.carts,
-      cartItems: summary.cartItems + month.cartItems,
-      avgCartItems: null,
+      addToCartSessions: summary.addToCartSessions + month.addToCartSessions,
+      addToCartItems: summary.addToCartItems + month.addToCartItems,
+      sessionToCartPct: 0,
+      avgCartItemsPerSession: null,
     }),
-    { visits: 0, carts: 0, cartItems: 0, avgCartItems: null as number | null },
+    {
+      visits: 0,
+      addToCartSessions: 0,
+      addToCartItems: 0,
+      sessionToCartPct: 0,
+      avgCartItemsPerSession: null as number | null,
+    },
   );
-  totals.avgCartItems = totals.carts > 0 ? totals.cartItems / totals.carts : null;
+  totals.sessionToCartPct = conversionPct(totals.addToCartSessions, totals.visits);
+  totals.avgCartItemsPerSession = totals.addToCartSessions > 0
+    ? totals.addToCartItems / totals.addToCartSessions
+    : null;
   const value: SalesWebMetricsDataset = {
     mode: "live",
     notice: null,
     filter: { ...range, country: "Ukraine" },
     definition: {
       visits: "Унікальні GA4-сесії (session_start)",
-      averageCartItems: "Середня сума item.quantity у події begin_checkout",
+      addToCart: "Сума item.quantity у подіях GA4 add_to_cart",
+      sessionToCart: "Унікальні сесії з add_to_cart / усі унікальні GA4-сесії",
     },
     dataThrough: dateScalar(rows[0]?.data_through ?? null),
     months,

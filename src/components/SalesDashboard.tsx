@@ -153,24 +153,25 @@ type SalesWebMetricsDataset = {
   mode: "live" | "demo";
   notice: string | null;
   filter: { from: string; to: string; country: "Ukraine" };
-  definition: { visits: string; averageCartItems: string };
+  definition: { visits: string; addToCart: string; sessionToCart: string };
   dataThrough: string | null;
   months: Array<{
     month: string;
     visits: number;
-    carts: number;
-    cartItems: number;
-    avgCartItems: number | null;
+    addToCartSessions: number;
+    addToCartItems: number;
+    sessionToCartPct: number;
+    avgCartItemsPerSession: number | null;
   }>;
   totals: {
     visits: number;
-    carts: number;
-    cartItems: number;
-    avgCartItems: number | null;
+    addToCartSessions: number;
+    addToCartItems: number;
+    sessionToCartPct: number;
+    avgCartItemsPerSession: number | null;
   };
   conversions: {
     definition: string;
-    minimumViews: number;
     categories: SalesConversionRow[];
     brands: SalesConversionRow[];
     products: SalesConversionRow[];
@@ -180,9 +181,9 @@ type SalesWebMetricsDataset = {
 type SalesConversionRow = {
   key: string;
   label: string;
-  views: number;
-  orderedQty: number;
-  soldQty: number;
+  addToCartSessions: number;
+  addToCartItems: number;
+  actualOrders: number;
   conversionPct: number;
   url?: string;
 };
@@ -926,11 +927,11 @@ function OrdersTrendChart({ days }: { days: SalesDataset["summary"]["ordersByDat
 function ConversionRanking({ title, rows }: { title: string; rows: SalesConversionRow[] }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
-      <div className="border-b border-[#e5e8eb] px-4 py-3"><h3 className="text-xs font-black text-[#26313d]">{title}</h3><p className="mt-1 text-[9px] text-[#8a939c]">Топ-20 за конверсією оформлених замовлень</p></div>
+      <div className="border-b border-[#e5e8eb] px-4 py-3"><h3 className="text-xs font-black text-[#26313d]">{title}</h3><p className="mt-1 text-[9px] text-[#8a939c]">Топ-20 за конверсією сесій у додавання в кошик</p></div>
       <div className="divide-y divide-[#edf0f2]">
         {rows.map((row, index) => <div key={row.key} className="grid grid-cols-[24px_minmax(0,1fr)_70px] items-center gap-2 px-4 py-2.5 text-[10px]">
           <span className="text-[#9aa3ac]">{index + 1}</span>
-          <div className="min-w-0"><div className="truncate font-bold text-[#3b4753]" title={row.label}>{row.url ? <a href={row.url} target="_blank" rel="noreferrer" className="hover:text-[#118dff]">{row.label}</a> : row.label}</div><div className="mt-0.5 text-[9px] text-[#929ba4]">{fmtNum(row.orderedQty)} замовлено · {fmtNum(row.soldQty)} факт · {fmtNum(row.views)} переглядів</div></div>
+          <div className="min-w-0"><div className="truncate font-bold text-[#3b4753]" title={row.label}>{row.url ? <a href={row.url} target="_blank" rel="noreferrer" className="hover:text-[#118dff]">{row.label}</a> : row.label}</div><div className="mt-0.5 text-[9px] text-[#929ba4]">{fmtNum(row.addToCartSessions)} сесій додали · {fmtNum(row.addToCartItems)} товарів · <span className="text-[8px]">факт. замовлень {fmtNum(row.actualOrders)}</span></div></div>
           <span className="text-right font-black text-[#16865c]">{fmtPct(row.conversionPct)}</span>
         </div>)}
         {!rows.length && <div className="px-4 py-8 text-center text-[10px] text-[#8a939c]">Немає даних</div>}
@@ -1289,7 +1290,6 @@ export function SalesDashboard() {
   const selectedSegmentSummary = selectedDocumentSegment === "Усі"
     ? null
     : data.summary.documentStatusesBySegment.find((item) => item.segment === selectedDocumentSegment);
-  const formedOrders = data.summary.states.find((item) => item.state.toLocaleLowerCase("uk").includes("сформ"));
   const visibleStatusRows = selectedDocumentSegment === "Усі" ? data.summary.states : selectedSegmentSummary?.states || [];
   const visibleCancelReasonRows = selectedDocumentSegment === "Усі" ? data.summary.cancelReasons || [] : selectedSegmentSummary?.cancelReasons || [];
   const statusDocsTotal = visibleStatusRows.reduce((sum, item) => sum + item.docs, 0);
@@ -1438,26 +1438,26 @@ export function SalesDashboard() {
                 {webMetrics?.mode === "demo" && <div className="rounded-xl border border-[#f1d18f] bg-[#fff8e8] p-4 text-xs text-[#805b1d]"><div className="font-black uppercase tracking-[.1em]">Тестові дані</div><div className="mt-1 leading-relaxed">{webMetrics.notice}</div></div>}
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <SalesMetricCard label="Користувачі за період" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtNum(webMetrics?.totals.visits || 0)} hint="GA4-сесії з України" symbol="U" tone="#805ad5" />
-                  <SalesMetricCard label="Товарів у кошику" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtNum(webMetrics?.totals.cartItems || 0)} hint={webMetricsError ? "GA4 не підключено локально" : `${fmtNum(webMetrics?.totals.carts || 0)} кошиків · середнє ${fmtDecimal(webMetrics?.totals.avgCartItems ?? null)}`} symbol="C" tone="#e39a25" />
-                  <SalesMetricCard label="Замовлення сформовано" value={fmtNum(formedOrders?.docs || 0)} hint={`${fmtMoney(formedOrders?.revenue || 0)} · статус «Сформовано»`} symbol="O" tone="#20a66a" description="Замовлення, сформовані на сайті за обраний період." />
+                  <SalesMetricCard label="Сесії з додаванням у кошик" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtNum(webMetrics?.totals.addToCartSessions || 0)} hint={webMetricsError ? "GA4 не підключено локально" : `${fmtNum(webMetrics?.totals.addToCartItems || 0)} товарів додано`} symbol="C" tone="#e39a25" />
+                  <SalesMetricCard label="Конверсія сесія → кошик" value={webMetricsLoading ? "…" : webMetricsError ? "—" : fmtPct(webMetrics?.totals.sessionToCartPct ?? null)} hint={`Сесії з add_to_cart / усі сесії`} symbol="%" tone="#20a66a" description="Основна вебконверсія дашборду: доля GA4-сесій, у яких товар додали в кошик." />
                   <SalesMetricCard label="Факт продажів" value={fmtMoney(data.summary.shippedRevenue)} hint={`Повністю відвантажено · ${fmtNum(data.summary.shippedGoods)} шт${data.summary.lastShippedDate ? ` · до ${fmtIsoDateShort(data.summary.lastShippedDate)}` : ""}`} symbol="₴" tone="#168b9b" description="Фактичні продажі за повністю відвантаженими документами за обраний період." />
                 </div>
                 {webMetricsError && <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs text-[#b73535]">Вебаналітика недоступна: {webMetricsError}</div>}
                 <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
-                    <div><h2 className="text-sm font-black text-[#26313d]">Вебаналітика по місяцях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Кошик фіксується в момент початку оформлення · категорії, бренди й товари нижче рахуються за замовленнями зі статусом «Сформовано»</p></div>
+                    <div><h2 className="text-sm font-black text-[#26313d]">Вебаналітика по місяцях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Основна конверсія — сесія → add_to_cart у GA4 · фактичні замовлення показані лише як довідковий показник</p></div>
                     {webMetrics?.dataThrough && <span className="text-[10px] text-[#7b8691]">Дані по {fmtIsoDateShort(webMetrics.dataThrough)}</span>}
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[650px] border-collapse text-xs">
-                      <thead className="bg-[#f7f9fb] text-[#75808b]"><tr><th className="px-5 py-3 text-left">Місяць</th><th className="px-4 py-3 text-right">Користувачі</th><th className="px-4 py-3 text-right">Кошики</th><th className="px-4 py-3 text-right">Товарів у кошиках</th><th className="px-5 py-3 text-right">Середнє</th></tr></thead>
-                      <tbody>{(webMetrics?.months || []).map((month) => <tr key={month.month} className="border-t border-[#edf0f2]"><td className="px-5 py-3 font-bold text-[#33404c]">{fmtMonth(month.month)}</td><td className="px-4 py-3 text-right tabular-nums">{fmtNum(month.visits)}</td><td className="px-4 py-3 text-right tabular-nums text-[#687582]">{fmtNum(month.carts)}</td><td className="px-4 py-3 text-right tabular-nums text-[#687582]">{fmtNum(month.cartItems)}</td><td className="px-5 py-3 text-right font-black tabular-nums text-[#b26f11]">{fmtDecimal(month.avgCartItems)}</td></tr>)}</tbody>
+                      <thead className="bg-[#f7f9fb] text-[#75808b]"><tr><th className="px-5 py-3 text-left">Місяць</th><th className="px-4 py-3 text-right">Сесії</th><th className="px-4 py-3 text-right">Сесії з add_to_cart</th><th className="px-4 py-3 text-right">Товарів додано</th><th className="px-4 py-3 text-right">Конверсія</th><th className="px-5 py-3 text-right">Товарів / сесію</th></tr></thead>
+                      <tbody>{(webMetrics?.months || []).map((month) => <tr key={month.month} className="border-t border-[#edf0f2]"><td className="px-5 py-3 font-bold text-[#33404c]">{fmtMonth(month.month)}</td><td className="px-4 py-3 text-right tabular-nums">{fmtNum(month.visits)}</td><td className="px-4 py-3 text-right tabular-nums text-[#687582]">{fmtNum(month.addToCartSessions)}</td><td className="px-4 py-3 text-right tabular-nums text-[#687582]">{fmtNum(month.addToCartItems)}</td><td className="px-4 py-3 text-right font-black tabular-nums text-[#168b5c]">{fmtPct(month.sessionToCartPct)}</td><td className="px-5 py-3 text-right tabular-nums text-[#b26f11]">{fmtDecimal(month.avgCartItemsPerSession)}</td></tr>)}</tbody>
                     </table>
                   </div>
                 </section>
                 {!webMetricsError && webMetrics?.conversions && (
                   <section>
-                    <div className="mb-3"><h2 className="text-sm font-black text-[#26313d]">Топ конверсій</h2><p className="mt-1 text-[10px] text-[#8a939c]">{webMetrics.conversions.definition} · мінімум {fmtNum(webMetrics.conversions.minimumViews)} переглядів</p></div>
+                    <div className="mb-3"><h2 className="text-sm font-black text-[#26313d]">Топ конверсій</h2><p className="mt-1 text-[10px] text-[#8a939c]">{webMetrics.conversions.definition}</p></div>
                     <div className="grid gap-4 xl:grid-cols-3">
                       <ConversionRanking title="Категорії" rows={webMetrics.conversions.categories} />
                       <ConversionRanking title="Бренди" rows={webMetrics.conversions.brands} />

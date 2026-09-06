@@ -1365,6 +1365,48 @@ export async function readCompletedSalesProductQuantities(input: {
   return quantities;
 }
 
+// Distinct fully shipped orders containing each product. This is a small
+// factual context for web rankings; the ranking itself remains driven by GA4
+// add_to_cart sessions.
+export async function readCompletedSalesProductOrderRefs(input: {
+  from: string;
+  to: string;
+}): Promise<Map<number, Set<string>>> {
+  const { rows } = await readCachedSalesRows();
+  const normalizedFrom = normalizeDateFilter(input.from) || input.from;
+  const normalizedTo = normalizeDateFilter(input.to) || input.to;
+  const rangeFrom = normalizedFrom <= normalizedTo ? normalizedFrom : normalizedTo;
+  const rangeTo = normalizedFrom <= normalizedTo ? normalizedTo : normalizedFrom;
+  const ordersByCode = new Map<number, Set<string>>();
+
+  for (const row of rows) {
+    if (!isShipped(row) || !row.shippedDate || isExcludedAnalyticsOrder(row)) continue;
+    const createdDate = normalizeShippedDate(row.createdDate);
+    if (!createdDate || row.shippedDate < createdDate) continue;
+    if (createdDate < rangeFrom || createdDate > rangeTo) continue;
+    if (row.shippedDate < rangeFrom || row.shippedDate > rangeTo) continue;
+    const documentKey = row.docsRef || row.number;
+    if (!documentKey) continue;
+    for (const item of row.items) {
+      const code = parseInt(item.code, 10);
+      if (!Number.isFinite(code) || code <= 0) continue;
+      const orders = ordersByCode.get(code) || new Set<string>();
+      orders.add(documentKey);
+      ordersByCode.set(code, orders);
+    }
+  }
+
+  return ordersByCode;
+}
+
+export async function readCompletedSalesProductOrderCounts(input: {
+  from: string;
+  to: string;
+}): Promise<Map<number, number>> {
+  const ordersByCode = await readCompletedSalesProductOrderRefs(input);
+  return new Map([...ordersByCode].map(([code, orders]) => [code, orders.size]));
+}
+
 // Product quantities from orders that were created on the website and still
 // have the «Сформовано» status. These are the quantities used by web-sales
 // rankings; they must not be confused with completed/actual sales.

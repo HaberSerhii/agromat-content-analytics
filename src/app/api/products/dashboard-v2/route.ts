@@ -2,7 +2,10 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 import { listAssignedNewProductCodes } from "@/lib/new-product-assignments-store";
-import { NEW_PRODUCT_TRACKING_START } from "@/lib/new-product-types";
+import {
+  isHiddenNewProductDate,
+  NEW_PRODUCT_TRACKING_START,
+} from "@/lib/new-product-types";
 import {
   listSnapshotDates,
   readAllLite,
@@ -851,6 +854,7 @@ async function buildDashboard(input: DashboardFilters) {
         (product) =>
           !product.deleted &&
           product.statusId === 5 &&
+          !isHiddenNewProductDate(product.firstSeenAt) &&
           inDateRange(
             product.firstSeenAt,
             ranges.currentFrom,
@@ -864,6 +868,7 @@ async function buildDashboard(input: DashboardFilters) {
         (product) =>
           !product.deleted &&
           product.statusId === 5 &&
+          !isHiddenNewProductDate(product.firstSeenAt) &&
           inDateRange(
             product.firstSeenAt,
             ranges.currentFrom,
@@ -935,7 +940,8 @@ async function buildDashboard(input: DashboardFilters) {
       if (!matchesFacetFilters(product)) return false;
       if (
         filters.view === "new" &&
-        (!inDateRange(product.firstSeenAt, NEW_PRODUCT_TRACKING_START, today) ||
+        (isHiddenNewProductDate(product.firstSeenAt) ||
+          !inDateRange(product.firstSeenAt, NEW_PRODUCT_TRACKING_START, today) ||
           assignedNewProductCodes.has(product.code))
       )
         return false;

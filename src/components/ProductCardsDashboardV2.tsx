@@ -2875,7 +2875,7 @@ export function ProductCardsDashboardV2() {
         <div>
           <h2 className="text-sm font-black text-[#26313d]">
             {view === "new"
-              ? "Нові задачі з 01.09.2026"
+              ? "Нові задачі з 01.09.2026 · партію 03.09 тимчасово приховано"
               : view === "categories"
                 ? "Зріз за категоріями"
                 : view === "products"
@@ -4344,12 +4344,13 @@ export function ProductCardsDashboardV2() {
               <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                 {filterBar(false)}
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1180px] border-collapse text-left">
+                  <table className="w-full min-w-[1280px] border-collapse text-left">
                     <thead className="bg-[#f7f8f8] text-[9px] font-black uppercase tracking-[.11em] text-[#8d969f]">
                       <tr>
                         <th className="px-3 py-3">IDD / goods_ref / дія</th>
                         <th className="px-3 py-3">Артикул</th>
                         <th className="min-w-64 px-3 py-3">Назва товару</th>
+                        <th className="px-3 py-3">Дата додавання</th>
                         <th className="min-w-48 px-3 py-3">
                           Категорія / бренд
                         </th>
@@ -4366,7 +4367,7 @@ export function ProductCardsDashboardV2() {
                       {loading && !data && (
                         <tr>
                           <td
-                            colSpan={9}
+                            colSpan={10}
                             className="p-12 text-center text-xs text-[#82909d]"
                           >
                             Завантаження нових товарів…
@@ -4405,6 +4406,9 @@ export function ProductCardsDashboardV2() {
                               >
                                 {row.name}
                               </button>
+                            </td>
+                            <td className="px-3 py-3 whitespace-nowrap text-[10px] font-semibold text-[#596571]">
+                              {formatDate(row.firstSeenAt)}
                             </td>
                             <td className="px-3 py-3">
                               <div className="text-[10px] font-bold text-[#45515d]">
@@ -4458,10 +4462,10 @@ export function ProductCardsDashboardV2() {
                       {!loading && data?.rows.length === 0 && (
                         <tr>
                           <td
-                            colSpan={9}
+                            colSpan={10}
                             className="p-12 text-center text-xs text-[#82909d]"
                           >
-                            Нових непризначених товарів з 01.09.2026 немає
+                            Нових непризначених товарів з 01.09.2026 немає або аварійну партію 03.09.2026 тимчасово приховано
                           </td>
                         </tr>
                       )}

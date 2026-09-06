@@ -4,6 +4,14 @@ import type {
 } from "@/lib/content-review-types";
 
 export const NEW_PRODUCT_TRACKING_START = "2026-09-01";
+// A failed catalog sync stamped this whole batch with 2026-09-03. Keep the
+// source data intact but hide that incident batch from the operational queue
+// until it can be reviewed and safely reintroduced.
+export const NEW_PRODUCT_HIDDEN_DATES = new Set(["2026-09-03"]);
+
+export function isHiddenNewProductDate(firstSeenAt: string) {
+  return NEW_PRODUCT_HIDDEN_DATES.has(firstSeenAt.slice(0, 10));
+}
 
 export interface NewProductMeasurement {
   metrics: ContentReviewMetrics;
