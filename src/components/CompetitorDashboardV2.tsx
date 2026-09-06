@@ -222,7 +222,8 @@ function formatPrice(value: number | null): string {
 }
 
 function competitorPriceChangeClass(view: ViewMode, cell: PriceCell | undefined): string {
-  if (view === "match-changed" && cell?.matchChange) return "bg-[#fff4c7] px-2 py-1";
+  if (view === "match-changed" && cell?.matchChange === "added") return "bg-[#e6f6ef] px-2 py-1";
+  if (view === "match-changed" && cell?.matchChange === "removed") return "bg-[#fcebea] px-2 py-1";
   if ((view === "changed" || view === "vtm-changed") && cell?.priceChange === "increased") {
     return "bg-[#e4f7ed] px-2 py-1";
   }
@@ -280,28 +281,47 @@ function paginationItems(current: number, total: number): Array<number | "ellips
   return result;
 }
 
-function DeltaBadge({ value }: { value: number }) {
+function DeltaBadge({ value, onClick, title }: { value: number; onClick?: () => void; title?: string }) {
   const positive = value > 0;
   const neutral = value === 0;
+  const className = "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums transition hover:brightness-95 disabled:cursor-default disabled:hover:brightness-100";
+  const style = {
+    color: neutral ? "#737b86" : positive ? "#087a55" : "#c63f3f",
+    background: neutral ? "#f0f2f4" : positive ? "#e6f6ef" : "#fcebea",
+  };
+  if (!onClick) {
+    return (
+      <span
+        className={className}
+        style={style}
+      >
+        {positive ? "+" : ""}{value}
+      </span>
+    );
+  }
   return (
-    <span
-      className="rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums"
-      style={{
-        color: neutral ? "#737b86" : positive ? "#087a55" : "#c63f3f",
-        background: neutral ? "#f0f2f4" : positive ? "#e6f6ef" : "#fcebea",
-      }}
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={neutral}
+      className={className}
+      style={style}
+      title={title}
+      aria-label={title}
     >
       {positive ? "+" : ""}{value}
-    </span>
+    </button>
   );
 }
 
-function MetricCard({ label, symbol, tone, value }: {
+function MetricCard({ label, symbol, tone, value, onDeltaClick }: {
   label: string;
   symbol: string;
   tone: string;
   value: MetricValues;
+  onDeltaClick?: (segment: "tile" | "sanitary") => void;
 }) {
+  const deltaTitle = onDeltaClick ? `Показати вибірку: ${label}` : undefined;
   return (
     <article className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_1px_2px_rgba(20,32,50,.04)]">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -315,14 +335,14 @@ function MetricCard({ label, symbol, tone, value }: {
           <div className="mb-1 text-[10px] font-bold uppercase tracking-[.13em] text-[#9aa2ab]">Плитка</div>
           <div className="flex items-center gap-2">
             <strong className="text-2xl font-black tracking-tight text-[#202a35]">{formatNumber(value.tile)}</strong>
-            <DeltaBadge value={value.deltaTile} />
+            <DeltaBadge value={value.deltaTile} onClick={onDeltaClick ? () => onDeltaClick("tile") : undefined} title={deltaTitle} />
           </div>
         </div>
         <div className="border-l border-[#e8ebef] pl-3">
           <div className="mb-1 text-[10px] font-bold uppercase tracking-[.13em] text-[#9aa2ab]">Сантехніка</div>
           <div className="flex items-center gap-2">
             <strong className="text-2xl font-black tracking-tight text-[#202a35]">{formatNumber(value.sanitary)}</strong>
-            <DeltaBadge value={value.deltaSanitary} />
+            <DeltaBadge value={value.deltaSanitary} onClick={onDeltaClick ? () => onDeltaClick("sanitary") : undefined} title={deltaTitle} />
           </div>
         </div>
       </div>
@@ -391,6 +411,7 @@ export function CompetitorDashboardV2() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [view, setView] = useState<ViewMode>("overview");
+  const [vtmOnly, setVtmOnly] = useState(false);
   const [category, setCategory] = useState("");
   const [brand, setBrand] = useState("");
   const [priceMode, setPriceMode] = useState("all");
@@ -467,6 +488,7 @@ export function CompetitorDashboardV2() {
     if (search) query.set("search", search);
     if (productIds) query.set("ids", productIds);
     if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
+    if (vtmOnly) query.set("vtm", "1");
     setLoading(true);
     setError("");
     fetch(`/api/parser/dashboard-v2?${query}`, { signal: controller.signal })
@@ -485,9 +507,9 @@ export function CompetitorDashboardV2() {
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [brand, category, competitorPriceMode, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId]);
+  }, [brand, category, competitorPriceMode, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId, vtmOnly]);
 
-  useEffect(() => setPage(1), [brand, category, competitorPriceMode, priceMode, productIds, search, selectedKey, view, violationCompetitorId]);
+  useEffect(() => setPage(1), [brand, category, competitorPriceMode, priceMode, productIds, search, selectedKey, view, violationCompetitorId, vtmOnly]);
 
   useEffect(() => {
     if (category && data && !data.categories.some((item) => item.value === category)) setCategory("");
@@ -546,6 +568,7 @@ export function CompetitorDashboardV2() {
   function resetFilters() {
     setCategory("");
     setBrand("");
+    setVtmOnly(false);
     setPriceMode("all");
     setCompetitorPriceMode("all");
     setSelectedCompetitors(new Set());
@@ -580,6 +603,7 @@ export function CompetitorDashboardV2() {
     if (search) query.set("search", search);
     if (productIds) query.set("ids", productIds);
     if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
+    if (vtmOnly) query.set("vtm", "1");
     return query;
   }
 
@@ -600,6 +624,30 @@ export function CompetitorDashboardV2() {
     setSelectedCompetitors(nextId ? new Set([competitorId]) : new Set());
     setPage(1);
     setNotice(nextId ? `Фільтр порушень: ${competitor}.` : "Фільтр порушень вимкнено.");
+  }
+
+  function openMetricSelection(metric: keyof DashboardResponse["overview"], segment: "tile" | "sanitary") {
+    const allCompetitorIds = new Set((data?.competitors || []).map((competitor) => competitor.id));
+    const segmentLabel = segment === "tile" ? "Плитка" : "Сантехніка";
+    const nextView: ViewMode = metric === "feed" || metric === "vtmFeed"
+      ? "overview"
+      : metric === "matched" || metric === "vtmMatched"
+        ? "match-changed"
+        : "changed";
+
+    setView(nextView);
+    setVtmOnly(metric === "vtmFeed" || metric === "vtmMatched");
+    setPriceMode(metric === "agromatLower" ? "lower" : metric === "agromatHigher" ? "higher" : "all");
+    setCompetitorPriceMode("all");
+    setSelectedCompetitors(allCompetitorIds);
+    setCategory("");
+    setBrand("");
+    setSearchDraft("");
+    setSearch("");
+    setProductIds("");
+    setViolationCompetitorId(0);
+    setPage(1);
+    setNotice(`${METRICS.find((item) => item.key === metric)?.label || "Вибірка"} · ${segmentLabel}. Показано всі конкуренти.`);
   }
 
   function openPagePicker() {
@@ -1162,7 +1210,14 @@ export function CompetitorDashboardV2() {
 
             <section className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3">
               {METRICS.map((item) => (
-                <MetricCard key={item.key} label={item.label} symbol={item.symbol} tone={item.tone} value={data?.overview[item.key] || { tile: 0, sanitary: 0, deltaTile: 0, deltaSanitary: 0 }} />
+                <MetricCard
+                  key={item.key}
+                  label={item.label}
+                  symbol={item.symbol}
+                  tone={item.tone}
+                  value={data?.overview[item.key] || { tile: 0, sanitary: 0, deltaTile: 0, deltaSanitary: 0 }}
+                  onDeltaClick={(segment) => openMetricSelection(item.key, segment)}
+                />
               ))}
             </section>
 
@@ -1283,7 +1338,7 @@ export function CompetitorDashboardV2() {
                           <td className="px-3 py-3">
                             {row.ourUrl ? <a href={row.ourUrl} target="_blank" rel="noreferrer" className="line-clamp-2 text-[11px] font-semibold leading-4 text-[#26313d] no-underline hover:text-[#118dff]">{row.name}</a> : <span className="line-clamp-2 text-[11px] font-semibold leading-4">{row.name}</span>}
                             {view === "match-changed" && row.matchChange && (
-                              <span className="mt-1 inline-flex rounded-full bg-[#fff4c7] px-2 py-0.5 text-[8px] font-black uppercase tracking-[.08em] text-[#8a6715]">
+                              <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[8px] font-black uppercase tracking-[.08em] ${row.matchChange === "added" ? "bg-[#e6f6ef] text-[#087a55]" : "bg-[#fcebea] text-[#c63f3f]"}`}>
                                 {row.matchChange === "added" ? "Співпадіння знайдено" : "Співпадіння втрачено"}
                               </span>
                             )}
