@@ -509,8 +509,15 @@ function parseIdSet(value: string | null): Set<number> {
     .filter((item) => Number.isSafeInteger(item) && item > 0));
 }
 
-function rowMatchesView(row: PriceRow, view: ViewMode, base: DashboardBase, vtmOnly = false): boolean {
+function rowMatchesView(
+  row: PriceRow,
+  view: ViewMode,
+  base: DashboardBase,
+  vtmOnly = false,
+  segmentFilter: Segment | "all" = "all",
+): boolean {
   if (vtmOnly && !isVtm(row)) return false;
+  if (segmentFilter !== "all" && segmentOf(row.category) !== segmentFilter) return false;
   if (view === "changed") return base.changedProductIds.has(row.productId);
   if (view === "vtm-changed") return isVtm(row) && base.changedProductIds.has(row.productId);
   if (view === "not-median") return agromatIsNotInMedian(row);
@@ -567,6 +574,10 @@ export async function GET(request: Request) {
     const selectedCompetitors = parseIdSet(query.get("competitors"));
     const violationCompetitorId = Number(query.get("violation_competitor")) || 0;
     const vtmOnly = query.get("vtm") === "1";
+    const requestedSegment = query.get("segment");
+    const segmentFilter: Segment | "all" = requestedSegment === "tile" || requestedSegment === "sanitary"
+      ? requestedSegment
+      : "all";
     const ids = parseIdSet(query.get("ids"));
     const requestedView = query.get("view") || "overview";
     const legacyView = requestedView === "below-median"
@@ -579,7 +590,7 @@ export async function GET(request: Request) {
       : "overview";
 
     const matchesFilters = (row: PriceRow, omit?: "category" | "brand") => {
-      if (!rowMatchesView(row, view, base, vtmOnly)) return false;
+      if (!rowMatchesView(row, view, base, vtmOnly, segmentFilter)) return false;
       if (omit !== "category" && category && row.category !== category) return false;
       if (omit !== "brand" && brand && row.brand !== brand) return false;
       if (ids.size && !ids.has(row.productId) && !ids.has(row.code || -1) && !ids.has(row.goodsRef || -1)) return false;

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 type ViewMode = "overview" | "changed" | "vtm-changed" | "not-median" | "vtm-not-median" | "new-feed" | "match-changed";
+type SegmentFilter = "all" | "tile" | "sanitary";
 type MatchChange = "added" | "removed";
 type CompetitorPriceChange = "increased" | "decreased";
 type CabinetMode = "menu" | "sessions" | "logs" | null;
@@ -412,6 +413,7 @@ export function CompetitorDashboardV2() {
   const [error, setError] = useState("");
   const [view, setView] = useState<ViewMode>("overview");
   const [vtmOnly, setVtmOnly] = useState(false);
+  const [segmentFilter, setSegmentFilter] = useState<SegmentFilter>("all");
   const [category, setCategory] = useState("");
   const [brand, setBrand] = useState("");
   const [priceMode, setPriceMode] = useState("all");
@@ -489,6 +491,7 @@ export function CompetitorDashboardV2() {
     if (productIds) query.set("ids", productIds);
     if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
     if (vtmOnly) query.set("vtm", "1");
+    if (segmentFilter !== "all") query.set("segment", segmentFilter);
     setLoading(true);
     setError("");
     fetch(`/api/parser/dashboard-v2?${query}`, { signal: controller.signal })
@@ -507,9 +510,9 @@ export function CompetitorDashboardV2() {
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [brand, category, competitorPriceMode, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId, vtmOnly]);
+  }, [brand, category, competitorPriceMode, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
 
-  useEffect(() => setPage(1), [brand, category, competitorPriceMode, priceMode, productIds, search, selectedKey, view, violationCompetitorId, vtmOnly]);
+  useEffect(() => setPage(1), [brand, category, competitorPriceMode, priceMode, productIds, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
 
   useEffect(() => {
     if (category && data && !data.categories.some((item) => item.value === category)) setCategory("");
@@ -569,6 +572,7 @@ export function CompetitorDashboardV2() {
     setCategory("");
     setBrand("");
     setVtmOnly(false);
+    setSegmentFilter("all");
     setPriceMode("all");
     setCompetitorPriceMode("all");
     setSelectedCompetitors(new Set());
@@ -604,6 +608,7 @@ export function CompetitorDashboardV2() {
     if (productIds) query.set("ids", productIds);
     if (violationCompetitorId) query.set("violation_competitor", String(violationCompetitorId));
     if (vtmOnly) query.set("vtm", "1");
+    if (segmentFilter !== "all") query.set("segment", segmentFilter);
     return query;
   }
 
@@ -637,6 +642,7 @@ export function CompetitorDashboardV2() {
 
     setView(nextView);
     setVtmOnly(metric === "vtmFeed" || metric === "vtmMatched");
+    setSegmentFilter(segment);
     setPriceMode(metric === "agromatLower" ? "lower" : metric === "agromatHigher" ? "higher" : "all");
     setCompetitorPriceMode("all");
     setSelectedCompetitors(allCompetitorIds);
