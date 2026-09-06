@@ -735,7 +735,12 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
       ? Number(input.categoryId)
       : null,
     brandId: Number.isFinite(input.brandId) ? Number(input.brandId) : null,
-    statusId: Number.isFinite(input.statusId) ? Number(input.statusId) : null,
+    statusId:
+      input.view === "new"
+        ? null
+        : Number.isFinite(input.statusId)
+          ? Number(input.statusId)
+          : null,
     minPrice: Number.isFinite(input.minPrice) ? Number(input.minPrice) : null,
     maxPrice: Number.isFinite(input.maxPrice) ? Number(input.maxPrice) : null,
     minStock: Number.isFinite(input.minStock) ? Number(input.minStock) : null,

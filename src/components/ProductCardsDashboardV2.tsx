@@ -2118,7 +2118,8 @@ export function ProductCardsDashboardV2() {
             bulkIds,
             categoryId: categoryId ? Number(categoryId) : null,
             brandId: brandId ? Number(brandId) : null,
-            statusId: statusId ? Number(statusId) : null,
+            statusId:
+              view === "new" ? null : statusId ? Number(statusId) : null,
             minPrice: minPrice ? Number(minPrice) : null,
             maxPrice: maxPrice ? Number(maxPrice) : null,
             minStock: minStock ? Number(minStock) : null,
@@ -2940,13 +2941,15 @@ export function ProductCardsDashboardV2() {
           searchPlaceholder="Знайти бренд…"
           onChange={setBrandId}
         />
-        <StyledSelect
-          value={statusId}
-          options={facetOptions?.statuses || []}
-          placeholder="Усі статуси товару"
-          searchPlaceholder="Знайти статус…"
-          onChange={setStatusId}
-        />
+        {view !== "new" && (
+          <StyledSelect
+            value={statusId}
+            options={facetOptions?.statuses || []}
+            placeholder="Усі статуси товару"
+            searchPlaceholder="Знайти статус…"
+            onChange={setStatusId}
+          />
+        )}
       </div>
       {!compact && (
         <>
@@ -3108,7 +3111,7 @@ export function ProductCardsDashboardV2() {
               </h1>
               <p className="mt-1 text-xs text-[#737d87]">
                 {view === "new"
-                  ? "Нові товари з 01.09.2026, які ще не призначені контент-менеджеру."
+                  ? "Нові товари з 01.09.2026 незалежно від статусу, які ще не призначені контент-менеджеру."
                   : view === "categories"
                     ? "Поточний стан контенту категорій та динаміка CTR Каталог → PDP."
                     : view === "products"
