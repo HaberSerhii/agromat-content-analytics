@@ -467,8 +467,8 @@ export async function readSalesWebMetrics(input: {
   const cacheKey = `${range.from}:${range.to}`;
   const [rows, conversions] = await Promise.all([
     readThroughBigQueryCache<QueryRow[]>({
-      namespace: "sales-web-metrics",
-      key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
+      namespace: "sales-web-metrics-v2",
+      key: `v2:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
       load: async () => {
         const bigQuery = new BigQuery({ projectId: projectId() });
         const [queryRows] = await bigQuery.query({
