@@ -2,6 +2,7 @@ import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s
 import { getMonthlyManagerPlan, getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
 import { readAllLite } from "@/lib/products-store";
 import { isDeliverySalesItem, isDimensionOrderInPeriod } from "@/lib/sales-dimension-filter";
+import { fillOrderDateSeries, fillSalesDateSeries } from "@/lib/sales-date-series";
 import type {
   PromotionSalesDataset,
   PromotionSalesDailySummary,
@@ -92,6 +93,73 @@ export type SalesPlanSummary = {
   daysInMonth: number;
 };
 
+export type SalesOrderInsightsSummary = {
+  onlineOrders: {
+    totalDocs: number;
+    webshopDocs: number;
+    webshopRevenue: number;
+    webshopAverageOrderRevenue: number | null;
+    webshopSharePct: number | null;
+    marketingDocs: number;
+    marketingRevenue: number;
+    programs: Array<{ program: string; docs: number; revenue: number }>;
+  };
+  shippedEconomics: {
+    shippedDocs: number;
+    ordersWithReturns: number;
+    returnRatePct: number | null;
+    returnedPositions: number;
+    returnedRevenue: number;
+    costCoveredDocs: number;
+    costCoveragePct: number | null;
+    revenueWithCost: number;
+    ownCost: number;
+    estimatedGrossProfit: number;
+    estimatedGrossMarginPct: number | null;
+    returnedProducts: Array<{ code: string; name: string; positions: number; revenue: number }>;
+  };
+};
+
+export type SalesWebshopOrderItem = {
+  number: string;
+  webshopId: string;
+  createdDate: string;
+  shippedDate: string | null;
+  seller: string;
+  state: string;
+  docsSum: number;
+  returnSum: number;
+  marketingProgram: string;
+  stockm: string;
+  ownCost: number | null;
+  estimatedGrossProfit: number | null;
+  estimatedGrossMarginPct: number | null;
+  items: Array<{
+    code: string;
+    name: string;
+    brand: string;
+    category: string;
+    qty: number;
+    revenue: number;
+    returned: boolean;
+    returnRevenue: number;
+  }>;
+};
+
+export type SalesWebshopOrdersDataset = {
+  filter: { from: string | null; to: string | null; label: string; statuses: string[] };
+  total: number;
+  items: SalesWebshopOrderItem[];
+};
+
+export type SalesWebshopReturnInfo = {
+  webshopId: string;
+  docsRef: string;
+  number: string;
+  returnSum: number;
+  returnGoodsCodes: string[];
+};
+
 export type SalesDocumentStatusSummary = {
   states: Array<{ state: string; docs: number; revenue: number }>;
   cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
@@ -154,6 +222,7 @@ export type SalesDataset = {
       canceledRevenue: number;
     };
     plan: SalesPlanSummary;
+    orderInsights: SalesOrderInsightsSummary;
     byDate: SalesDateSummary[];
     ordersByDate: SalesOrderDateSummary[];
     months: SalesMonthSummary[];
@@ -189,6 +258,13 @@ type ParsedSalesRow = SalesRow & {
   items: ParsedSalesItem[];
   goodsCodeNumbers: number[];
   cancelReason: string;
+  webshopId: string;
+  marketingProgram: string;
+  hasReturns: boolean;
+  returnGoodsCodes: string[];
+  returnRowSums: number[];
+  ownCost: number;
+  hasOwnCostData: boolean;
 };
 
 type MutableSalesProductSummary = SalesProductSummary & {
@@ -794,6 +870,9 @@ function parseSalesRows(
     const categoriesList = splitList(get(values, "groups_refs"));
     const goodsNamesList = splitList(get(values, "goods_names"));
     const rowSums = splitList(get(values, "rows_sums")).map(parseNumber);
+    const ownCosts = splitList(get(values, "rows_owncost")).map(parseNumber);
+    const returnGoodsCodes = splitList(get(values, "return_goods"));
+    const returnRowSums = splitList(get(values, "returnrow_sum")).map(parseNumber);
     const rowQty = (
       splitList(get(values, "rows_qty")).length ? splitList(get(values, "rows_qty")) :
       splitList(get(values, "rows_count")).length ? splitList(get(values, "rows_count")) :
@@ -851,6 +930,13 @@ function parseSalesRows(
         .map((code) => parseInt(code, 10))
         .filter((code) => Number.isFinite(code)),
       cancelReason,
+      webshopId: get(values, "webshop_id").trim(),
+      marketingProgram: get(values, "marketingprogram").trim(),
+      hasReturns: ["1", "t", "true", "yes"].includes(get(values, "exists_returns").trim().toLocaleLowerCase("uk")),
+      returnGoodsCodes,
+      returnRowSums,
+      ownCost: ownCosts.reduce((sum, value) => sum + value, 0),
+      hasOwnCostData: ownCosts.some((value) => value > 0),
     };
 
     rows.push(row);
@@ -874,6 +960,8 @@ function buildDataset(
   const filteredRows: ParsedSalesRow[] = [];
   const byDate = new Map<string, SalesDateSummary>();
   const ordersByDate = new Map<string, { date: string; docs: number; managers: Map<string, number> }>();
+  const marketingPrograms = new Map<string, { program: string; docs: number; revenue: number }>();
+  const returnedProducts = new Map<string, { code: string; name: string; positions: number; revenue: number }>();
   const months = new Map<string, SalesMonthSummary>();
   const allMonths = new Map<string, SalesMonthSummary>();
   const allReturnedRevenueByMonth = new Map<string, number>();
@@ -926,6 +1014,18 @@ function buildDataset(
   let selectedCanceledRevenue = 0;
   let firstShippedDate: string | null = null;
   let lastShippedDate: string | null = null;
+  let onlineOrdersTotal = 0;
+  let webshopDocs = 0;
+  let webshopRevenue = 0;
+  let marketingDocs = 0;
+  let marketingRevenue = 0;
+  let shippedInsightDocs = 0;
+  let ordersWithReturns = 0;
+  let returnedPositions = 0;
+  let insightReturnedRevenue = 0;
+  let costCoveredDocs = 0;
+  let revenueWithCost = 0;
+  let ownCost = 0;
 
   for (const row of rows) {
     const goodsCodes = row.goodsCodeNumbers;
@@ -936,6 +1036,23 @@ function buildDataset(
       && !isExcludedAnalyticsOrder(row)
     ) {
       addOrderDate(ordersByDate, row.createdDate, row.seller);
+      onlineOrdersTotal += 1;
+      if (row.webshopId) {
+        webshopDocs += 1;
+        webshopRevenue += row.docsSum;
+      }
+      if (row.webshopId && row.marketingProgram) {
+        marketingDocs += 1;
+        marketingRevenue += row.docsSum;
+        const program = marketingPrograms.get(row.marketingProgram) || {
+          program: row.marketingProgram,
+          docs: 0,
+          revenue: 0,
+        };
+        program.docs += 1;
+        program.revenue += row.docsSum;
+        marketingPrograms.set(row.marketingProgram, program);
+      }
     }
     if (matchesProductCodes(goodsCodes, productCodeSet)) {
       const statusDate = row.shippedDate || row.createdDate;
@@ -1050,6 +1167,32 @@ function buildDataset(
 
     if (!isWithinFilter(row.shippedDate, filter)) continue;
     if (statusSet.size > 0 && !statusSet.has(row.state || "Без статусу")) continue;
+    if (row.webshopId) {
+      shippedInsightDocs += 1;
+      if (row.hasReturns || row.returnSum > 0 || row.returnGoodsCodes.length > 0) {
+        ordersWithReturns += 1;
+        insightReturnedRevenue += row.returnRowSums.length
+          ? row.returnRowSums.reduce((sum, value) => sum + value, 0)
+          : row.returnSum;
+        returnedPositions += row.returnGoodsCodes.length;
+        row.returnGoodsCodes.forEach((code, index) => {
+          const returned = returnedProducts.get(code) || {
+            code,
+            name: row.items.find((item) => item.code === code)?.name || "Без назви",
+            positions: 0,
+            revenue: 0,
+          };
+          returned.positions += 1;
+          returned.revenue += row.returnRowSums[index] || 0;
+          returnedProducts.set(code, returned);
+        });
+      }
+      if (row.hasOwnCostData) {
+        costCoveredDocs += 1;
+        revenueWithCost += row.docsSum - row.returnSum;
+        ownCost += row.ownCost;
+      }
+    }
     returnedRevenue += row.returnSum;
     if (isCanceled(row.state)) canceledDocs += 1;
 
@@ -1177,16 +1320,43 @@ function buildDataset(
         canceledRevenue: selectedCanceledRevenue,
       },
       plan: buildPlanSummary(planMonthList, planReturnedRevenue, planMonthSegments, planMonth),
-      byDate: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
-      ordersByDate: [...ordersByDate.values()]
+      orderInsights: {
+        onlineOrders: {
+          totalDocs: onlineOrdersTotal,
+          webshopDocs,
+          webshopRevenue,
+          webshopAverageOrderRevenue: webshopDocs ? webshopRevenue / webshopDocs : null,
+          webshopSharePct: onlineOrdersTotal ? (webshopDocs / onlineOrdersTotal) * 100 : null,
+          marketingDocs,
+          marketingRevenue,
+          programs: [...marketingPrograms.values()].sort((left, right) => right.docs - left.docs),
+        },
+        shippedEconomics: {
+          shippedDocs: shippedInsightDocs,
+          ordersWithReturns,
+          returnRatePct: shippedInsightDocs ? (ordersWithReturns / shippedInsightDocs) * 100 : null,
+          returnedPositions,
+          returnedRevenue: insightReturnedRevenue,
+          costCoveredDocs,
+          costCoveragePct: shippedInsightDocs ? (costCoveredDocs / shippedInsightDocs) * 100 : null,
+          revenueWithCost,
+          ownCost,
+          estimatedGrossProfit: revenueWithCost - ownCost,
+          estimatedGrossMarginPct: revenueWithCost ? ((revenueWithCost - ownCost) / revenueWithCost) * 100 : null,
+          returnedProducts: [...returnedProducts.values()]
+            .sort((left, right) => right.revenue - left.revenue)
+            .slice(0, 10),
+        },
+      },
+      byDate: fillSalesDateSeries([...byDate.values()], filter.from, filter.to),
+      ordersByDate: fillOrderDateSeries([...ordersByDate.values()]
         .map((item) => ({
           date: item.date,
           docs: item.docs,
           managers: [...item.managers.entries()]
             .map(([seller, docs]) => ({ seller, docs }))
             .sort((left, right) => right.docs - left.docs),
-        }))
-        .sort((a, b) => a.date.localeCompare(b.date)),
+        })), filter.from, filter.to),
       months: monthList,
       segments: segmentList,
       shippedSegments: finishSegmentBuckets(shippedSegments),
@@ -1316,6 +1486,87 @@ export async function readSalesDataset(
 ): Promise<SalesDataset> {
   const { rows, source } = await readCachedSalesRows();
   return buildDataset(rows, source, filter, options);
+}
+
+export async function readSalesWebshopOrders(filter?: SalesDateFilter): Promise<SalesWebshopOrdersDataset> {
+  const { rows } = await readCachedSalesRows();
+  const effective = getEffectiveFilter(filter);
+  const productCodeSet = new Set(effective.productCodes);
+  const statusSet = new Set(effective.statuses);
+  const matched = rows
+    .filter((row) => (
+      Boolean(row.webshopId)
+      && matchesProductCodes(row.goodsCodeNumbers, productCodeSet)
+      && (statusSet.size === 0 || statusSet.has(row.state || "Без статусу"))
+      && isWithinOptionalFilter(row.createdDate, effective)
+      && !isExcludedAnalyticsOrder(row)
+    ))
+    .sort((left, right) => right.createdDate.localeCompare(left.createdDate) || right.number.localeCompare(left.number));
+
+  return {
+    filter: {
+      from: effective.from,
+      to: effective.to,
+      label: getFilterLabel(effective),
+      statuses: effective.statuses,
+    },
+    total: matched.length,
+    items: matched.slice(0, 500).map((row) => {
+      const returnRevenueByCode = new Map<string, number>();
+      row.returnGoodsCodes.forEach((code, index) => {
+        returnRevenueByCode.set(code, (returnRevenueByCode.get(code) || 0) + (row.returnRowSums[index] || 0));
+      });
+      const netRevenue = row.docsSum - row.returnSum;
+      const estimatedGrossProfit = row.hasOwnCostData ? netRevenue - row.ownCost : null;
+      return {
+        number: row.number,
+        webshopId: row.webshopId,
+        createdDate: row.createdDate,
+        shippedDate: row.shippedDate,
+        seller: managerLabel(row.seller),
+        state: row.state || "Без статусу",
+        docsSum: row.docsSum,
+        returnSum: row.returnSum,
+        marketingProgram: row.marketingProgram,
+        stockm: row.stockm,
+        ownCost: row.hasOwnCostData ? row.ownCost : null,
+        estimatedGrossProfit,
+        estimatedGrossMarginPct: estimatedGrossProfit != null && netRevenue
+          ? (estimatedGrossProfit / netRevenue) * 100
+          : null,
+        items: row.items.map((item) => ({
+          code: item.code,
+          name: item.name,
+          brand: item.brand,
+          category: item.category,
+          qty: item.qty,
+          revenue: item.revenue,
+          returned: returnRevenueByCode.has(item.code),
+          returnRevenue: returnRevenueByCode.get(item.code) || 0,
+        })),
+      };
+    }),
+  };
+}
+
+export async function readSalesWebshopReturnLookup(): Promise<Map<string, SalesWebshopReturnInfo>> {
+  const { rows } = await readCachedSalesRows();
+  const returns = new Map<string, SalesWebshopReturnInfo>();
+
+  for (const row of rows) {
+    if (!row.webshopId || !(row.hasReturns || row.returnSum > 0 || row.returnGoodsCodes.length > 0)) continue;
+    returns.set(row.webshopId, {
+      webshopId: row.webshopId,
+      docsRef: row.docsRef,
+      number: row.number,
+      returnSum: row.returnRowSums.length
+        ? row.returnRowSums.reduce((sum, value) => sum + value, 0)
+        : row.returnSum,
+      returnGoodsCodes: row.returnGoodsCodes,
+    });
+  }
+
+  return returns;
 }
 
 export async function readSalesCategoryProducts(

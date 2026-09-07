@@ -9,16 +9,13 @@ import { getServerResult } from "@/lib/server-result-cache";
 export const dynamic = "force-dynamic";
 
 function compactSalesDataset(dataset: SalesDataset): SalesDataset {
-  const latestDate = dataset.summary.byDate.at(-1)?.date;
-  const latestMonth = latestDate?.slice(0, 7);
   return {
     ...dataset,
     rows: [],
     summary: {
       ...dataset.summary,
-      byDate: latestMonth
-        ? dataset.summary.byDate.filter((item) => item.date.startsWith(latestMonth))
-        : [],
+      byDate: dataset.summary.byDate.slice(-31),
+      ordersByDate: dataset.summary.ordersByDate.slice(-31),
       categoryProducts: {},
     },
   };
@@ -38,7 +35,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean) {
         : filter.statuses || "",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-json-v7",
+      namespace: "sales-json-v8",
       key,
       ttlMs: compact ? 20 * 60_000 : 5 * 60_000,
       maxEntries: 16,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 type SalesRow = {
   docsRef: string;
@@ -102,6 +102,32 @@ type SalesDataset = {
       elapsedDays: number;
       daysInMonth: number;
     };
+    orderInsights: {
+      onlineOrders: {
+        totalDocs: number;
+        webshopDocs: number;
+        webshopRevenue: number;
+        webshopAverageOrderRevenue: number | null;
+        webshopSharePct: number | null;
+        marketingDocs: number;
+        marketingRevenue: number;
+        programs: Array<{ program: string; docs: number; revenue: number }>;
+      };
+      shippedEconomics: {
+        shippedDocs: number;
+        ordersWithReturns: number;
+        returnRatePct: number | null;
+        returnedPositions: number;
+        returnedRevenue: number;
+        costCoveredDocs: number;
+        costCoveragePct: number | null;
+        revenueWithCost: number;
+        ownCost: number;
+        estimatedGrossProfit: number;
+        estimatedGrossMarginPct: number | null;
+        returnedProducts: Array<{ code: string; name: string; positions: number; revenue: number }>;
+      };
+    };
     byDate: Array<{ date: string; docs: number; goods: number; revenue: number }>;
     ordersByDate: Array<{
       date: string;
@@ -188,10 +214,84 @@ type SalesConversionRow = {
   url?: string;
 };
 
+type SalesWebshopOrder = {
+  id: number;
+  order_num: number | string | null;
+  order_doc_id: number | string | null;
+  is_synced: boolean;
+  date: string;
+  doc_date: string | null;
+  status: string | null;
+  http_status: number | null;
+  payment: { status: string | null; type: string | null; system_ref: number | null } | null;
+  totals: { cost: number; delivery: number; items_sum: number; weight: number; currency: string };
+  customer: {
+    client_id: number | null;
+    first_name: string | null;
+    last_name: string | null;
+    patronymic: string | null;
+    email: string | null;
+    phone: string | null;
+    callback: boolean;
+    legal_name: string | null;
+    legal_code: string | null;
+    recipient: { first_name: string | null; last_name: string | null; patronymic: string | null; phone: string | null } | null;
+  };
+  delivery: { type: string | null; address: unknown; city_ref: string | null; department_ref: string | null; date: string | null; to_floor: number | null; elevator: boolean | null } | null;
+  comments: string | null;
+  source: { utm_source: string | null; utm_campaign: string | null } | null;
+  has_items: boolean;
+  items: Array<{
+    product_id: number | string;
+    goods_ref: number | null;
+    code: number | string | null;
+    sku: string | null;
+    name: string;
+    url: string | null;
+    quantity: number;
+    number_pieces: number | null;
+    sale_measures_ref: number | null;
+    is_set: boolean;
+    price: number;
+    price_old: number | null;
+    line_total: number;
+    availability_status: { id: number; name: string } | null;
+  }>;
+  fulfillment?: { current: { id: number; name: string; stage: number } | null; history: Array<{ id: number; name: string; stage: number; rolled_back: boolean; started_at: string | null; finished_at: string | null }> } | null;
+  analytics_status?: string;
+  return_info?: { webshopId: string; docsRef: string; number: string; returnSum: number; returnGoodsCodes: string[] } | null;
+};
+
+type SalesWebshopOrdersDataset = {
+  data: SalesWebshopOrder[];
+  meta: { total: number; page: number; per_page: number; total_pages: number; movements_included: boolean };
+  summary: {
+    basedOn: number;
+    partial: boolean;
+    total: number;
+    revenue: number;
+    averageOrder: number;
+    deliveryRevenue: number;
+    synced: number;
+    syncedPct: number;
+    onlinePaid: number;
+    onlinePaidPct: number;
+    paymentTypes: Array<{ key: string; docs: number }>;
+    paymentStatuses: Array<{ key: string; docs: number }>;
+    deliveryTypes: Array<{ key: string; docs: number }>;
+    statuses: Array<{ key: string; docs: number }>;
+    statusesTotal?: number;
+  };
+};
+
 type RankingMetric = "goods" | "revenue";
 type DocumentSegment = "Усі" | "Плитка" | "Сантехніка";
 
-type SalesDashboardView = "overview" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
+type SalesDashboardView = "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
+type WebshopSyncFilter = "all" | "synced" | "unsynced";
+type WebshopPaymentFilter = "all" | "cash" | "bank" | "online_full" | "online_parts";
+type WebshopDeliveryFilter = "all" | "npDepartment" | "npCourier" | "agrWarehouse" | "agrCity" | "agrUkraine";
+type SalesWebshopOrderItem = SalesWebshopOrder["items"][number];
 
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
 const compactNumberFmt = new Intl.NumberFormat("uk-UA", { notation: "compact", maximumFractionDigits: 1 });
@@ -206,6 +306,7 @@ const STATUS_FILTERS = [
 
 const SALES_VIEW_ITEMS: Array<{ id: SalesDashboardView; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "План і динаміка" },
+  { id: "webshop", label: "Webshop-замовлення", hint: "Реєстр і склад замовлень" },
   { id: "web", label: "Веб-аналіз продажів", hint: "Користувачі, кошики, замовлення" },
   { id: "brands", label: "Бренди", hint: "Кількість, сума і товари" },
   { id: "categories", label: "Категорії", hint: "Кількість, сума і товари" },
@@ -793,18 +894,34 @@ function chartLabelIndices(length: number) {
   return [...new Set(Array.from({ length: 6 }, (_, index) => Math.round(index * (length - 1) / 5)))];
 }
 
-function SalesTrendChart({ days }: { days: SalesDataset["summary"]["byDate"] }) {
+function SalesTrendChart({
+  days,
+  previousDays,
+}: {
+  days: SalesDataset["summary"]["byDate"];
+  previousDays?: SalesDataset["summary"]["byDate"];
+}) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const points = days.slice(-31);
-  const peakValue = Math.max(0, ...points.map((point) => point.revenue));
+  const previousByDate = new Map(previousDays?.map((point) => [point.date, point]) || []);
+  const comparisonPoints = previousDays
+    ? points.map((point) => previousByDate.get(shiftIsoYear(point.date, -1)) || { date: shiftIsoYear(point.date, -1), docs: 0, goods: 0, revenue: 0 })
+    : [];
+  const peakValue = Math.max(0, ...points.map((point) => point.revenue), ...comparisonPoints.map((point) => point.revenue));
   const axis = salesAxis(peakValue);
   const coordinates = points.map((point, index) => {
     const x = chartX(index, points.length);
     const y = chartY(point.revenue, axis.max);
     return `${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
+  const comparisonCoordinates = comparisonPoints.map((point, index) => {
+    const x = chartX(index, comparisonPoints.length);
+    const y = chartY(point.revenue, axis.max);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
   const total = points.reduce((sum, point) => sum + point.revenue, 0);
   const hovered = hoveredIndex == null ? null : points[hoveredIndex];
+  const hoveredPrevious = hoveredIndex == null ? null : comparisonPoints[hoveredIndex];
   const hoveredLeft = hoveredIndex == null ? 0 : chartX(hoveredIndex, points.length);
   const xLabels = chartLabelIndices(points.length);
 
@@ -814,6 +931,7 @@ function SalesTrendChart({ days }: { days: SalesDataset["summary"]["byDate"] }) 
         <div>
           <h2 className="text-sm font-black text-[#26313d]">Динаміка відвантажень</h2>
           <p className="mt-1 text-[10px] text-[#8a939c]">Лише документи зі статусом «Повністю відвантажений»</p>
+          {previousDays && <div className="mt-2 flex gap-4 text-[9px] font-bold text-[#687582]"><span><i className="mr-1 inline-block h-0.5 w-4 bg-[#118dff] align-middle" />Обраний період</span><span><i className="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-[#8a939c] align-middle" />Минулий рік</span></div>}
         </div>
         <div className="text-right">
           <div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div>
@@ -836,12 +954,14 @@ function SalesTrendChart({ days }: { days: SalesDataset["summary"]["byDate"] }) 
                     <div className="font-black text-[#26313d]">{fmtIsoDateShort(hovered.date)}</div>
                     <div className="mt-2 flex justify-between gap-4 text-[#6e7a86]"><span>Продано</span><b className="text-[#26313d]">{fmtNum(hovered.goods)} шт</b></div>
                     <div className="mt-1 flex justify-between gap-4 text-[#6e7a86]"><span>Сума</span><b className="text-[#118dff]">{fmtMoney(hovered.revenue)}</b></div>
+                    {hoveredPrevious && <div className="mt-2 flex justify-between gap-4 border-t border-[#edf0f2] pt-2 text-[#6e7a86]"><span>Рік тому</span><b className="text-[#687582]">{fmtMoney(hoveredPrevious.revenue)}</b></div>}
                   </div>
                 )}
                 <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" role="img" aria-label="Графік продажів по днях">
                   {axis.ticks.map((value) => <line key={value} x1="2" x2="98" y1={chartY(value, axis.max)} y2={chartY(value, axis.max)} stroke="#e7edf3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
                   <line x1="2" x2="2" y1="8" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                   <line x1="2" x2="98" y1="92" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  {comparisonCoordinates && <polyline points={comparisonCoordinates} fill="none" stroke="#8a939c" strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />}
                   <polyline points={coordinates} fill="none" stroke="#118dff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                 </svg>
                 {points.map((point, index) => {
@@ -864,17 +984,33 @@ function SalesTrendChart({ days }: { days: SalesDataset["summary"]["byDate"] }) 
   );
 }
 
-function OrdersTrendChart({ days }: { days: SalesDataset["summary"]["ordersByDate"] }) {
+function OrdersTrendChart({
+  days,
+  previousDays,
+}: {
+  days: SalesDataset["summary"]["ordersByDate"];
+  previousDays?: SalesDataset["summary"]["ordersByDate"];
+}) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const points = days.slice(-31);
-  const maxValue = Math.max(1, ...points.map((point) => point.docs));
+  const previousByDate = new Map(previousDays?.map((point) => [point.date, point]) || []);
+  const comparisonPoints = previousDays
+    ? points.map((point) => previousByDate.get(shiftIsoYear(point.date, -1)) || { date: shiftIsoYear(point.date, -1), docs: 0, managers: [] })
+    : [];
+  const maxValue = Math.max(1, ...points.map((point) => point.docs), ...comparisonPoints.map((point) => point.docs));
   const coordinates = points.map((point, index) => {
     const x = chartX(index, points.length);
     const y = chartY(point.docs, maxValue);
     return `${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
+  const comparisonCoordinates = comparisonPoints.map((point, index) => {
+    const x = chartX(index, comparisonPoints.length);
+    const y = chartY(point.docs, maxValue);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
   const total = points.reduce((sum, point) => sum + point.docs, 0);
   const hovered = hoveredIndex == null ? null : points[hoveredIndex];
+  const hoveredPrevious = hoveredIndex == null ? null : comparisonPoints[hoveredIndex];
   const hoveredLeft = hoveredIndex == null ? 0 : chartX(hoveredIndex, points.length);
   const xLabels = chartLabelIndices(points.length);
   const yTicks = [1, 0.75, 0.5, 0.25, 0];
@@ -882,7 +1018,7 @@ function OrdersTrendChart({ days }: { days: SalesDataset["summary"]["ordersByDat
   return (
     <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
-        <div><h2 className="text-sm font-black text-[#26313d]">Оформлені замовлення по днях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Наведіть на точку, щоб побачити total і розподіл по менеджерах</p></div>
+        <div><h2 className="text-sm font-black text-[#26313d]">Оформлені замовлення по днях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Наведіть на точку, щоб побачити кількість і розподіл по менеджерах</p>{previousDays && <div className="mt-2 flex gap-4 text-[9px] font-bold text-[#687582]"><span><i className="mr-1 inline-block h-0.5 w-4 bg-[#805ad5] align-middle" />Обраний період</span><span><i className="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-[#8a939c] align-middle" />Минулий рік</span></div>}</div>
         <div className="text-right"><div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div><div className="mt-1 text-sm font-black text-[#26313d]">{fmtNum(total)} замовлень</div></div>
       </div>
       <div className="p-5">
@@ -898,12 +1034,14 @@ function OrdersTrendChart({ days }: { days: SalesDataset["summary"]["ordersByDat
               <div className="relative h-56 rounded-xl border border-[#edf1f4] bg-[linear-gradient(180deg,#f7fbff_0%,#fff_100%)]">
                 {hovered && <div className="pointer-events-none absolute top-2 z-20 min-w-[230px] rounded-xl border border-[#d6caed] bg-white p-3 text-[10px] shadow-lg" style={{ left: `${hoveredLeft}%`, transform: `translateX(${hoveredLeft > 80 ? "-100%" : hoveredLeft < 20 ? "0" : "-50%"})` }}>
                   <div className="flex justify-between gap-4 font-black text-[#26313d]"><span>{fmtIsoDateShort(hovered.date)}</span><span>{fmtNum(hovered.docs)} total</span></div>
-                  <div className="mt-2 space-y-1 border-t border-[#edf0f2] pt-2">{hovered.managers.map((manager) => <div key={manager.seller} className="flex justify-between gap-4 text-[#6e7a86]"><span className="max-w-[170px] truncate">{manager.seller}</span><b className="text-[#6b46c1]">{fmtNum(manager.docs)}</b></div>)}</div>
+                  <div className="mt-2 space-y-1 border-t border-[#edf0f2] pt-2">{hovered.managers.map((manager) => <div key={manager.seller} className="flex justify-between gap-4 text-[#6e7a86]"><span className="max-w-[170px] truncate">{manager.seller}</span><b className="text-[#6b46c1]">{fmtNum(manager.docs)}</b></div>)}{!hovered.managers.length && <div className="text-[#8a939c]">Замовлень немає</div>}</div>
+                  {hoveredPrevious && <div className="mt-2 flex justify-between gap-4 border-t border-[#edf0f2] pt-2 text-[#6e7a86]"><span>{fmtIsoDateShort(hoveredPrevious.date)} · рік тому</span><b>{fmtNum(hoveredPrevious.docs)}</b></div>}
                 </div>}
                 <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" role="img" aria-label="Графік оформлених замовлень по днях">
                   {yTicks.map((ratio) => <line key={ratio} x1="2" x2="98" y1={8 + (1 - ratio) * 84} y2={8 + (1 - ratio) * 84} stroke="#e7edf3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
                   <line x1="2" x2="2" y1="8" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                   <line x1="2" x2="98" y1="92" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  {comparisonCoordinates && <polyline points={comparisonCoordinates} fill="none" stroke="#8a939c" strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />}
                   <polyline points={coordinates} fill="none" stroke="#805ad5" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                 </svg>
                 {points.map((point, index) => {
@@ -921,6 +1059,238 @@ function OrdersTrendChart({ days }: { days: SalesDataset["summary"]["ordersByDat
         ) : <div className="py-16 text-center text-xs text-[#8a939c]">Недостатньо даних для графіка</div>}
       </div>
     </section>
+  );
+}
+
+export function OrderInsightsPanel({ insights }: { insights: SalesDataset["summary"]["orderInsights"] }) {
+  const online = insights.onlineOrders;
+  const economics = insights.shippedEconomics;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-black text-[#26313d]">Деталі замовлень</h2>
+            <span className="rounded-full bg-[#eaf8f1] px-2 py-1 text-[9px] font-black text-[#16865c]">Нові дані API</span>
+          </div>
+          <p className="mt-1 text-[10px] text-[#8a939c]">Webshop ID, маркетингові програми, повернення та собівартість</p>
+        </div>
+        <div className="text-right text-[9px] leading-4 text-[#8a939c]">Замовлення — за датою оформлення<br />Економіка — за датою відвантаження</div>
+      </div>
+
+      <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-5">
+        <SalesMetricCard
+          label="З WEBSHOP ID"
+          value={fmtNum(online.webshopDocs)}
+          hint={`${fmtPct(online.webshopSharePct)} від ${fmtNum(online.totalDocs)} замовлень`}
+          symbol="W"
+          tone="#118dff"
+          description="Кількість оформлених замовлень, для яких API передав webshop_id."
+        />
+        <SalesMetricCard
+          label="СЕРЕДНІЙ ЧЕК WEBSHOP"
+          value={online.webshopAverageOrderRevenue == null ? "—" : fmtMoney(online.webshopAverageOrderRevenue)}
+          hint={`Сума ${fmtMoney(online.webshopRevenue)} · ${fmtNum(online.webshopDocs)} замовлень`}
+          symbol="Ø"
+          tone="#168b9b"
+          description="Сума оформлених замовлень із webshop_id / кількість таких замовлень за обраний період."
+        />
+        <SalesMetricCard
+          label="З МАРКЕТИНГОВОЮ ПРОГРАМОЮ"
+          value={fmtNum(online.marketingDocs)}
+          hint={`Сума замовлень: ${fmtMoney(online.marketingRevenue)}`}
+          symbol="M"
+          tone="#805ad5"
+          description="Замовлення, у яких заповнене поле marketingprogram."
+        />
+        <SalesMetricCard
+          label="З ПОВЕРНЕННЯМИ"
+          value={fmtNum(economics.ordersWithReturns)}
+          hint={`${fmtPct(economics.returnRatePct)} від відвантажених · ${fmtMoney(economics.returnedRevenue)}`}
+          symbol="↩"
+          tone="#e45858"
+          description="Повністю відвантажені документи з ознакою або деталізацією повернення."
+        />
+        <SalesMetricCard
+          label="ОЦІНОЧНА ВАЛОВА МАРЖА"
+          value={fmtPct(economics.estimatedGrossMarginPct)}
+          hint={`${fmtMoney(economics.estimatedGrossProfit)} · покриття ${fmtPct(economics.costCoveragePct)}`}
+          symbol="₴"
+          tone="#20a66a"
+          description="Розрахунок лише для відвантажених документів із переданою собівартістю: (чистий продаж − собівартість) / чистий продаж."
+        />
+      </div>
+
+      <div className="grid gap-4 border-t border-[#edf0f2] p-4 xl:grid-cols-2">
+        <div className="overflow-hidden rounded-xl border border-[#e3e7eb]">
+          <div className="flex items-center justify-between bg-[#f7f9fb] px-4 py-3">
+            <div><h3 className="text-xs font-black text-[#33404c]">Маркетингові програми</h3><p className="mt-0.5 text-[9px] text-[#8a939c]">За кількістю оформлених замовлень</p></div>
+            <span className="text-[9px] font-bold text-[#687582]">{fmtNum(online.programs.length)} програм</span>
+          </div>
+          <div className="divide-y divide-[#edf0f2]">
+            {online.programs.slice(0, 8).map((program) => (
+              <div key={program.program} className="grid grid-cols-[minmax(0,1fr)_65px_120px] items-center gap-2 px-4 py-2.5 text-[10px]">
+                <span className="truncate font-bold text-[#3b4753]" title={program.program}>{program.program}</span>
+                <span className="text-right font-black tabular-nums text-[#805ad5]">{fmtNum(program.docs)}</span>
+                <span className="text-right tabular-nums text-[#687582]">{fmtMoney(program.revenue)}</span>
+              </div>
+            ))}
+            {!online.programs.length && <div className="px-4 py-8 text-center text-[10px] text-[#8a939c]">Немає маркетингових програм за період</div>}
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-[#e3e7eb]">
+          <div className="flex items-center justify-between bg-[#f7f9fb] px-4 py-3">
+            <div><h3 className="text-xs font-black text-[#33404c]">Товари у поверненнях</h3><p className="mt-0.5 text-[9px] text-[#8a939c]">Топ за сумою повернутих позицій</p></div>
+            <span className="text-[9px] font-bold text-[#687582]">{fmtNum(economics.returnedPositions)} позицій</span>
+          </div>
+          <div className="divide-y divide-[#edf0f2]">
+            {economics.returnedProducts.slice(0, 8).map((product) => (
+              <div key={product.code} className="grid grid-cols-[minmax(0,1fr)_65px_120px] items-center gap-2 px-4 py-2.5 text-[10px]">
+                <div className="min-w-0"><div className="truncate font-bold text-[#3b4753]" title={product.name}>{product.name}</div><div className="text-[9px] text-[#929ba4]">IDD {product.code}</div></div>
+                <span className="text-right font-black tabular-nums text-[#e45858]">{fmtNum(product.positions)}</span>
+                <span className="text-right tabular-nums text-[#687582]">{fmtMoney(product.revenue)}</span>
+              </div>
+            ))}
+            {!economics.returnedProducts.length && <div className="px-4 py-8 text-center text-[10px] text-[#8a939c]">Немає деталізованих повернень за період</div>}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-[#edf0f2] bg-[#fbfcfd] px-5 py-3 text-[9px] leading-4 text-[#7b8691]">
+        Собівартість доступна для {fmtNum(economics.costCoveredDocs)} із {fmtNum(economics.shippedDocs)} відвантажених документів. Оціночна маржа рахується тільки по документах із заповненим `rows_owncost` і не є бухгалтерським показником.
+      </div>
+    </section>
+  );
+}
+
+function orderDateTime(value: string | null) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat("uk-UA", { dateStyle: "short", timeStyle: "short" }).format(parsed);
+}
+
+function paymentLabel(value: string | null | undefined) {
+  return ({ online: "Онлайн", online_full: "Онлайн · повна оплата", online_parts: "Оплата частинами", cash: "Готівка", bank: "Безготівкова" } as Record<string, string>)[value || ""] || value || "Не вказано";
+}
+
+function orderPaymentLabel(order: SalesWebshopOrder) {
+  if (order.payment?.type === "online") return paymentLabel(order.payment.status === "paymet_parts" ? "online_parts" : "online_full");
+  return paymentLabel(order.payment?.type);
+}
+
+function deliveryLabel(value: string | null | undefined) {
+  return ({ npDepartment: "Нова пошта · відділення", npCourier: "Нова пошта · кур'єр", agrWarehouse: "Самовивіз AGROMAT", agrCity: "Доставка AGROMAT · місто", agrUkraine: "Доставка AGROMAT · Україна" } as Record<string, string>)[value || ""] || value || "Не вказано";
+}
+
+function customerName(order: SalesWebshopOrder) {
+  return order.customer.legal_name || [order.customer.last_name, order.customer.first_name, order.customer.patronymic].filter(Boolean).join(" ") || "Без імені";
+}
+
+function formatDeliveryAddress(address: unknown) {
+  if (!address) return "—";
+  if (typeof address === "string") return address;
+  const labels: string[] = [];
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, nested] of Object.entries(value)) {
+      if (typeof nested === "string" && /(name|address)/i.test(key) && !labels.includes(nested)) labels.push(nested);
+      else if (typeof nested === "object") visit(nested);
+    }
+  };
+  visit(address);
+  return labels.join(" · ") || "Деталі адреси передані в API";
+}
+
+function DistributionList({ title, rows, label, selectedKey, onSelect, totalOverride }: { title: string; rows: Array<{ key: string; docs: number }>; label: (key: string) => string; selectedKey?: string; onSelect?: (key: string) => void; totalOverride?: number }) {
+  const total = totalOverride ?? rows.reduce((sum, row) => sum + row.docs, 0);
+  return (
+    <section className="overflow-hidden rounded-xl border border-[#e3e7eb] bg-white">
+      <div className="border-b border-[#edf0f2] bg-[#f7f9fb] px-4 py-3 text-xs font-black text-[#33404c]">{title}</div>
+      <div className="divide-y divide-[#edf0f2]">{rows.map((row) => <button type="button" disabled={!onSelect} onClick={() => onSelect?.(row.key)} key={row.key} className={`grid w-full grid-cols-[minmax(0,1fr)_55px_55px] gap-2 px-4 py-2.5 text-left text-[10px] ${onSelect ? "hover:bg-[#eef7ff]" : "cursor-default"} ${selectedKey === row.key ? "bg-[#e5f3ff] ring-1 ring-inset ring-[#9cccf6]" : ""}`}><span className="truncate font-bold text-[#52606d]">{label(row.key)}</span><b className="text-right tabular-nums text-[#33404c]">{fmtNum(row.docs)}</b><span className="text-right tabular-nums text-[#8a939c]">{fmtPct(total ? (row.docs / total) * 100 : null)}</span></button>)}</div>
+    </section>
+  );
+}
+
+function WebshopOrdersRegister({ dataset, loading, error, page, syncFilter, paymentFilter, deliveryFilter, statusFilter, onPageChange, onSyncFilterChange, onPaymentFilterChange, onDeliveryFilterChange, onStatusFilterChange }: { dataset: SalesWebshopOrdersDataset | null; loading: boolean; error: string | null; page: number; syncFilter: WebshopSyncFilter; paymentFilter: WebshopPaymentFilter; deliveryFilter: WebshopDeliveryFilter; statusFilter: string; onPageChange: (page: number) => void; onSyncFilterChange: (filter: WebshopSyncFilter) => void; onPaymentFilterChange: (filter: WebshopPaymentFilter) => void; onDeliveryFilterChange: (filter: WebshopDeliveryFilter) => void; onStatusFilterChange: (filter: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<{ item: SalesWebshopOrderItem; orderId: number } | null>(null);
+  const [orderDetails, setOrderDetails] = useState<Record<number, SalesWebshopOrder>>({});
+  const [loadingOrderDetail, setLoadingOrderDetail] = useState<number | null>(null);
+  const normalizedQuery = query.trim().toLocaleLowerCase("uk");
+  const orders = (dataset?.data || []).filter((order) => !normalizedQuery || [String(order.id), String(order.order_num || ""), String(order.order_doc_id || ""), customerName(order), order.customer.email || "", order.customer.phone || "", order.status || "", ...order.items.flatMap((item) => [String(item.goods_ref || ""), String(item.code || ""), item.sku || "", item.name])].some((value) => value.toLocaleLowerCase("uk").includes(normalizedQuery)));
+  const summary = dataset?.summary;
+  const toggleOrder = async (order: SalesWebshopOrder) => {
+    if (expandedOrder === order.id) {
+      setExpandedOrder(null);
+      return;
+    }
+    setExpandedOrder(order.id);
+    if (orderDetails[order.id]) return;
+    setLoadingOrderDetail(order.id);
+    try {
+      const response = await fetch(`/api/sales/webshop-orders?order_id=${order.id}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (response.ok && payload.data) setOrderDetails((current) => ({ ...current, [order.id]: payload.data as SalesWebshopOrder }));
+    } finally {
+      setLoadingOrderDetail((current) => current === order.id ? null : current);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {summary && <>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <SalesMetricCard label="WEBSHOP-ЗАМОВЛЕННЯ" value={fmtNum(summary.total)} hint={summary.partial ? `Метрики нижче — за ${fmtNum(summary.basedOn)} записами` : "За обраний період"} symbol="W" tone="#118dff" />
+          <SalesMetricCard label="СУМА ЗАМОВЛЕНЬ" value={fmtMoney(summary.revenue)} hint={summary.partial ? "За поточною сторінкою" : `${fmtNum(summary.total)} замовлень`} symbol="₴" tone="#805ad5" />
+          <SalesMetricCard label="СЕРЕДНІЙ ЧЕК" value={fmtMoney(summary.averageOrder)} hint={summary.partial ? "За поточною сторінкою" : "Сума / кількість замовлень"} symbol="Ø" tone="#168b9b" />
+          <SalesMetricCard label="СИНХРОНІЗОВАНО З P2" value={fmtPct(summary.syncedPct)} hint={`${fmtNum(summary.synced)} із ${fmtNum(summary.basedOn)} замовлень`} symbol="P2" tone="#20a66a" />
+          <SalesMetricCard label="ОНЛАЙН-ОПЛАТА" value={fmtPct(summary.onlinePaidPct)} hint={`${fmtNum(summary.onlinePaid)} із ${fmtNum(summary.basedOn)} замовлень`} symbol="%" tone="#e39a25" />
+        </div>
+        <div className="grid items-start gap-3 xl:grid-cols-3"><DistributionList title="Способи оплати" rows={summary.paymentTypes} label={paymentLabel} selectedKey={paymentFilter === "all" ? undefined : paymentFilter} onSelect={(key) => onPaymentFilterChange(paymentFilter === key ? "all" : key as WebshopPaymentFilter)} /><DistributionList title="Способи доставки" rows={summary.deliveryTypes} label={deliveryLabel} selectedKey={deliveryFilter === "all" ? undefined : deliveryFilter} onSelect={(key) => onDeliveryFilterChange(deliveryFilter === key ? "all" : key as WebshopDeliveryFilter)} /><DistributionList title="Фінальні статуси замовлень P2" rows={summary.statuses} label={(value) => value === "unknown" ? "Не вказано" : value} selectedKey={statusFilter === "all" ? undefined : statusFilter} totalOverride={summary.statusesTotal} onSelect={(key) => onStatusFilterChange(statusFilter === key ? "all" : key)} /></div>
+      </>}
+
+      <section className="grid gap-3 rounded-xl border border-[#dfe4ea] bg-white p-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_auto]">
+        <label><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Спосіб оплати</span><select value={paymentFilter} onChange={(event) => onPaymentFilterChange(event.target.value as WebshopPaymentFilter)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] font-bold text-[#52606d] outline-none focus:border-[#118dff]"><option value="all">Усі способи оплати</option><option value="online_full">Онлайн · повна оплата</option><option value="online_parts">Оплата частинами</option><option value="cash">Готівка</option><option value="bank">Безготівкова</option></select></label>
+        <label><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Спосіб доставки</span><select value={deliveryFilter} onChange={(event) => onDeliveryFilterChange(event.target.value as WebshopDeliveryFilter)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] font-bold text-[#52606d] outline-none focus:border-[#118dff]"><option value="all">Усі способи доставки</option><option value="npDepartment">Нова пошта · відділення</option><option value="npCourier">Нова пошта · кур&apos;єр</option><option value="agrWarehouse">Самовивіз AGROMAT</option><option value="agrCity">Доставка AGROMAT · місто</option><option value="agrUkraine">Доставка AGROMAT · Україна</option></select></label>
+        <button type="button" disabled={paymentFilter === "all" && deliveryFilter === "all" && statusFilter === "all"} onClick={() => { onPaymentFilterChange("all"); onDeliveryFilterChange("all"); onStatusFilterChange("all"); }} className="h-9 self-end rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-4 text-[10px] font-bold text-[#586572] disabled:opacity-40">Скинути фільтри</button>
+      </section>
+
+      <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+          <div><h2 className="text-sm font-black text-[#26313d]">Детальний реєстр замовлень</h2><p className="mt-1 text-[10px] text-[#8a939c]">Клієнт, оплата, доставка, синхронізація, виконання та склад товарів</p></div>
+          <div className="flex w-full flex-wrap items-end justify-end gap-3 sm:w-auto">
+            <div><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Синхронізація P2</span><div className="flex h-9 overflow-hidden rounded-lg border border-[#d8dde3] bg-white">{([['all', 'Усі'], ['synced', 'Синхронізовані'], ['unsynced', 'Не синхронізовані']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => onSyncFilterChange(value)} className={`border-l border-[#e5e8eb] px-3 text-[10px] font-bold first:border-l-0 ${syncFilter === value ? "bg-[#176aa8] text-white" : "text-[#586572] hover:bg-[#f4f7f9]"}`}>{label}</button>)}</div></div>
+            <label className="w-full sm:w-[340px]"><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Пошук на цій сторінці</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID, документ, клієнт, телефон, товар…" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" /></label>
+          </div>
+        </div>
+        {loading && <div className="px-5 py-14 text-center text-xs text-[#8a939c]">Завантаження замовлень і статусів P2…</div>}
+        {!loading && error && <div className="m-4 rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
+        {!loading && !error && dataset && <>
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-[#fbfcfd] px-5 py-2.5 text-[10px] text-[#7b8691]"><span>На сторінці: <b className="text-[#33404c]">{fmtNum(orders.length)}</b> · усього за фільтрами: <b className="text-[#33404c]">{fmtNum(dataset.meta.total)}</b></span><span>Історія P2 завантажується при відкритті замовлення</span></div>
+          <div className="overflow-x-auto"><table className="w-full min-w-[1320px] border-collapse text-[10px]"><thead className="bg-[#f3f6f8] text-[#697581]"><tr><th className="w-10 px-3 py-3" /><th className="px-3 py-3 text-left">ID / документ</th><th className="px-3 py-3 text-left">Дата</th><th className="px-3 py-3 text-left">Клієнт</th><th className="px-3 py-3 text-left">Статус</th><th className="px-3 py-3 text-left">Оплата</th><th className="px-3 py-3 text-left">Доставка</th><th className="px-3 py-3 text-right">Товарів</th><th className="px-3 py-3 text-right">Доставка, ₴</th><th className="px-3 py-3 text-right">Сума</th><th className="px-3 py-3 text-center">P2</th></tr></thead>
+            <tbody>{orders.map((order) => { const expanded = expandedOrder === order.id; const detailedOrder = orderDetails[order.id] || order; const itemQty = order.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0); const currentStatus = order.analytics_status || detailedOrder.fulfillment?.current?.name || order.status || "Без статусу"; const isNovaPoshtaReturn = currentStatus === "Оформлено повернення НП"; return <Fragment key={order.id}><tr className="border-t border-[#e8ecef] hover:bg-[#f8fbfd]"><td className="px-3 py-3 text-center"><button type="button" onClick={() => void toggleOrder(order)} aria-expanded={expanded} className="flex h-6 w-6 items-center justify-center rounded-md bg-[#eef7ff] font-black text-[#118dff]">{expanded ? "−" : "+"}</button></td><td className="px-3 py-3"><div className="font-black tabular-nums text-[#176aa8]">#{order.id}</div><div className="mt-0.5 text-[9px] text-[#7b8691]">{order.order_num ? `№ ${order.order_num}` : "Без документа"}</div></td><td className="px-3 py-3 tabular-nums text-[#596673]">{orderDateTime(order.date)}</td><td className="max-w-[220px] px-3 py-3"><div className="truncate font-bold text-[#33404c]" title={customerName(order)}>{customerName(order)}</div><div className="mt-0.5 text-[9px] text-[#7b8691]">{order.customer.phone || order.customer.email || "—"}</div></td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 font-bold ${isNovaPoshtaReturn ? "bg-[#fff0e7] text-[#bd5c21]" : "bg-[#f0f3f6] text-[#52606d]"}`}>{currentStatus}</span>{isNovaPoshtaReturn && order.return_info && <div className="mt-1 text-[9px] font-bold text-[#bd5c21]">Повернення: {fmtMoney(order.return_info.returnSum)}</div>}</td><td className="px-3 py-3"><div className="font-bold text-[#805ad5]">{orderPaymentLabel(order)}</div><div className="mt-0.5 text-[9px] text-[#7b8691]">{order.payment?.status === "paymet_parts" ? "Платіж частинами" : order.payment?.status || "Статус не вказано"}</div></td><td className="max-w-[210px] truncate px-3 py-3 font-bold text-[#596673]" title={deliveryLabel(order.delivery?.type)}>{deliveryLabel(order.delivery?.type)}</td><td className="px-3 py-3 text-right tabular-nums">{fmtNum(itemQty)}</td><td className="px-3 py-3 text-right tabular-nums text-[#687582]">{fmtMoney(order.totals.delivery || 0)}</td><td className="px-3 py-3 text-right font-black tabular-nums text-[#26313d]">{fmtMoney(order.totals.cost || 0)}</td><td className="px-3 py-3 text-center"><span className={`rounded-full px-2 py-1 font-black ${order.is_synced ? "bg-[#eaf8f1] text-[#16865c]" : "bg-[#fff1f1] text-[#c54848]"}`}>{order.is_synced ? "Так" : "Ні"}</span></td></tr>
+              {expanded && <tr className="border-t border-[#dce7ef] bg-[#f7fbfe]"><td colSpan={11} className="px-5 py-4"><div className="grid gap-4 xl:grid-cols-[1fr_1fr_1.4fr]"><div className="space-y-1 text-[10px]"><div className="font-black uppercase text-[#84909b]">Клієнт і отримувач</div><div><b>Телефон:</b> {order.customer.phone || "—"}</div><div><b>Email:</b> {order.customer.email || "—"}</div><div><b>Отримувач:</b> {order.customer.recipient ? [order.customer.recipient.last_name, order.customer.recipient.first_name].filter(Boolean).join(" ") || "—" : "—"}</div><div><b>Телефон отримувача:</b> {order.customer.recipient?.phone || "—"}</div></div><div className="space-y-1 text-[10px]"><div className="font-black uppercase text-[#84909b]">Доставка і джерело</div><div><b>Дата доставки:</b> {order.delivery?.date ? fmtIsoDateShort(order.delivery.date) : "—"}</div><div className="break-all"><b>Адреса:</b> {formatDeliveryAddress(order.delivery?.address)}</div><div><b>UTM:</b> {[order.source?.utm_source, order.source?.utm_campaign].filter(Boolean).join(" / ") || "—"}</div><div><b>Коментар:</b> {order.comments || "—"}</div></div><div><div className="font-black uppercase text-[#84909b]">Історія виконання P2</div><div className="mt-2 flex flex-wrap gap-2">{(detailedOrder.fulfillment?.history || []).map((entry, index) => <span key={`${entry.id}-${index}`} className={`rounded-lg border px-2 py-1.5 text-[9px] ${entry.rolled_back ? "border-[#f0b6b6] bg-[#fff1f1] text-[#b73535]" : "border-[#cfe3f5] bg-white text-[#176aa8]"}`}>{entry.name} · {orderDateTime(entry.started_at)}</span>)}{loadingOrderDetail === order.id && <span className="text-[10px] font-bold text-[#176aa8]">Завантаження історії…</span>}{loadingOrderDetail !== order.id && !detailedOrder.fulfillment?.history?.length && <span className="text-[10px] text-[#8a939c]">Історія недоступна</span>}</div></div></div>
+                <div className="mt-4 overflow-hidden rounded-lg border border-[#dce4ea] bg-white"><table className="w-full border-collapse text-[10px]"><thead className="bg-[#f4f6f8] text-[#75808b]"><tr><th className="px-3 py-2 text-left">IDD / код</th><th className="px-3 py-2 text-left">Товар</th><th className="px-3 py-2 text-left">Наявність</th><th className="px-3 py-2 text-right">К-ть</th><th className="px-3 py-2 text-right">Стара ціна</th><th className="px-3 py-2 text-right">Ціна</th><th className="px-3 py-2 text-right">Сума</th></tr></thead><tbody>{order.items.map((item, index) => <tr key={`${item.product_id}-${index}`} className="border-t border-[#edf0f2]"><td className="px-3 py-2 tabular-nums text-[#687582]">{item.goods_ref || "—"}<div className="text-[9px]">{item.code || item.sku || ""}</div></td><td className="px-3 py-2 font-bold text-[#33404c]"><button type="button" onClick={() => setSelectedProduct({ item, orderId: order.id })} className="text-left hover:text-[#118dff] hover:underline">{item.name}</button></td><td className="px-3 py-2 text-[#687582]">{item.availability_status?.name || "—"}</td><td className="px-3 py-2 text-right tabular-nums">{fmtNum(item.quantity)}</td><td className="px-3 py-2 text-right tabular-nums text-[#8a939c]">{item.price_old ? fmtMoney(item.price_old) : "—"}</td><td className="px-3 py-2 text-right tabular-nums">{fmtMoney(item.price)}</td><td className="px-3 py-2 text-right font-bold tabular-nums">{fmtMoney(item.line_total)}</td></tr>)}</tbody></table></div></td></tr>}
+            </Fragment>; })}</tbody></table></div>
+          {!orders.length && <div className="border-t border-[#edf0f2] px-5 py-12 text-center text-xs text-[#8a939c]">Замовлень за цим запитом не знайдено</div>}
+          <div className="flex items-center justify-between border-t border-[#edf0f2] px-5 py-3"><button type="button" disabled={page <= 1 || loading} onClick={() => onPageChange(page - 1)} className="rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-[10px] font-bold text-[#586572] disabled:opacity-40">← Попередня</button><span className="text-[10px] text-[#7b8691]">Сторінка <b>{dataset.meta.page}</b> із <b>{dataset.meta.total_pages}</b></span><button type="button" disabled={page >= dataset.meta.total_pages || loading} onClick={() => onPageChange(page + 1)} className="rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-[10px] font-bold text-[#586572] disabled:opacity-40">Наступна →</button></div>
+        </>}
+      </section>
+      {selectedProduct && <div role="dialog" aria-modal="true" aria-label="Деталі товару" className="fixed inset-0 z-50 flex items-center justify-center bg-[#15202b]/55 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedProduct(null); }}>
+        <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-[#dce3e9] bg-white shadow-2xl">
+          <div className="flex items-start justify-between gap-4 border-b border-[#e8ecef] px-5 py-4"><div><div className="text-[9px] font-black uppercase tracking-[.14em] text-[#118dff]">Замовлення #{selectedProduct.orderId}</div><h3 className="mt-1 text-base font-black leading-snug text-[#26313d]">{selectedProduct.item.name}</h3></div><button type="button" aria-label="Закрити" onClick={() => setSelectedProduct(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f0f3f6] text-lg font-bold text-[#64717d]">×</button></div>
+          <div className="grid gap-3 p-5 sm:grid-cols-2">
+            <div className="rounded-xl bg-[#f7f9fb] p-3 text-[11px]"><div className="text-[9px] font-black uppercase text-[#8a949e]">Ідентифікатори</div><div className="mt-2"><b>IDD:</b> {selectedProduct.item.goods_ref || "—"}</div><div><b>Код:</b> {selectedProduct.item.code || "—"}</div><div><b>SKU:</b> {selectedProduct.item.sku || "—"}</div><div><b>Product ID:</b> {selectedProduct.item.product_id}</div></div>
+            <div className="rounded-xl bg-[#f7f9fb] p-3 text-[11px]"><div className="text-[9px] font-black uppercase text-[#8a949e]">Замовлення</div><div className="mt-2"><b>Наявність:</b> {selectedProduct.item.availability_status?.name || "—"}</div><div><b>Кількість:</b> {fmtNum(selectedProduct.item.quantity)}</div><div><b>Ціна:</b> {fmtMoney(selectedProduct.item.price)}</div><div><b>Сума:</b> {fmtMoney(selectedProduct.item.line_total)}</div></div>
+          </div>
+          <div className="flex items-center justify-end gap-2 border-t border-[#e8ecef] px-5 py-4"><button type="button" onClick={() => setSelectedProduct(null)} className="rounded-lg border border-[#d8dde3] px-4 py-2 text-[10px] font-bold text-[#586572]">Закрити</button>{selectedProduct.item.url && <a href={selectedProduct.item.url} target="_blank" rel="noreferrer" className="rounded-lg bg-[#118dff] px-4 py-2 text-[10px] font-bold text-white">Відкрити на сайті ↗</a>}</div>
+        </div>
+      </div>}
+    </div>
   );
 }
 
@@ -987,6 +1357,7 @@ export function SalesDashboard() {
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [compareWithPreviousYear, setCompareWithPreviousYear] = useState(true);
   const [data, setData] = useState<SalesDataset | null>(null);
   const [comparisonData, setComparisonData] = useState<SalesDataset | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(true);
@@ -994,6 +1365,14 @@ export function SalesDashboard() {
   const [webMetrics, setWebMetrics] = useState<SalesWebMetricsDataset | null>(null);
   const [webMetricsError, setWebMetricsError] = useState<string | null>(null);
   const [webMetricsLoading, setWebMetricsLoading] = useState(true);
+  const [webshopOrders, setWebshopOrders] = useState<SalesWebshopOrdersDataset | null>(null);
+  const [webshopOrdersError, setWebshopOrdersError] = useState<string | null>(null);
+  const [webshopOrdersLoading, setWebshopOrdersLoading] = useState(false);
+  const [webshopOrdersPage, setWebshopOrdersPage] = useState(1);
+  const [webshopSyncFilter, setWebshopSyncFilter] = useState<WebshopSyncFilter>("all");
+  const [webshopPaymentFilter, setWebshopPaymentFilter] = useState<WebshopPaymentFilter>("all");
+  const [webshopDeliveryFilter, setWebshopDeliveryFilter] = useState<WebshopDeliveryFilter>("all");
+  const [webshopStatusFilter, setWebshopStatusFilter] = useState("all");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1008,6 +1387,7 @@ export function SalesDashboard() {
   const [selectedManager, setSelectedManager] = useState<string | null>(null);
   const [selectedDocumentSegment, setSelectedDocumentSegment] = useState<DocumentSegment>("Усі");
   const hasLoadedRef = useRef(false);
+  const webshopScopeRef = useRef("");
 
   useEffect(() => {
     let alive = true;
@@ -1061,7 +1441,7 @@ export function SalesDashboard() {
   }, [dateFrom, dateTo, selectedStatuses]);
 
   useEffect(() => {
-    if (!dateFrom || !dateTo) {
+    if (!compareWithPreviousYear || !dateFrom || !dateTo) {
       setComparisonData(null);
       setComparisonLoading(false);
       return;
@@ -1095,7 +1475,47 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, selectedStatuses]);
+  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses]);
+
+  useEffect(() => {
+    if (view !== "webshop") return;
+    let alive = true;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ page: String(webshopOrdersPage) });
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    if (webshopSyncFilter !== "all") params.set("synced", webshopSyncFilter === "synced" ? "true" : "false");
+    if (webshopPaymentFilter !== "all") params.set("payment", webshopPaymentFilter);
+    if (webshopDeliveryFilter !== "all") params.set("delivery", webshopDeliveryFilter);
+    if (webshopStatusFilter !== "all") params.set("order_status", webshopStatusFilter);
+    const scopeKey = `${dateFrom}|${dateTo}|${webshopSyncFilter}|${webshopPaymentFilter}|${webshopDeliveryFilter}|${webshopStatusFilter}`;
+    if (webshopScopeRef.current !== scopeKey) {
+      webshopScopeRef.current = scopeKey;
+      setWebshopOrders(null);
+    }
+    setWebshopOrdersLoading(true);
+    setWebshopOrdersError(null);
+    fetch(`/api/sales/webshop-orders?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити Webshop-замовлення");
+        return payload as SalesWebshopOrdersDataset;
+      })
+      .then((payload) => {
+        if (alive) setWebshopOrders(payload);
+      })
+      .catch((reason: unknown) => {
+        if (!alive || (reason instanceof DOMException && reason.name === "AbortError")) return;
+        setWebshopOrdersError(reason instanceof Error ? reason.message : "Не вдалося завантажити Webshop-замовлення");
+      })
+      .finally(() => {
+        if (alive) setWebshopOrdersLoading(false);
+      });
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopSyncFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter]);
 
   useEffect(() => {
     const category = expandedCategory;
@@ -1254,15 +1674,19 @@ export function SalesDashboard() {
     const range = currentMonthRange();
     setDateFrom(range.from);
     setDateTo(range.to);
+    setWebshopOrdersPage(1);
   };
   const applyPreviousMonth = () => {
     const range = previousMonthRange();
     setDateFrom(range.from);
     setDateTo(range.to);
+    setWebshopOrdersPage(1);
   };
   const applyAllPeriod = () => {
     setDateFrom("");
     setDateTo("");
+    setCompareWithPreviousYear(false);
+    setWebshopOrdersPage(1);
   };
   const toggleStatus = (status: string) => {
     setSelectedStatuses((current) => (
@@ -1299,6 +1723,7 @@ export function SalesDashboard() {
   const canceledStatusRevenue = canceledStatusRows.reduce((sum, item) => sum + item.revenue, 0);
   const pageDescriptions: Record<SalesDashboardView, string> = {
     overview: "Виконання плану й динаміка повністю відвантажених замовлень.",
+    webshop: "Детальні Webshop-замовлення: клієнти, оплата, доставка, товари та виконання P2.",
     web: "Шлях користувача від відвідування сайту до оформленого замовлення.",
     brands: "Продажі за брендами з деталізацією до рівня товару.",
     categories: "Продажі за категоріями з деталізацією до рівня товару.",
@@ -1351,7 +1776,7 @@ export function SalesDashboard() {
             <div className="text-xs text-[#8b949e]">Аналіз продажів&nbsp; / &nbsp;<b className="text-[#27313c]">{activeView.label}</b></div>
             <div className="flex flex-wrap items-center gap-2">
               {refreshing && <span className="rounded-lg bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2]">Оновлення…</span>}
-              <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">облікова система + GA4</b></span>
+              <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">{view === "webshop" ? "Orders API + P2" : "облікова система + GA4"}</b></span>
             </div>
           </header>
 
@@ -1373,15 +1798,26 @@ export function SalesDashboard() {
               <div className="flex flex-wrap items-end gap-2">
                 <label className="min-w-[150px] flex-1 sm:max-w-[190px]">
                   <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата від</span>
-                  <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
+                  <input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
                 </label>
                 <label className="min-w-[150px] flex-1 sm:max-w-[190px]">
                   <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата до</span>
-                  <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
+                  <input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
                 </label>
                 <button type="button" onClick={applyCurrentMonth} className="h-9 rounded-lg border-0 bg-[#118dff] px-3 text-[10px] font-bold text-white">Поточний місяць</button>
                 <button type="button" onClick={applyPreviousMonth} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Минулий місяць</button>
                 <button type="button" onClick={applyAllPeriod} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Весь період</button>
+                {view !== "webshop" && <button
+                  type="button"
+                  aria-pressed={compareWithPreviousYear}
+                  onClick={() => setCompareWithPreviousYear((current) => !current)}
+                  disabled={!dateFrom || !dateTo}
+                  className="flex h-9 items-center gap-2 rounded-lg border px-3 text-[10px] font-bold disabled:cursor-not-allowed disabled:opacity-45"
+                  style={{ borderColor: compareWithPreviousYear ? "#9cccf6" : "#d8dde3", background: compareWithPreviousYear ? "#eef7ff" : "#f7f9fb", color: compareWithPreviousYear ? "#176aa8" : "#586572" }}
+                >
+                  <span className="flex h-4 w-4 items-center justify-center rounded border text-[9px]" style={{ borderColor: compareWithPreviousYear ? "#118dff" : "#aeb7c0", background: compareWithPreviousYear ? "#118dff" : "#fff", color: "#fff" }}>{compareWithPreviousYear ? "✓" : ""}</span>
+                  Порівняти з минулим роком
+                </button>}
                 <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{data.filter.label}</b></div>
               </div>
             </section>
@@ -1418,20 +1854,22 @@ export function SalesDashboard() {
                   </div>
                 </section>
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                  <SalesMetricCard label="Продажі · до минулого року" value={fmtMoney(data.summary.shippedRevenue)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedRevenue, comparisonData?.summary.shippedRevenue || 0, fmtMoney)} symbol={comparisonData && data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "↗" : "↘"} tone={comparisonData && data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "#20a66a" : "#e45858"} />
-                  <SalesMetricCard label="Відвантажено документів" value={fmtNum(data.summary.shippedDocs)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedDocs, comparisonData?.summary.shippedDocs || 0, fmtNum)} symbol="D" tone="#118dff" />
-                  <SalesMetricCard label="Відвантажено товарів" value={fmtNum(data.summary.shippedGoods)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedGoods, comparisonData?.summary.shippedGoods || 0, (value) => `${fmtNum(value)} шт`)} symbol="#" tone="#805ad5" />
-                  <SalesMetricCard label="Середній чек" value={averageCheck == null ? "—" : fmtMoney(averageCheck)} hint={comparisonLoading ? "Завантаження порівняння…" : averageCheck == null ? "Немає відвантажених документів" : previousAverageCheck == null ? "Немає даних для порівняння" : yearComparisonHint(averageCheck, previousAverageCheck, fmtMoney)} symbol="₴" tone="#168b9b" description="Сума продажів до вирахування повернень / кількість повністю відвантажених документів за обраний період." />
-                  <SalesMetricCard label="Повернення" value={fmtMoney(data.summary.returnedRevenue)} hint={comparisonLoading ? "Завантаження порівняння…" : comparisonData ? yearComparisonHint(data.summary.returnedRevenue, comparisonData.summary.returnedRevenue, fmtMoney) : "Немає даних для порівняння"} symbol="↩" tone="#e45858" description="Сума повернень за документами, повністю відвантаженими в обраний період. Відбір за датою відвантаження, не за датою повернення." />
+                  <SalesMetricCard label={compareWithPreviousYear ? "Продажі · до минулого року" : "Продажі"} value={fmtMoney(data.summary.shippedRevenue)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedRevenue, comparisonData?.summary.shippedRevenue || 0, fmtMoney)} symbol={!comparisonData ? "₴" : data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "↗" : "↘"} tone={!comparisonData ? "#168b9b" : data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "#20a66a" : "#e45858"} />
+                  <SalesMetricCard label="Відвантажено документів" value={fmtNum(data.summary.shippedDocs)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedDocs, comparisonData?.summary.shippedDocs || 0, fmtNum)} symbol="D" tone="#118dff" />
+                  <SalesMetricCard label="Відвантажено товарів" value={fmtNum(data.summary.shippedGoods)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedGoods, comparisonData?.summary.shippedGoods || 0, (value) => `${fmtNum(value)} шт`)} symbol="#" tone="#805ad5" />
+                  <SalesMetricCard label="Середній чек" value={averageCheck == null ? "—" : fmtMoney(averageCheck)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : averageCheck == null ? "Немає відвантажених документів" : previousAverageCheck == null ? "Немає даних для порівняння" : yearComparisonHint(averageCheck, previousAverageCheck, fmtMoney)} symbol="₴" tone="#168b9b" description="Сума продажів до вирахування повернень / кількість повністю відвантажених документів за обраний період." />
+                  <SalesMetricCard label="Повернення" value={fmtMoney(data.summary.returnedRevenue)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : comparisonData ? yearComparisonHint(data.summary.returnedRevenue, comparisonData.summary.returnedRevenue, fmtMoney) : "Немає даних для порівняння"} symbol="↩" tone="#e45858" description="Сума повернень за документами, повністю відвантаженими в обраний період. Відбір за датою відвантаження, не за датою повернення." />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <SalesMetricCard label="Плитка" value={fmtMoney(currentTile?.revenue || 0)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentTile?.revenue || 0, previousTile?.revenue || 0, fmtMoney)} symbol="P" tone="#e39a25" />
-                  <SalesMetricCard label="Сантехніка" value={fmtMoney(currentPlumbing?.revenue || 0)} hint={comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentPlumbing?.revenue || 0, previousPlumbing?.revenue || 0, fmtMoney)} symbol="S" tone="#20a66a" />
+                  <SalesMetricCard label="Плитка" value={fmtMoney(currentTile?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentTile?.revenue || 0, previousTile?.revenue || 0, fmtMoney)} symbol="P" tone="#e39a25" />
+                  <SalesMetricCard label="Сантехніка" value={fmtMoney(currentPlumbing?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentPlumbing?.revenue || 0, previousPlumbing?.revenue || 0, fmtMoney)} symbol="S" tone="#20a66a" />
                 </div>
-                <SalesTrendChart days={data.summary.byDate} />
-                <OrdersTrendChart days={data.summary.ordersByDate || []} />
+                <SalesTrendChart days={data.summary.byDate} previousDays={compareWithPreviousYear && !comparisonLoading ? comparisonData?.summary.byDate : undefined} />
+                <OrdersTrendChart days={data.summary.ordersByDate || []} previousDays={compareWithPreviousYear && !comparisonLoading ? comparisonData?.summary.ordersByDate : undefined} />
               </div>
             )}
+
+            {view === "webshop" && <WebshopOrdersRegister dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
 
             {view === "web" && (
               <div className="space-y-4">
