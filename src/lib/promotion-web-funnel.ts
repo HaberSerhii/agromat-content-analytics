@@ -382,6 +382,7 @@ base AS (
     LOWER(COALESCE(collected_traffic_source.manual_source, traffic_source.source, '')) AS traffic_source_name,
     LOWER(COALESCE(collected_traffic_source.manual_medium, traffic_source.medium, '')) AS traffic_medium,
     collected_traffic_source.gclid AS gclid,
+    LOWER(COALESCE(collected_traffic_source.manual_campaign_name, '')) AS traffic_campaign_name,
     LOWER(device.category) AS device_category
   FROM \`${projectId}.${datasetId}.events_*\`
   WHERE (
@@ -390,6 +391,8 @@ base AS (
     AND event_name IN ('session_start', 'page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase')
     AND user_pseudo_id IS NOT NULL
     AND geo.country = 'Ukraine'
+    AND (@utmSource = '' OR LOWER(COALESCE(collected_traffic_source.manual_source, traffic_source.source, '')) = @utmSource)
+    AND (@utmCampaign = '' OR LOWER(COALESCE(collected_traffic_source.manual_campaign_name, '')) = @utmCampaign)
 ),
 events AS (
   SELECT
@@ -498,6 +501,8 @@ export async function readPromotionWebFunnel(input: {
   anchor?: string;
   dateFrom?: string;
   dateTo?: string;
+  utmSource?: string;
+  utmCampaign?: string;
 }): Promise<PromotionWebFunnelResponse> {
   const { requestedUrl, normalizedUrl } = normalizeAnalyticsUrl(input.url);
   const scope = normalizedUrl === "agromat.ua" ? "sitewide" : "page";
@@ -505,7 +510,9 @@ export async function readPromotionWebFunnel(input: {
     ? input.periodKind
     : "week";
   const periodInfo = periodRanges(periodKind, input.anchor, input.dateFrom, input.dateTo);
-  const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}`;
+  const utmSource = input.utmSource?.trim().toLocaleLowerCase("uk") ?? "";
+  const utmCampaign = input.utmCampaign?.trim().toLocaleLowerCase("uk") ?? "";
+  const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}:${utmSource}:${utmCampaign}`;
   const rows = await readThroughBigQueryCache<QueryRow[]>({
     namespace: "promotion-web-funnel",
     key: `v1:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
@@ -513,7 +520,7 @@ export async function readPromotionWebFunnel(input: {
       const bigQuery = getBigQueryClient();
       const [queryRows] = await bigQuery.query({
         query: buildSql(periodInfo.ranges, scope),
-        params: { normalizedUrl },
+        params: { normalizedUrl, utmSource, utmCampaign },
         location: "EU",
         maximumBytesBilled: "50000000000",
       });

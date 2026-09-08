@@ -6,6 +6,10 @@ import {
 } from "@/lib/sales-s3";
 import { getServerResult } from "@/lib/server-result-cache";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
+import {
+  normalizePromotionPricePosition,
+  readPricePositionCodes,
+} from "@/lib/promotion-price-position";
 
 export const dynamic = "force-dynamic";
 
@@ -63,10 +67,14 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean) {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const compact = url.searchParams.get("compact") === "1";
+  const pricePosition = normalizePromotionPricePosition(url.searchParams.get("price_position"));
+  const positionCodes = await readPricePositionCodes(pricePosition);
   return salesResponse({
     from: url.searchParams.get("from") || undefined,
     to: url.searchParams.get("to") || undefined,
-    productCodes: url.searchParams.get("product_codes") || undefined,
+    productCodes: positionCodes
+      ? positionCodes.size ? [...positionCodes] : [-1]
+      : url.searchParams.get("product_codes") || undefined,
     statuses: url.searchParams.getAll("status"),
   }, compact);
 }

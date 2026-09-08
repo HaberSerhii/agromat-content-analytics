@@ -75,10 +75,15 @@ export interface ApiBrand {
   name: string;
   url: string;
 }
+export interface ApiPromotionType {
+  id: number;
+  name: string;
+}
 export interface ApiFilters {
   categories: ApiCategoryNode[];
   statuses: ApiStatus[];
   brands: ApiBrand[];
+  action_types: ApiPromotionType[];
 }
 
 export interface ApiPromotionProduct {
@@ -91,7 +96,8 @@ export interface ApiPromotionProduct {
   fix_price: number | null;
   result_price: number | null;
   status: ApiStatus;
-  promotion_idinc?: number;
+  /** The idinc of the promotion this product actually belongs to. */
+  promotion_idinc: number;
 }
 
 export interface ApiRelatedPromotion {
@@ -107,18 +113,22 @@ export interface ApiPromotion {
   name: string;
   description: string | null;
   conditions: string | null;
+  /**
+   * Computed by the upstream API: active=1, show_on_site=1 and either
+   * is_unlimited=1 or the current date is within start_date..end_date.
+   */
   active: boolean;
   percent: number | null;
   is_special: boolean;
   special_percent: number | null;
   is_unlimited: boolean;
-  type: { id: number; name: string } | null;
+  type: ApiPromotionType | null;
   start_date: string | null;
   end_date: string | null;
   url: string | null;
   image: string | null;
-  has_related?: boolean;
-  related_promotions?: ApiRelatedPromotion[];
+  has_related: boolean;
+  related_promotions: ApiRelatedPromotion[];
   products: ApiPromotionProduct[];
 }
 
@@ -189,6 +199,17 @@ export interface PromotionsPage {
   meta: { total: number; page: number; per_page: number; total_pages: number };
 }
 
+export interface PromotionsQuery {
+  page?: number;
+  /** Use -1 to disable pagination. */
+  perPage?: number;
+  active?: boolean;
+  /** Promotion type IDs from GET /filters/ -> action_types. */
+  typeIds?: number[];
+  hasUrl?: boolean;
+  showOnSite?: boolean;
+}
+
 declare global {
   var _promotionsApiCache: { at: number; data: ApiPromotion[] } | undefined;
   var _deletedProductIdsCache: { at: number; data: Set<number> } | undefined;
@@ -199,9 +220,21 @@ declare global {
 export async function fetchAllPromotions(): Promise<ApiPromotion[]> {
   const cached = global._promotionsApiCache;
   if (cached && Date.now() - cached.at < 5 * 60_000) return cached.data;
-  const response = await getJsonWithRetry<PromotionsPage>("/promotions/?per_page=-1");
+  const response = await fetchPromotions({ perPage: -1 });
   global._promotionsApiCache = { at: Date.now(), data: response.data };
   return response.data;
+}
+
+export async function fetchPromotions(query: PromotionsQuery = {}): Promise<PromotionsPage> {
+  const params = new URLSearchParams();
+  if (query.page !== undefined) params.set("page", String(query.page));
+  if (query.perPage !== undefined) params.set("per_page", String(query.perPage));
+  if (query.active !== undefined) params.set("active", String(query.active));
+  if (query.typeIds?.length) params.set("type_ids", query.typeIds.join(","));
+  if (query.hasUrl !== undefined) params.set("has_url", String(query.hasUrl));
+  if (query.showOnSite !== undefined) params.set("show_on_site", String(query.showOnSite));
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return getJsonWithRetry<PromotionsPage>(`/promotions/${suffix}`);
 }
 
 export async function fetchDeletedProductIds(): Promise<Set<number>> {

@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
+import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
 type SalesRow = {
   docsRef: string;
@@ -1234,7 +1235,16 @@ function WebshopOrdersRegister({ dataset, loading, error, page, syncFilter, paym
   const [orderDetails, setOrderDetails] = useState<Record<number, SalesWebshopOrder>>({});
   const [loadingOrderDetail, setLoadingOrderDetail] = useState<number | null>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase("uk");
-  const orders = (dataset?.data || []).filter((order) => !normalizedQuery || [String(order.id), String(order.order_num || ""), String(order.order_doc_id || ""), customerName(order), order.customer.email || "", order.customer.phone || "", order.status || "", ...order.items.flatMap((item) => [String(item.goods_ref || ""), String(item.code || ""), item.sku || "", item.name])].some((value) => value.toLocaleLowerCase("uk").includes(normalizedQuery)));
+  const orders = (dataset?.data || []).filter((order) => !normalizedQuery || [
+    order.id,
+    order.order_num,
+    order.order_doc_id,
+    customerName(order),
+    order.customer.email,
+    order.customer.phone,
+    order.status,
+    ...order.items.flatMap((item) => [item.goods_ref, item.code, item.sku, item.name]),
+  ].some((value) => String(value ?? "").toLocaleLowerCase("uk").includes(normalizedQuery)));
   const summary = dataset?.summary;
   const toggleOrder = async (order: SalesWebshopOrder) => {
     if (expandedOrder === order.id) {
@@ -1374,6 +1384,7 @@ function StatusSummaryList({
 export function SalesDashboard() {
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [view, setView] = useState<SalesDashboardView>("overview");
+  const [pricePosition, setPricePosition] = useState<PromotionPricePosition>("all");
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
@@ -1440,7 +1451,7 @@ export function SalesDashboard() {
   useEffect(() => {
     setCategoryProducts({});
     setBrandProducts({});
-  }, [dateFrom, dateTo, selectedStatuses, refreshTick]);
+  }, [dateFrom, dateTo, pricePosition, selectedStatuses, refreshTick]);
 
   useEffect(() => {
     let alive = true;
@@ -1458,6 +1469,7 @@ export function SalesDashboard() {
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
     params.set("compact", "1");
+    if (pricePosition !== "all") params.set("price_position", pricePosition);
     selectedStatuses.forEach((status) => params.append("status", status));
     const request = fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
@@ -1487,7 +1499,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, selectedStatuses, refreshTick]);
+  }, [dateFrom, dateTo, pricePosition, selectedStatuses, refreshTick]);
 
   useEffect(() => {
     if (!compareWithPreviousYear || !dateFrom || !dateTo) {
@@ -1503,6 +1515,7 @@ export function SalesDashboard() {
       compact: "1",
     });
     selectedStatuses.forEach((status) => params.append("status", status));
+    if (pricePosition !== "all") params.set("price_position", pricePosition);
     setComparisonLoading(true);
     fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
@@ -1524,7 +1537,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, refreshTick]);
+  }, [compareWithPreviousYear, dateFrom, dateTo, pricePosition, selectedStatuses, refreshTick]);
 
   useEffect(() => {
     if (view !== "webshop") return;
@@ -1579,6 +1592,7 @@ export function SalesDashboard() {
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
     selectedStatuses.forEach((status) => params.append("status", status));
+    if (pricePosition !== "all") params.set("price_position", pricePosition);
     const request = fetch(`/api/sales/category-products?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
       .then(async (response) => {
@@ -1602,7 +1616,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [categoryProducts, dateFrom, dateTo, expandedCategory, selectedStatuses]);
+  }, [categoryProducts, dateFrom, dateTo, expandedCategory, pricePosition, selectedStatuses]);
 
   useEffect(() => {
     const brand = expandedBrand;
@@ -1615,6 +1629,7 @@ export function SalesDashboard() {
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
     selectedStatuses.forEach((status) => params.append("status", status));
+    if (pricePosition !== "all") params.set("price_position", pricePosition);
     const request = fetch(`/api/sales/brand-products?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
       .then(async (response) => {
@@ -1638,7 +1653,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [brandProducts, dateFrom, dateTo, expandedBrand, selectedStatuses]);
+  }, [brandProducts, dateFrom, dateTo, expandedBrand, pricePosition, selectedStatuses]);
 
   useEffect(() => {
     if (view !== "web") return;
@@ -1862,6 +1877,32 @@ export function SalesDashboard() {
                 <span className={`h-2 w-2 rounded-full ${view === "web" && webMetrics?.mode === "demo" ? "bg-[#e39a25]" : "bg-[#20a66a]"}`} /> {view === "web" && webMetrics?.mode === "demo" ? "Тестові дані" : "Актуальні дані"}
               </div>
             </section>
+
+            {(["overview", "brands", "categories"] as SalesDashboardView[]).includes(view) && (
+              <section className="mb-4 flex flex-col gap-3 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-[.13em] text-[#7c8792]">Цінова позиція товарів</div>
+                  <div className="mt-1 text-[10px] text-[#8a949e]">Порівняння ціни AGROMAT з мінімальною ціною серед знайдених конкурентів</div>
+                </div>
+                <div className="inline-flex self-start rounded-xl border border-[#d8dde3] bg-[#f2f5f7] p-1 lg:self-auto" role="group" aria-label="Фільтр за ціною конкурентів">
+                  {([
+                    ["all", "Усі товари"],
+                    ["lower", "АГРОМАТ — краща ціна"],
+                    ["higher", "АГРОМАТ — гірша ціна"],
+                  ] as Array<[PromotionPricePosition, string]>).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={pricePosition === value}
+                      onClick={() => setPricePosition(value)}
+                      className={`rounded-lg px-3 py-2 text-[10px] font-black transition ${pricePosition === value ? "bg-[#118dff] text-white shadow-sm" : "text-[#68737e] hover:bg-white"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {error && <div className="mb-4 rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
 

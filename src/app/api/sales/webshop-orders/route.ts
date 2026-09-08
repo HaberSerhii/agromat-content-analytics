@@ -5,6 +5,10 @@ import { webshopFinalStatus } from "@/lib/sales-webshop-status";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import { orderInDateRange, ordersApiEndDate } from "@/lib/orders-date-range";
 import { matchesUtm, utmOptions } from "@/lib/orders-utm";
+import {
+  normalizePromotionPricePosition,
+  readPromotionalPricePositionCodes,
+} from "@/lib/promotion-price-position";
 
 export const dynamic = "force-dynamic";
 
@@ -159,6 +163,20 @@ function enrichOrder(
   };
 }
 
+function keepOnlyMatchingItems(order: ApiOrder, productCodes: ReadonlySet<number>): ApiOrder | null {
+  const items = order.items.filter((item) => {
+    const code = Number(item.code);
+    return Number.isFinite(code) && productCodes.has(code);
+  });
+  if (!items.length) return null;
+  const itemsSum = items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
+  return {
+    ...order,
+    items,
+    totals: { ...order.totals, items_sum: itemsSum, cost: itemsSum, delivery: 0 },
+  };
+}
+
 function paymentCategory(order: ApiOrder): Exclude<PaymentFilter, "all"> | "unknown" {
   const type = order.payment?.type;
   if (type === "online") {
@@ -273,6 +291,7 @@ export async function GET(req: Request) {
     const orderStatus = url.searchParams.get("order_status") || "all";
     const utmSource = url.searchParams.get("utm_source") || "";
     const utmCampaign = url.searchParams.get("utm_campaign") || "";
+    const promotionPricePosition = normalizePromotionPricePosition(url.searchParams.get("promotion_price_position"));
 
     const scopeKey = `${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}|${synced || "all"}`;
     const ordersResult = await getServerResult({
@@ -284,7 +303,18 @@ export async function GET(req: Request) {
     });
     const returnLookup = await readSalesWebshopReturnLookup();
     const returnedWebshopIds = new Set(returnLookup.keys());
-    const allOrders = ordersResult.value.map((order) => enrichOrder(order, returnLookup, returnedWebshopIds));
+    const enrichedAllOrders = ordersResult.value.map((order) => enrichOrder(order, returnLookup, returnedWebshopIds));
+    const positionedPromotionCodes = promotionPricePosition === "all"
+      ? null
+      : await readPromotionalPricePositionCodes(promotionPricePosition, dateFrom, dateTo);
+    const allOrders = promotionPricePosition === "all"
+      ? enrichedAllOrders
+      : enrichedAllOrders
+        .map((order) => keepOnlyMatchingItems(
+          order,
+          positionedPromotionCodes as ReadonlySet<number>,
+        ))
+        .filter((order): order is ApiOrder => order != null);
     const facetOrders = allOrders.filter((order) => (
       (payment === "all" || paymentCategory(order) === payment)
       && (delivery === "all" || order.delivery?.type === delivery)

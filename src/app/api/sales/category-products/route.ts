@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readSalesCategoryProducts, type SalesDateFilter } from "@/lib/sales-s3";
 import { getServerResult } from "@/lib/server-result-cache";
+import { normalizePromotionPricePosition, readPricePositionCodes } from "@/lib/promotion-price-position";
 
 export const dynamic = "force-dynamic";
 
@@ -50,10 +51,13 @@ async function categoryProductsResponse(
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const positionCodes = await readPricePositionCodes(normalizePromotionPricePosition(url.searchParams.get("price_position")));
   return categoryProductsResponse(url.searchParams.get("category") || "", {
     from: url.searchParams.get("from") || undefined,
     to: url.searchParams.get("to") || undefined,
-    productCodes: url.searchParams.get("product_codes") || undefined,
+    productCodes: positionCodes
+      ? positionCodes.size ? [...positionCodes] : [-1]
+      : url.searchParams.get("product_codes") || undefined,
     statuses: url.searchParams.getAll("status"),
   });
 }

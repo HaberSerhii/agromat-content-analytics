@@ -15,12 +15,16 @@ export async function GET(request: Request) {
     const anchor = url.searchParams.get("anchor") || undefined;
     const dateFrom = url.searchParams.get("from") || undefined;
     const dateTo = url.searchParams.get("to") || undefined;
+    const utmSource = url.searchParams.get("utm_source") || undefined;
+    const utmCampaign = url.searchParams.get("utm_campaign") || undefined;
     const data = await readPromotionWebFunnel({
       url: pageUrl,
       periodKind,
       anchor,
       dateFrom,
       dateTo,
+      utmSource,
+      utmCampaign,
     });
     return NextResponse.json(data, {
       headers: {

@@ -33,3 +33,28 @@ input[type="number"]::-webkit-outer-spin-button {
   margin: 0;
 }
 input[type="number"] { -moz-appearance: textfield; }
+
+/* Shared visual language for the refreshed analytics workspaces. */
+.promo-v2 {
+  --bg: #f4f5f3;
+  --bg-card: #ffffff;
+  --bg-input: #f7f9fb;
+  --text: #27313c;
+  --text-mid: #45515d;
+  --text-dim: #68737e;
+  --text-dim2: #7f8993;
+  --text-muted: #9aa2ab;
+  --border: #e5e8eb;
+  --border2: #d8dde3;
+  --shadow-sm: 0 1px 2px rgba(20, 32, 50, 0.04);
+}
+
+.promo-v2 main section {
+  box-shadow: 0 1px 2px rgba(20, 32, 50, 0.04);
+}
+
+.promo-v2 input:focus,
+.promo-v2 select:focus {
+  border-color: #118dff !important;
+  outline: none;
+}

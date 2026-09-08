@@ -574,6 +574,42 @@ function matchesProductCodes(goodsCodes: number[], productCodeSet: Set<number>) 
   return goodsCodes.some((code) => productCodeSet.has(code));
 }
 
+function scopeSalesRowToProductCodes(
+  row: ParsedSalesRow,
+  productCodeSet: ReadonlySet<number>,
+): ParsedSalesRow | null {
+  if (productCodeSet.size === 0) return row;
+  const items = row.items.filter((item) => {
+    const code = Number(item.code);
+    return Number.isFinite(code) && productCodeSet.has(code);
+  });
+  if (!items.length) return null;
+
+  const fallbackRevenue = row.goodsCount > 0 ? row.docsSum / row.goodsCount : 0;
+  const docsSum = items.reduce((sum, item) => sum + (item.revenue || fallbackRevenue), 0);
+  const matchingReturns = row.returnGoodsCodes
+    .map((code, index) => ({ code, revenue: row.returnRowSums[index] || 0 }))
+    .filter((item) => productCodeSet.has(Number(item.code)));
+  const returnSum = matchingReturns.reduce((sum, item) => sum + item.revenue, 0);
+  const revenueShare = row.docsSum > 0 ? docsSum / row.docsSum : 0;
+
+  return {
+    ...row,
+    items,
+    goodsCodeNumbers: items.map((item) => Number(item.code)).filter(Number.isFinite),
+    goodsCount: items.reduce((sum, item) => sum + (Number(item.qty) || 0), 0),
+    goodsCodes: items.map((item) => item.code).join("|"),
+    goodsNames: items.map((item) => item.name).join("|"),
+    trademarksNames: items.map((item) => item.brand).join("|"),
+    docsSum,
+    returnSum,
+    returnGoodsCodes: matchingReturns.map((item) => item.code),
+    returnRowSums: matchingReturns.map((item) => item.revenue),
+    hasReturns: matchingReturns.length > 0 || returnSum > 0,
+    ownCost: row.ownCost * revenueShare,
+  };
+}
+
 function getPlanMonthForFilter(filter: ReturnType<typeof getEffectiveFilter>) {
   const fromMonth = filter.from?.slice(0, 7);
   const toMonth = filter.to?.slice(0, 7);
@@ -1027,7 +1063,9 @@ function buildDataset(
   let revenueWithCost = 0;
   let ownCost = 0;
 
-  for (const row of rows) {
+  for (const sourceRow of rows) {
+    const row = scopeSalesRowToProductCodes(sourceRow, productCodeSet);
+    if (!row) continue;
     const goodsCodes = row.goodsCodeNumbers;
     if (
       matchesProductCodes(goodsCodes, productCodeSet)
@@ -1387,8 +1425,9 @@ function buildDimensionProducts(
   const dimensionRevenue = new Map<string, number>();
   const dimensionProducts = new Map<string, Map<string, MutableSalesProductSummary>>();
 
-  for (const row of rows) {
-    if (!matchesProductCodes(row.goodsCodeNumbers, productCodeSet)) continue;
+  for (const sourceRow of rows) {
+    const row = scopeSalesRowToProductCodes(sourceRow, productCodeSet);
+    if (!row) continue;
     if (!isDimensionOrderInPeriod(row, filter)) continue;
     if (isExcludedAnalyticsOrder(row)) continue;
 
@@ -1738,14 +1777,6 @@ function promotionSalesItemRevenue(item: ParsedSalesItem): number {
   return item.revenue;
 }
 
-function addPromotionSalesRevenue(
-  map: Map<string, number>,
-  label: string,
-  revenue: number,
-) {
-  map.set(label || "Без даних", (map.get(label || "Без даних") || 0) + revenue);
-}
-
 function promotionSalesDateRange(from: string, to: string): string[] {
   const dates: string[] = [];
   const cursor = new Date(`${from}T12:00:00Z`);
@@ -1780,9 +1811,9 @@ function promotionSalesDataThrough(rows: SalesRow[]): string | null {
 function emptyPromotionSalesDay(date: string): PromotionSalesDailySummary {
   return {
     date,
-    total: { revenue: 0, qty: 0 },
-    tile: { revenue: 0, qty: 0 },
-    plumbing: { revenue: 0, qty: 0 },
+    total: { revenue: 0, qty: 0, docs: 0 },
+    tile: { revenue: 0, qty: 0, docs: 0 },
+    plumbing: { revenue: 0, qty: 0, docs: 0 },
   };
 }
 
@@ -1871,10 +1902,11 @@ export async function readPromotionSalesDataset(input: {
       docs: 0,
       revenue: 0,
       publicUrl: promotion.publicUrl,
+      segmentSet: new Set<"tile" | "plumbing">(),
     },
   ]));
-  const brands = new Map<string, number>();
-  const categories = new Map<string, number>();
+  const brands = new Map<string, { revenue: number; products: Set<string> }>();
+  const categories = new Map<string, { revenue: number; products: Set<string> }>();
   const products = new Map<string, PromotionSalesProductSummary & { docRefs: Set<string> }>();
   const daily = new Map<string, PromotionSalesDailySummary>(
     (dailyRangeTo >= rangeFrom ? promotionSalesDateRange(rangeFrom, dailyRangeTo) : [])
@@ -1903,6 +1935,7 @@ export async function readPromotionSalesDataset(input: {
     const promotionDocsSeen = new Set<number>();
     let selectedRowRevenue = 0;
     let hasSelectedProduct = false;
+    const selectedRowSegments = new Set<"tile" | "plumbing">();
 
     for (const item of row.items) {
       const code = parseInt(item.code, 10);
@@ -1947,6 +1980,13 @@ export async function readPromotionSalesDataset(input: {
       const saleDay = daily.get(saleDate);
       const itemSegment = businessSegmentFromText(`${item.category} ${item.name}`)
         ?? normalizeSalesPlanSegment(row.planGroup);
+      const segmentKey = itemSegment === "Плитка" ? "tile" : itemSegment === "Сантехніка" ? "plumbing" : null;
+      if (segmentKey) {
+        selectedRowSegments.add(segmentKey);
+        for (const membership of selectedMemberships) {
+          promotionSummaries.get(membership.idinc)?.segmentSet.add(segmentKey);
+        }
+      }
       if (saleDay) {
         saleDay.total.revenue += itemRevenue;
         saleDay.total.qty += item.qty;
@@ -1958,8 +1998,16 @@ export async function readPromotionSalesDataset(input: {
           saleDay.plumbing.qty += item.qty;
         }
       }
-      addPromotionSalesRevenue(brands, item.brand, itemRevenue);
-      addPromotionSalesRevenue(categories, item.category, itemRevenue);
+      const productKeyForBucket = item.code || item.name;
+      const addBucket = (map: Map<string, { revenue: number; products: Set<string> }>, label: string) => {
+        const key = label || "Без даних";
+        const bucket = map.get(key) ?? { revenue: 0, products: new Set<string>() };
+        bucket.revenue += itemRevenue;
+        bucket.products.add(productKeyForBucket);
+        map.set(key, bucket);
+      };
+      addBucket(brands, item.brand);
+      addBucket(categories, item.category);
       if (input.includeProducts !== false) {
         const productKey = `${item.code}\u0000${item.brand}\u0000${item.category}`;
         const product = products.get(productKey) ?? {
@@ -1991,6 +2039,12 @@ export async function readPromotionSalesDataset(input: {
     }
 
     if (!hasSelectedProduct) continue;
+    const saleDay = daily.get(saleDate);
+    if (saleDay) {
+      saleDay.total.docs += 1;
+      if (selectedRowSegments.has("tile")) saleDay.tile.docs += 1;
+      if (selectedRowSegments.has("plumbing")) saleDay.plumbing.docs += 1;
+    }
     const state = states.get(status);
     if (state) {
       state.docs += 1;
@@ -2002,9 +2056,9 @@ export async function readPromotionSalesDataset(input: {
 
   const monthlyPlanConfig = getMonthlySalesPlan(planMonth);
   const monthlyPlan = monthlyPlanConfig?.total ?? null;
-  const finishRevenueBuckets = (map: Map<string, number>) =>
+  const finishRevenueBuckets = (map: Map<string, { revenue: number; products: Set<string> }>) =>
     [...map.entries()]
-      .map(([label, bucketRevenue]) => ({ label, revenue: bucketRevenue }))
+      .map(([label, bucket]) => ({ label, revenue: bucket.revenue, productCount: bucket.products.size }))
       .sort((a, b) => b.revenue - a.revenue);
 
   return {
@@ -2039,7 +2093,10 @@ export async function readPromotionSalesDataset(input: {
       },
       publicPromotionGroups: input.publicPromotionGroups,
       daily: [...daily.values()],
-      promotions: [...promotionSummaries.values()].sort((a, b) => b.revenue - a.revenue),
+      promotions: [...promotionSummaries.values()].map(({ segmentSet, ...promotion }) => ({
+        ...promotion,
+        segments: [...segmentSet],
+      })).sort((a, b) => b.revenue - a.revenue),
       brands: finishRevenueBuckets(brands),
       categories: finishRevenueBuckets(categories),
       products: [...products.values()]

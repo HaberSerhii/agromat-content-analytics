@@ -226,7 +226,7 @@ export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product:
                   <td className="min-w-[270px] px-4 py-3">
                     <div className="text-[11px] font-black text-[#27313c]">{row.query}</div>
                     <div className="mt-1 flex flex-wrap gap-1.5">
-                      <a href={`https://www.agromat.ua/search/?q=${encodeURIComponent(row.queryUk || row.query)}`} target="_blank" rel="noreferrer" className="rounded-md bg-[#edf6ff] px-2 py-1 text-[8px] font-black text-[#0b6fc2]">Пошук на сайті ↗</a>
+                      <a href={`https://www.agromat.ua/search/?q=${encodeURIComponent(row.query)}`} target="_blank" rel="noreferrer" className="rounded-md bg-[#edf6ff] px-2 py-1 text-[8px] font-black text-[#0b6fc2]">Пошук на сайті ↗</a>
                       {row.sheetRow ? <a href={`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=0&range=A${row.sheetRow}:C${row.sheetRow}`} target="_blank" rel="noreferrer" className="rounded-md bg-[#eaf7f1] px-2 py-1 text-[8px] font-black text-[#087a55]">Рядок {row.sheetRow} у Sheets ↗</a> : <span className="rounded-md bg-[#fff7e8] px-2 py-1 text-[8px] font-bold text-[#a56a0b]">Ще не в Sheets</span>}
                     </div>
                   </td>

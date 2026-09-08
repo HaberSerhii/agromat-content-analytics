@@ -7,7 +7,6 @@ import type {
   PromotionSalesDataset,
   PromotionSalesProductSummary,
   PromotionSalesPromotionSummary,
-  PromotionSalesStatus,
 } from "@/lib/promotion-sales-types";
 
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
@@ -16,10 +15,6 @@ const compactFmt = new Intl.NumberFormat("uk-UA", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
-const STATUS_OPTIONS: Array<{ value: PromotionSalesStatus; label: string }> = [
-  { value: "Повністю відвантажений", label: "Повністю відвантажено" },
-  { value: "відвантаження дозволено", label: "Відвантаження дозволено" },
-];
 
 function fmtMoney(value: number): string {
   return `${numberFmt.format(value)} грн`;
@@ -60,18 +55,28 @@ function currentMonthRange() {
   };
 }
 
-function previousMonthRange() {
-  const now = new Date();
-  return {
-    from: inputDate(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
-    to: inputDate(new Date(now.getFullYear(), now.getMonth(), 0)),
-  };
-}
-
 function shiftDate(value: string, days: number): string {
   const date = new Date(`${value}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function shiftYear(value: string, years: number): string {
+  const date = new Date(`${value}T12:00:00Z`);
+  const targetYear = date.getUTCFullYear() + years;
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const lastDay = new Date(Date.UTC(targetYear, month + 1, 0, 12)).getUTCDate();
+  return new Date(Date.UTC(targetYear, month, Math.min(day, lastDay), 12)).toISOString().slice(0, 10);
+}
+
+function shiftMonthRange(from: string, months: number) {
+  const date = new Date(`${from}T12:00:00Z`);
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const start = date.toISOString().slice(0, 10);
+  date.setUTCMonth(date.getUTCMonth() + 1, 0);
+  return { from: start, to: date.toISOString().slice(0, 10) };
 }
 
 function ProgressBar({ value, color }: { value: number; color: string }) {
@@ -150,6 +155,7 @@ function KpiCard({
 
 type DailyChartMeasure = "revenue" | "qty";
 type DailyChartSegment = "total" | "tile" | "plumbing";
+export type PromotionSalesView = "overview" | "promotions" | "brands" | "categories";
 
 function ChartToggle<T extends string>({
   value,
@@ -187,11 +193,13 @@ function ChartToggle<T extends string>({
 
 function DailySalesChart({
   daily,
+  yearAgoDaily,
   selectedPromotionCount,
   activeDate,
   onSelectDate,
 }: {
   daily: PromotionSalesDailySummary[];
+  yearAgoDaily?: PromotionSalesDailySummary[];
   selectedPromotionCount: number;
   activeDate: string | null;
   onSelectDate: (date: string) => void;
@@ -201,6 +209,7 @@ function DailySalesChart({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const color = segment === "tile" ? "#f59e0b" : segment === "plumbing" ? "#22c55e" : "#118dff";
   const values = daily.map((day) => day[segment][measure]);
+  const comparisonValues = (yearAgoDaily ?? []).map((day) => day[segment][measure]);
   const width = 1000;
   const height = 190;
   const left = 62;
@@ -209,14 +218,16 @@ function DailySalesChart({
   const bottom = 36;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const maxValue = Math.max(0, ...values);
+  const maxValue = Math.max(0, ...values, ...comparisonValues);
   const scaleMax = maxValue > 0 ? maxValue * 1.08 : 1;
   const xFor = (index: number) => daily.length <= 1
     ? left + plotWidth / 2
     : left + (index / (daily.length - 1)) * plotWidth;
   const yFor = (value: number) => top + plotHeight - (value / scaleMax) * plotHeight;
   const points = values.map((value, index) => ({ x: xFor(index), y: yFor(value), value }));
+  const comparisonPoints = comparisonValues.map((value, index) => ({ x: xFor(index), y: yFor(value), value }));
   const linePath = points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
+  const comparisonLinePath = comparisonPoints.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
   const areaPath = points.length
     ? `${linePath} L${points.at(-1)?.x},${top + plotHeight} L${points[0].x},${top + plotHeight} Z`
     : "";
@@ -225,6 +236,7 @@ function DailySalesChart({
     ? hoveredIndex == null ? activeIndex : Math.min(hoveredIndex, daily.length - 1)
     : -1;
   const selectedDay = selectedIndex >= 0 ? daily[selectedIndex] : null;
+  const selectedYearAgoDay = selectedIndex >= 0 ? yearAgoDaily?.[selectedIndex] ?? null : null;
   const selectedPoint = selectedIndex >= 0 ? points[selectedIndex] : null;
   const xLabelIndexes = Array.from(
     { length: Math.ceil(daily.length / 7) },
@@ -247,6 +259,7 @@ function DailySalesChart({
               ? `${selectedPromotionCount} обраних акцій · за датою продажу`
               : "Усі акційні пропозиції · за датою продажу"}
           </div>
+          {yearAgoDaily?.length ? <div className="mt-1 flex items-center gap-3 text-[10px] font-bold"><span style={{ color }}>● Поточний період</span><span style={{ color: "#f0763d" }}>┄ Минулий рік</span></div> : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <ChartToggle
@@ -309,6 +322,7 @@ function DailySalesChart({
             </text>
           ))}
           {areaPath && <path d={areaPath} fill="url(#promotion-sales-area)" pointerEvents="none" />}
+          {comparisonLinePath && <path d={comparisonLinePath} fill="none" stroke="#f0763d" strokeWidth="2.5" strokeDasharray="7 6" strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />}
           {linePath && <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />}
           {points.map((point, index) => {
             const active = daily[index].date === activeDate;
@@ -380,6 +394,16 @@ function DailySalesChart({
             <div className="mt-0.5 whitespace-nowrap text-sm font-black tabular-nums" style={{ color }}>
               {formatValue(selectedDay[segment][measure])}
             </div>
+            <div className="mt-1 space-y-0.5 text-[10px] tabular-nums" style={{ color: "var(--text-dim)" }}>
+              <div>{numberFmt.format(selectedDay[segment].docs)} замовлень</div>
+              <div>{numberFmt.format(selectedDay[segment].qty)} товарів</div>
+              <div>{fmtMoney(selectedDay[segment].revenue)}</div>
+            </div>
+            {selectedYearAgoDay && <div className="mt-2 border-t pt-1.5 text-[10px] tabular-nums" style={{ borderColor: "var(--border)", color: "#c85f31" }}>
+              <div className="font-bold">{fmtChartDate(selectedYearAgoDay.date)} · минулий рік</div>
+              <div>{numberFmt.format(selectedYearAgoDay[segment].docs)} зам. · {numberFmt.format(selectedYearAgoDay[segment].qty)} тов.</div>
+              <div className="font-bold">{fmtMoney(selectedYearAgoDay[segment].revenue)}</div>
+            </div>}
             <div className="mt-1 text-[9px]" style={{ color: "var(--text-dim)" }}>
               Натисніть, щоб відкрити аналіз дня
             </div>
@@ -444,7 +468,8 @@ function PromotionList({
         </button>
         <ProgressBar value={(item.revenue / maxRevenue) * 100} color="#118dff" />
         <div className="text-xs font-bold tabular-nums md:text-right" style={{ color: "var(--text)" }}>
-          {fmtMoney(item.revenue)}
+          <span className="block">{numberFmt.format(item.docs)} продажів</span>
+          <span className="mt-0.5 block text-[10px]" style={{ color: "var(--text-dim)" }}>{fmtMoney(item.revenue)}</span>
         </div>
         {item.publicUrl ? (
           <a
@@ -565,7 +590,7 @@ function MoneyRanking({
             </div>
             <ProgressBar value={(item.revenue / maxRevenue) * 100} color={color} />
             <div className="text-xs font-semibold tabular-nums md:text-right" style={{ color: "var(--text-dim)" }}>
-              {fmtMoney(item.revenue)}
+              {numberFmt.format(item.productCount)} товарів · {fmtMoney(item.revenue)}
             </div>
             <span className="text-center text-xs font-black" style={{ color }}>›</span>
           </button>
@@ -753,16 +778,21 @@ function SelectedPromotionProducts({
   );
 }
 
-export function PromotionSalesDashboard() {
+export function PromotionSalesDashboard({ view = "overview" }: { view?: PromotionSalesView }) {
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
+  const [rangeMode, setRangeMode] = useState<"month" | "day" | "custom">("month");
   const [selectedPromotionIdincs, setSelectedPromotionIdincs] = useState<number[]>([]);
+  const [promotionSearch, setPromotionSearch] = useState("");
+  const [promotionSegment, setPromotionSegment] = useState<"all" | "tile" | "plumbing">("all");
   const [selectedBucket, setSelectedBucket] = useState<{
     type: "brand" | "category";
     label: string;
   } | null>(null);
   const [data, setData] = useState<PromotionSalesDataset | null>(null);
+  const [yearAgoData, setYearAgoData] = useState<PromotionSalesDataset | null>(null);
+  const [catalogDeltas, setCatalogDeltas] = useState<{ promotions: number; products: number } | null>(null);
   const [selectedChartDate, setSelectedChartDate] = useState<string | null>(null);
   const [dayData, setDayData] = useState<PromotionSalesDataset | null>(null);
   const [dayLoading, setDayLoading] = useState(false);
@@ -814,6 +844,52 @@ export function PromotionSalesDashboard() {
       controller.abort();
     };
   }, [dateFrom, dateTo, selectedPromotionIdincs]);
+
+  useEffect(() => {
+    if (view !== "overview") return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      from: shiftYear(dateFrom, -1),
+      to: shiftYear(dateTo, -1),
+      compact: "1",
+    });
+    selectedPromotionIdincs.forEach((idinc) => params.append("promotion_idinc", String(idinc)));
+    fetch(`/api/promotions/sales?${params.toString()}`, { signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<PromotionSalesDataset> : null)
+      .then((payload) => setYearAgoData(payload))
+      .catch((reason: unknown) => {
+        if (!(reason instanceof DOMException && reason.name === "AbortError")) setYearAgoData(null);
+      });
+    return () => controller.abort();
+  }, [dateFrom, dateTo, selectedPromotionIdincs, view]);
+
+  useEffect(() => {
+    if (view !== "overview") return;
+    const controller = new AbortController();
+    fetch("/api/promotions/snapshots", { signal: controller.signal })
+      .then((response) => response.json())
+      .then(async (payload: { dates?: string[] }) => {
+        const dates = payload.dates ?? [];
+        if (dates.length < 2) return null;
+        const params = new URLSearchParams({
+          view: "compact",
+          from: dates.at(-2) ?? "",
+          to: dates.at(-1) ?? "",
+          page: "1",
+          limit: "1",
+        });
+        const response = await fetch(`/api/promotions/catalog?${params}`, { signal: controller.signal });
+        if (!response.ok) return null;
+        const catalog = await response.json() as { summary?: { newPromotions: number; disabledPromotions: number; addedProducts: number; deletedProducts: number } };
+        return catalog.summary ? {
+          promotions: catalog.summary.newPromotions - catalog.summary.disabledPromotions,
+          products: catalog.summary.addedProducts - catalog.summary.deletedProducts,
+        } : null;
+      })
+      .then((delta) => setCatalogDeltas(delta))
+      .catch(() => setCatalogDeltas(null));
+    return () => controller.abort();
+  }, [view]);
 
   useEffect(() => {
     setSelectedChartDate(null);
@@ -897,14 +973,22 @@ export function PromotionSalesDashboard() {
   }, [currentAnalysisData, dateFrom, dateTo, selectedBucket, selectedChartDate, selectedPromotionIdincs]);
 
   const changeFrom = (value: string) => {
+    setRangeMode("custom");
     setDateFrom(value);
     if (value > dateTo) setDateTo(value);
   };
   const changeTo = (value: string) => {
+    setRangeMode("custom");
     setDateTo(value);
     if (value < dateFrom) setDateFrom(value);
   };
   const shiftRange = (days: number) => {
+    if (rangeMode === "month") {
+      const range = shiftMonthRange(dateFrom, days);
+      setDateFrom(range.from);
+      setDateTo(range.to);
+      return;
+    }
     setDateFrom((current) => shiftDate(current, days));
     setDateTo((current) => shiftDate(current, days));
   };
@@ -955,6 +1039,12 @@ export function PromotionSalesDashboard() {
   const plan = data.summary.plan;
   const tilePlan = plan.segments.find((segment) => segment.segment === "Плитка");
   const plumbingPlan = plan.segments.find((segment) => segment.segment === "Сантехніка");
+  const visiblePromotions = analysisData?.summary.promotions.filter((promotion) => {
+    const query = promotionSearch.trim().toLocaleLowerCase("uk");
+    const matchesSearch = !query || `${promotion.id} ${promotion.idinc} ${promotion.name}`.toLocaleLowerCase("uk").includes(query);
+    const matchesSegment = promotionSegment === "all" || promotion.segments.includes(promotionSegment);
+    return matchesSearch && matchesSegment;
+  }) ?? [];
 
   return (
     <div className="space-y-4">
@@ -963,7 +1053,7 @@ export function PromotionSalesDashboard() {
           <div className="grid w-full grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_36px] items-end gap-2 md:w-auto">
           <button
             type="button"
-            aria-label="Попередній день"
+            aria-label={rangeMode === "month" ? "Попередній місяць" : "Попередній день"}
             onClick={() => shiftRange(-1)}
             className="h-9 w-9 rounded-lg border text-lg font-bold"
             style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text-mid)" }}
@@ -994,7 +1084,7 @@ export function PromotionSalesDashboard() {
           </label>
           <button
             type="button"
-            aria-label="Наступний день"
+            aria-label={rangeMode === "month" ? "Наступний місяць" : "Наступний день"}
             onClick={() => shiftRange(1)}
             className="h-9 w-9 rounded-lg border text-lg font-bold"
             style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text-mid)" }}
@@ -1008,6 +1098,7 @@ export function PromotionSalesDashboard() {
               const range = currentMonthRange();
               setDateFrom(range.from);
               setDateTo(range.to);
+              setRangeMode("month");
             }}
             className="h-9 flex-1 rounded-lg border px-3 text-xs font-bold sm:flex-none"
             style={{ borderColor: "#118dff", background: "#118dff", color: "#fff" }}
@@ -1016,16 +1107,14 @@ export function PromotionSalesDashboard() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              const range = previousMonthRange();
-              setDateFrom(range.from);
-              setDateTo(range.to);
-            }}
+            onClick={() => { const today = inputDate(new Date()); setDateFrom(today); setDateTo(today); setRangeMode("day"); }}
             className="h-9 flex-1 rounded-lg border px-3 text-xs font-bold sm:flex-none"
             style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}
           >
-            Минулий місяць
+            Сьогодні
           </button>
+          <button type="button" onClick={() => { const day = shiftDate(inputDate(new Date()), -1); setDateFrom(day); setDateTo(day); setRangeMode("day"); }} className="h-9 flex-1 rounded-lg border px-3 text-xs font-bold sm:flex-none" style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}>Вчора</button>
+          <button type="button" onClick={() => { const day = shiftDate(inputDate(new Date()), 1); setDateFrom(day); setDateTo(day); setRangeMode("day"); }} className="h-9 flex-1 rounded-lg border px-3 text-xs font-bold sm:flex-none" style={{ borderColor: "var(--border)", background: "var(--bg-input)", color: "var(--text)" }}>Завтра</button>
           <div className="ml-0 w-full text-left sm:ml-auto sm:w-auto sm:text-right">
             <div className="text-2xl font-black tabular-nums" style={{ color: "#118dff" }}>
               {numberFmt.format(data.summary.activePromotions)}
@@ -1042,7 +1131,7 @@ export function PromotionSalesDashboard() {
           {refreshing && <span className="text-xs" style={{ color: "#118dff" }}>Оновлення…</span>}
           {error && <span className="text-xs" style={{ color: "#b91c1c" }}>{error}</span>}
         </div>
-        {data.summary.publicPromotionGroups.length > 0 && (
+        {view === "overview" && data.summary.publicPromotionGroups.length > 0 && (
           <div className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }}>
             <div className="mb-2 text-[10px] font-bold uppercase" style={{ color: "var(--text-dim)" }}>
               Акції на сайті
@@ -1074,7 +1163,7 @@ export function PromotionSalesDashboard() {
             </div>
           </div>
         )}
-        {selectedPromotions.length > 0 && (
+        {view === "overview" && selectedPromotions.length > 0 && (
           <div className="mt-3 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: "#118dff44", background: "#118dff0d", color: "var(--text-mid)" }}>
             Обрано акцій: <b style={{ color: "var(--text)" }}>{selectedPromotions.length}</b>
             <span style={{ color: "var(--text-dim)" }}>
@@ -1084,14 +1173,15 @@ export function PromotionSalesDashboard() {
         )}
       </section>
 
-      <DailySalesChart
+      {view === "overview" && <DailySalesChart
         daily={data.summary.daily ?? []}
+        yearAgoDaily={yearAgoData?.summary.daily ?? []}
         selectedPromotionCount={selectedPromotions.length}
         activeDate={selectedChartDate}
         onSelectDate={selectChartDate}
-      />
+      />}
 
-      {selectedChartDate && (
+      {view === "overview" && selectedChartDate && (
         <section
           className="flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3"
           style={{ borderColor: "#118dff66", background: "#118dff0d" }}
@@ -1122,34 +1212,28 @@ export function PromotionSalesDashboard() {
 
       {analysisData && (<>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {view === "overview" && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <KpiCard
-          label="Акцій у діапазоні"
+          label="Активні акції на сайті"
           value={numberFmt.format(analysisData.summary.activePromotions)}
-          hint={`${numberFmt.format(analysisData.summary.productCount)} унікальних акційних товарів`}
+          hint={`${catalogDeltas ? `${catalogDeltas.promotions >= 0 ? "+" : ""}${numberFmt.format(catalogDeltas.promotions)} за останній день · ` : ""}актуальні у вибраному періоді`}
           color="#118dff"
+        />
+        <KpiCard
+          label="Унікальні товари в акціях"
+          value={numberFmt.format(analysisData.summary.productCount)}
+          hint={`${catalogDeltas ? `${catalogDeltas.products >= 0 ? "+" : ""}${numberFmt.format(catalogDeltas.products)} за останній день · ` : ""}без дублювання між акціями`}
+          color="#8b5cf6"
         />
         <KpiCard
           label="Продажі акційних товарів"
           value={fmtMoney(analysisData.summary.revenue)}
-          hint={selectedChartDate ? `за ${fmtChartDate(selectedChartDate)}` : selectedPromotions.length ? `${selectedPromotions.length} обраних акцій` : "усі акції у вибраному діапазоні"}
+          hint={`${numberFmt.format((analysisData.summary.daily ?? []).reduce((sum, day) => sum + day.total.qty, 0))} шт. · ${numberFmt.format(analysisData.summary.docs)} замовлень`}
           color="#22c55e"
         />
-        <KpiCard
-          label="Документів у продажах"
-          value={numberFmt.format(analysisData.summary.docs)}
-          hint="повністю відвантажені та з дозволеним відвантаженням"
-          color="#8b5cf6"
-        />
-        <KpiCard
-          label={`План місяця · ${plan.month}`}
-          value={fmtPct(plan.completionPct)}
-          hint={`${fmtMoney(plan.revenue)} з ${plan.plan ? fmtMoney(plan.plan) : "план не заданий"}`}
-          color="#f59e0b"
-        />
-      </div>
+      </div>}
 
-      <section className="rounded-xl border p-4" style={{ borderColor: "#118dff44", background: "linear-gradient(135deg, #118dff0a, #22c55e0a)" }}>
+      {view === "overview" && <section className="rounded-xl border p-4" style={{ borderColor: "#118dff44", background: "linear-gradient(135deg, #118dff0a, #22c55e0a)" }}>
         <div className="mb-3 text-xs font-bold uppercase" style={{ color: "var(--text-dim)" }}>
           План місяця · продажі акційних товарів · {plan.month}
         </div>
@@ -1176,16 +1260,30 @@ export function PromotionSalesDashboard() {
             color="#22c55e"
           />
         </div>
-      </section>
+      </section>}
 
-      <PromotionList
-        items={analysisData.summary.promotions}
+      {view === "promotions" && <section className="rounded-xl border p-3 sm:p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
+        <div className="grid gap-2 md:grid-cols-[minmax(240px,1fr)_auto] md:items-end">
+          <label>
+            <span className="mb-1 block text-[10px] font-bold uppercase" style={{ color: "var(--text-dim)" }}>Пошук акції P2</span>
+            <input value={promotionSearch} onChange={(event) => setPromotionSearch(event.target.value)} placeholder="ID або назва акції…" className="h-9 w-full rounded-lg border px-3 text-xs outline-none" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }} />
+          </label>
+          <ChartToggle value={promotionSegment} onChange={setPromotionSegment} options={[
+            { value: "all", label: "Усі" },
+            { value: "tile", label: "Плитка" },
+            { value: "plumbing", label: "Сантехніка" },
+          ]} />
+        </div>
+      </section>}
+
+      {view === "promotions" && <PromotionList
+        items={visiblePromotions}
         selectedIdincs={selectedPromotionIdincs}
         onToggle={togglePromotion}
         onClear={() => setSelectedPromotionIdincs([])}
-      />
+      />}
 
-      {(selectedChartDate || selectedPromotions.length > 0) && (
+      {view === "promotions" && selectedPromotions.length > 0 && (
         <SelectedPromotionProducts
           promotions={selectedPromotions}
           products={analysisData.summary.products}
@@ -1193,7 +1291,7 @@ export function PromotionSalesDashboard() {
         />
       )}
 
-      <MoneyRanking
+      {view === "brands" && <MoneyRanking
         title="Бренди"
         items={analysisData.summary.brands}
         color="#22c55e"
@@ -1202,9 +1300,9 @@ export function PromotionSalesDashboard() {
         onSelect={(label) => setSelectedBucket((current) => (
           current?.type === "brand" && current.label === label ? null : { type: "brand", label }
         ))}
-      />
+      />}
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      {view === "categories" && <div className="grid gap-4">
         <MoneyRanking
           title="Категорії"
           items={analysisData.summary.categories}
@@ -1215,31 +1313,9 @@ export function PromotionSalesDashboard() {
             current?.type === "category" && current.label === label ? null : { type: "category", label }
           ))}
         />
-        <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
-          <div className="mb-3 text-sm font-bold" style={{ color: "var(--text)" }}>Статуси документів</div>
-          <div className="space-y-3">
-            {analysisData.summary.states.map((state) => {
-              const option = STATUS_OPTIONS.find((item) => item.value === state.state);
-              return (
-                <div key={state.state} className="rounded-lg border p-3" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-bold" style={{ color: "var(--text)" }}>{option?.label ?? state.state}</div>
-                    <div className="text-sm font-black tabular-nums" style={{ color: "#118dff" }}>{fmtMoney(state.revenue)}</div>
-                  </div>
-                  <div className="mt-1 text-[11px]" style={{ color: "var(--text-dim)" }}>
-                    {numberFmt.format(state.docs)} документів
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-4 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: "#118dff33", background: "#118dff0a", color: "var(--text-dim)" }}>
-            У продажі та план входять повністю відвантажені документи й документи зі статусом «Відвантаження дозволено». Для повністю відвантажених перевіряються дата створення та дата повного відвантаження; для дозволених — дата створення. Усі дати мають входити у строк акції та вибраний календарний діапазон.
-          </div>
-        </section>
-      </div>
+      </div>}
 
-      {selectedBucket && (
+      {selectedBucket && ((view === "brands" && selectedBucket.type === "brand") || (view === "categories" && selectedBucket.type === "category")) && (
         <ProductSalesDetails
           type={selectedBucket.type}
           label={selectedBucket.label}

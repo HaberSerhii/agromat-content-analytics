@@ -418,6 +418,8 @@ export function PromotionWebFunnelDashboard({
   const [appliedCustomTo, setAppliedCustomTo] = useState(DEFAULT_CUSTOM_RANGE.to);
   const [channel, setChannel] = useState<WebFunnelChannel>("all");
   const [device, setDevice] = useState<WebFunnelDevice>("all");
+  const [utmSource, setUtmSource] = useState("");
+  const [utmCampaign, setUtmCampaign] = useState("");
   const [data, setData] = useState<PromotionWebFunnelResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -440,6 +442,8 @@ export function PromotionWebFunnelDashboard({
       params.set("from", appliedCustomFrom);
       params.set("to", appliedCustomTo);
     }
+    if (utmSource.trim()) params.set("utm_source", utmSource.trim());
+    if (utmCampaign.trim()) params.set("utm_campaign", utmCampaign.trim());
     setLoading(true);
     setError("");
     fetch(`/api/promotions/web-funnel?${params.toString()}`, {
@@ -459,7 +463,7 @@ export function PromotionWebFunnelDashboard({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [anchor, appliedCustomFrom, appliedCustomTo, appliedUrl, periodKind]);
+  }, [anchor, appliedCustomFrom, appliedCustomTo, appliedUrl, periodKind, utmCampaign, utmSource]);
 
   const applyUrl = (event: React.FormEvent) => {
     event.preventDefault();
@@ -587,6 +591,17 @@ export function PromotionWebFunnelDashboard({
               ))}
             </div>
           </div>
+        </div>
+
+        <div className="mt-3 grid gap-2 border-t pt-3 sm:grid-cols-2" style={{ borderColor: "var(--border)" }}>
+          <label>
+            <span className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>UTM source</span>
+            <input value={utmSource} onChange={(event) => { setUtmSource(event.target.value); setAnchor(""); }} placeholder="Усі джерела · або введіть source" className="h-9 w-full rounded-lg border px-3 text-xs outline-none" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }} />
+          </label>
+          <label>
+            <span className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>UTM campaign</span>
+            <input value={utmCampaign} onChange={(event) => { setUtmCampaign(event.target.value); setAnchor(""); }} placeholder="Усі кампанії · або введіть campaign" className="h-9 w-full rounded-lg border px-3 text-xs outline-none" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }} />
+          </label>
         </div>
 
         {data && (

@@ -10,6 +10,10 @@ import type {
   PromotionSalesPublicGroup,
 } from "@/lib/promotion-sales-types";
 import { canonicalSearchParams, getServerResult } from "@/lib/server-result-cache";
+import {
+  normalizePromotionPricePosition,
+  readPricePositionCodes,
+} from "@/lib/promotion-price-position";
 
 export const dynamic = "force-dynamic";
 
@@ -121,6 +125,7 @@ export async function GET(request: Request) {
     )];
     const compact = url.searchParams.get("compact") === "1";
     const productsView = url.searchParams.get("view") === "products";
+    const pricePosition = normalizePromotionPricePosition(url.searchParams.get("price_position"));
     const cacheKey = canonicalSearchParams(url.searchParams);
     const { value: json, status } = await getServerResult({
       namespace: "promotion-sales-json-v2",
@@ -130,10 +135,15 @@ export async function GET(request: Request) {
       load: async () => {
         const allPromotions = await fetchAllPromotions();
         const publicUrls = buildPublicUrls(allPromotions);
+        const positionCodes = await readPricePositionCodes(pricePosition);
         const promotions = allPromotions
           .filter((promotion) => !isBundlePromotion(promotion))
           .filter((promotion) => overlapsRange(promotion, from, to))
-          .map((promotion) => toPromotionInput(promotion, publicUrls));
+          .map((promotion) => toPromotionInput(promotion, publicUrls))
+          .map((promotion) => positionCodes
+            ? { ...promotion, productCodes: promotion.productCodes.filter((code) => positionCodes.has(code)) }
+            : promotion)
+          .filter((promotion) => promotion.productCodes.length > 0);
         const publicPromotionGroups = buildPublicGroups(
           allPromotions,
           new Set(promotions.map((promotion) => promotion.idinc)),
@@ -146,6 +156,7 @@ export async function GET(request: Request) {
           publicPromotionGroups,
           includeProducts: !compact || productsView,
         });
+        dataset.filter.pricePosition = pricePosition;
         return JSON.stringify(productsView
           ? { filter: dataset.filter, products: dataset.summary.products }
           : dataset);

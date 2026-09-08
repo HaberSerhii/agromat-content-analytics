@@ -9,15 +9,36 @@ import type {
   PromotionsCatalogResponse,
 } from "@/lib/promotions-types";
 import type { PromotionsKpiFilter } from "@/lib/promotions-catalog-query";
+import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
-type Section = "catalog" | "web" | "sales";
+type Section = "catalog" | "overview" | "marketing" | "p2" | "brands" | "categories" | "web";
 type SetFilter = Set<string> | null;
 type KpiFilter = PromotionsKpiFilter;
 
-const loadPromotionSalesDashboard = () => import("@/components/PromotionSalesDashboard")
-  .then((module) => module.PromotionSalesDashboard);
+const PROMOTION_VIEWS: Array<{ id: Exclude<Section, "catalog">; label: string; hint: string }> = [
+  { id: "overview", label: "Огляд", hint: "Продажі та динаміка" },
+  { id: "marketing", label: "Маркетингові кампанії", hint: "UTM та замовлення" },
+  { id: "p2", label: "Акції P2", hint: "Прогрес програм" },
+  { id: "brands", label: "Бренди", hint: "Акційні продажі" },
+  { id: "categories", label: "Категорії", hint: "Структура продажів" },
+  { id: "web", label: "Веб-метрики", hint: "Воронка GA4" },
+];
+
+const PROMOTION_VIEW_DESCRIPTIONS: Record<Exclude<Section, "catalog">, string> = {
+  overview: "Ключові показники акцій, динаміка продажів та порівняння з минулим роком.",
+  marketing: "Ефективність UTM-кампаній і фактичні замовлення, що надійшли із сайту.",
+  p2: "Прогрес кожної акційної програми P2 за товарами, продажами та періодом.",
+  brands: "Внесок брендів в акційний дохід із деталізацією до товару.",
+  categories: "Акційний дохід за категоріями з деталізацією до товару.",
+  web: "Шлях користувача від сеансу до замовлення з порівнянням періодів.",
+};
+
+const loadPromotionSalesDashboard = () => import("@/components/PromotionPerformanceDashboardV2")
+  .then((module) => module.PromotionPerformanceDashboardV2);
 const loadPromotionWebFunnelDashboard = () => import("@/components/PromotionWebFunnelDashboard")
   .then((module) => module.PromotionWebFunnelDashboard);
+const loadPromotionMarketingDashboard = () => import("@/components/PromotionMarketingDashboard")
+  .then((module) => module.PromotionMarketingDashboard);
 
 function SectionLoading({ label }: { label: string }) {
   return (
@@ -38,10 +59,15 @@ const PromotionWebFunnelDashboard = dynamic(loadPromotionWebFunnelDashboard, {
   ssr: false,
   loading: () => <SectionLoading label="веб-метрик" />,
 });
+const PromotionMarketingDashboard = dynamic(loadPromotionMarketingDashboard, {
+  ssr: false,
+  loading: () => <SectionLoading label="маркетингових кампаній" />,
+});
 
 function preloadSection(section: Section) {
-  if (section === "sales") void loadPromotionSalesDashboard();
+  if (["overview", "p2", "brands", "categories"].includes(section)) void loadPromotionSalesDashboard();
   if (section === "web") void loadPromotionWebFunnelDashboard();
+  if (section === "marketing") void loadPromotionMarketingDashboard();
 }
 
 const PAGE_SIZE = 100;
@@ -553,7 +579,8 @@ function SummaryCard({
 }
 
 export function PromotionsDashboard() {
-  const [section, setSection] = useState<Section>("catalog");
+  const [section, setSection] = useState<Section>("overview");
+  const [pricePosition, setPricePosition] = useState<PromotionPricePosition>("all");
   const [data, setData] = useState<PromotionsCatalogResponse | null>(null);
   const [historicalPromotions, setHistoricalPromotions] = useState<HistoricalPromotionLink[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -818,29 +845,112 @@ export function PromotionsDashboard() {
   const historyMaxDate = data?.historyMaxDate;
   const canShiftBack = Boolean(historyMinDate && dateFrom > historyMinDate);
   const canShiftForward = Boolean(historyMaxDate && dateTo < historyMaxDate);
+  const dashboardSection = section === "catalog" ? "overview" : section;
+  const activeView = PROMOTION_VIEWS.find((item) => item.id === dashboardSection) ?? PROMOTION_VIEWS[0];
 
   return (
-    <div className="space-y-3">
-      <div
+    <div className="promo-v2 min-h-[calc(100dvh-104px)] overflow-hidden rounded-2xl border border-[#dfe4ea] bg-[#f4f5f3] text-[#27313c] shadow-sm">
+      <div className="grid min-h-[calc(100dvh-104px)] grid-cols-1 lg:grid-cols-[224px_minmax(0,1fr)]">
+        <aside className="bg-[#17202a] px-3 py-5 text-white lg:min-h-full">
+          <div className="mb-7 flex items-center gap-3 px-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#118dff] text-lg font-black">A</span>
+            <div>
+              <div className="text-sm font-black tracking-[.12em]">АГРОМАТ</div>
+              <div className="text-[9px] font-semibold uppercase tracking-[.2em] text-[#91a0af]">Promo analytics</div>
+            </div>
+          </div>
+          <nav className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
+            {PROMOTION_VIEWS.map((item, index) => {
+              const active = dashboardSection === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSection(item.id)}
+                  onMouseEnter={() => preloadSection(item.id)}
+                  onFocus={() => preloadSection(item.id)}
+                  className="min-w-[190px] rounded-xl border-0 px-3 py-3 text-left transition lg:min-w-0"
+                  style={{ background: active ? "#25384d" : "transparent", boxShadow: active ? "inset 3px 0 #118dff" : "none" }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black" style={{ color: active ? "#fff" : "#82909e", background: active ? "#118dff" : "#222d38" }}>{index + 1}</span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold" style={{ color: active ? "#fff" : "#bac2ca" }}>{item.label}</div>
+                      <div className="mt-0.5 truncate text-[9px] text-[#758391]">{item.hint}</div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </nav>
+          <div className="mt-8 rounded-xl border border-[#304152] bg-[#1d2a36] p-3">
+            <div className="text-[9px] font-bold uppercase tracking-[.14em] text-[#7f90a0]">Джерела даних</div>
+            <div className="mt-2 text-[10px] font-bold leading-4 text-[#dce8f3]">P2 · Orders API · AWS S3 · GA4 / BigQuery</div>
+            <div className="mt-1 text-[9px] leading-4 text-[#8192a2]">Продажі та статуси оновлюються з поточних джерел аналітики.</div>
+          </div>
+        </aside>
+
+        <main className="min-w-0">
+          <header className="flex flex-col gap-3 border-b border-[#e1e4e8] bg-white px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="text-xs text-[#8b949e]">Аналіз акційних програм&nbsp; / &nbsp;<b className="text-[#27313c]">{activeView.label}</b></div>
+            <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">P2 + продажі + GA4</b></span>
+          </header>
+
+          <div className="p-4 sm:p-5 xl:p-6">
+            <section className="mb-5 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div>
+                <div className="mb-1 text-[10px] font-black uppercase tracking-[.2em] text-[#118dff]">Promotion intelligence</div>
+                <h1 className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">{activeView.label === "Огляд" ? <>Аналіз <span className="text-[#118dff]">акційних програм</span></> : <span className="text-[#118dff]">{activeView.label}</span>}</h1>
+                <p className="mt-1 text-xs text-[#737d87]">{PROMOTION_VIEW_DESCRIPTIONS[dashboardSection]}</p>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-xl border border-[#cfe3f5] bg-[#eef7ff] px-3 py-2 text-[10px] font-bold text-[#176aa8]"><span className="h-2 w-2 rounded-full bg-[#20a66a]" /> Актуальні дані</div>
+            </section>
+
+            {(["overview", "marketing", "p2", "brands", "categories"] as Section[]).includes(section) && (
+              <section className="mb-4 flex flex-col gap-3 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-[.13em] text-[#7c8792]">Цінова позиція акційних товарів</div>
+                  <div className="mt-1 text-[10px] text-[#8a949e]">Порівняння поточної ціни AGROMAT з мінімальною ціною серед знайдених конкурентів</div>
+                </div>
+                <div className="inline-flex self-start rounded-xl border border-[#d8dde3] bg-[#f2f5f7] p-1 lg:self-auto" role="group" aria-label="Фільтр за ціною конкурентів">
+                  {([
+                    ["all", "Усі товари"],
+                    ["lower", "АГРОМАТ — краща ціна"],
+                    ["higher", "АГРОМАТ — гірша ціна"],
+                  ] as Array<[PromotionPricePosition, string]>).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={pricePosition === value}
+                      onClick={() => setPricePosition(value)}
+                      className={`rounded-lg px-3 py-2 text-[10px] font-black transition ${pricePosition === value ? "bg-[#118dff] text-white shadow-sm" : "text-[#68737e] hover:bg-white"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+      {section === "catalog" && <div
         className="rounded-2xl border p-3 sm:p-5"
         style={{ background: "var(--bg-card)", borderColor: "#118dff44", boxShadow: "var(--shadow-sm)" }}
       >
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>
-            Акційні пропозиції. {section === "catalog"
-              ? "Каталог."
-              : section === "web"
-                ? "Веб-метрики."
-                : "Продажі."}
+            Аналіз акційних програм
           </div>
           <div
-            className="grid w-full grid-cols-3 gap-1 rounded-xl border p-0.5 lg:w-auto"
+            className="grid w-full grid-cols-2 gap-1 rounded-xl border p-1 sm:grid-cols-3 xl:w-auto xl:grid-cols-6"
             style={{ background: "var(--bg-input)", borderColor: "var(--border2)" }}
           >
             {([
-              ["catalog", "Аналіз каталогу", "Каталог"],
-              ["web", "Аналіз веб-метрик", "Веб-метрики"],
-              ["sales", "Аналіз продажів", "Продажі"],
+              ["overview", "Огляд", "Огляд"],
+              ["marketing", "Маркетингові кампанії", "Кампанії"],
+              ["p2", "Акції P2", "Акції P2"],
+              ["brands", "Бренди", "Бренди"],
+              ["categories", "Категорії", "Категорії"],
+              ["web", "Веб-метрики", "Веб"],
             ] as [Section, string, string][]).map(([value, label, shortLabel]) => (
               <button
                 key={value}
@@ -1082,7 +1192,7 @@ export function PromotionsDashboard() {
             </div>
           </>
         )}
-      </div>
+      </div>}
 
       {section === "web" && (
         <PromotionWebFunnelDashboard
@@ -1092,7 +1202,11 @@ export function PromotionsDashboard() {
           }))}
         />
       )}
-      {section === "sales" && <PromotionSalesDashboard />}
+      {section === "marketing" && <PromotionMarketingDashboard pricePosition={pricePosition} />}
+      {section === "overview" && <PromotionSalesDashboard view="overview" pricePosition={pricePosition} />}
+      {section === "p2" && <PromotionSalesDashboard view="promotions" pricePosition={pricePosition} />}
+      {section === "brands" && <PromotionSalesDashboard view="brands" pricePosition={pricePosition} />}
+      {section === "categories" && <PromotionSalesDashboard view="categories" pricePosition={pricePosition} />}
 
       {section === "catalog" && (
         <div
@@ -1586,6 +1700,9 @@ export function PromotionsDashboard() {
           )}
         </div>
       )}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

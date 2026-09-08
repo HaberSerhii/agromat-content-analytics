@@ -15,6 +15,7 @@ export type PromotionSalesPromotionInput = {
 export type PromotionSalesBucket = {
   label: string;
   revenue: number;
+  productCount: number;
 };
 
 export type PromotionSalesDailySummary = {
@@ -22,14 +23,17 @@ export type PromotionSalesDailySummary = {
   total: {
     revenue: number;
     qty: number;
+    docs: number;
   };
   tile: {
     revenue: number;
     qty: number;
+    docs: number;
   };
   plumbing: {
     revenue: number;
     qty: number;
+    docs: number;
   };
 };
 
@@ -61,6 +65,7 @@ export type PromotionSalesPromotionSummary = {
   docs: number;
   revenue: number;
   publicUrl: string | null;
+  segments: Array<"tile" | "plumbing">;
 };
 
 export type PromotionSalesDataset = {
@@ -68,6 +73,7 @@ export type PromotionSalesDataset = {
     from: string;
     to: string;
     selectedPromotionIdincs: number[];
+    pricePosition?: "all" | "lower" | "higher";
   };
   summary: {
     dataThrough: string | null;

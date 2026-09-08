@@ -100,6 +100,20 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   else
     echo "  PROMOTIONS_SNAPSHOT_DIR not set — using app-local data/promotion-snapshots"
   fi
+  PRICE_POSITION_DIR="${PRICE_POSITION_SNAPSHOT_DIR:-}"
+  if [ -z "$PRICE_POSITION_DIR" ] && [ -f ".env" ]; then
+    PRICE_POSITION_DIR=$(awk -F= '/^PRICE_POSITION_SNAPSHOT_DIR=/{print substr($0, index($0, "=") + 1)}' .env | tail -1)
+  fi
+  if [ -z "$PRICE_POSITION_DIR" ] && [ -n "$SNAPSHOT_DIR" ]; then
+    PRICE_POSITION_DIR="$(dirname "$SNAPSHOT_DIR")/price-position-snapshots"
+  fi
+  if [ -n "$PRICE_POSITION_DIR" ]; then
+    mkdir -p "$PRICE_POSITION_DIR"
+    export PRICE_POSITION_SNAPSHOT_DIR="$PRICE_POSITION_DIR"
+    echo "  price-position snapshot dir: $PRICE_POSITION_DIR"
+  else
+    echo "  PRICE_POSITION_SNAPSHOT_DIR not set — using app-local data/price-position-snapshots"
+  fi
   BIGQUERY_CACHE_DIR="${BIGQUERY_RESULT_CACHE_DIR:-}"
   if [ -z "$BIGQUERY_CACHE_DIR" ] && [ -f ".env" ]; then
     BIGQUERY_CACHE_DIR=$(awk -F= '/^BIGQUERY_RESULT_CACHE_DIR=/{print substr($0, index($0, "=") + 1)}' .env | tail -1)
@@ -161,6 +175,13 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   chmod +x "$APP_DIR/scripts/prewarm-dashboard-cache.sh"
   DASHBOARD_PREWARM_CRON_LINE="19 * * * * APP_DIR=$APP_DIR APP_PORT=$APP_PORT DASHBOARD_PREWARM_LOG=$DASHBOARD_PREWARM_LOG $APP_DIR/scripts/prewarm-dashboard-cache.sh"
   echo "$DASHBOARD_PREWARM_CRON_LINE" >> "$TMP_CRON"
+  PRICE_POSITION_SNAPSHOT_LOG="${PRICE_POSITION_SNAPSHOT_LOG:-/var/log/agromat-price-position-snapshot.log}"
+  touch "$PRICE_POSITION_SNAPSHOT_LOG" 2>/dev/null || true
+  chmod +x "$APP_DIR/scripts/run-price-position-snapshot.sh"
+  sed -i.bak -e '/run-price-position-snapshot\.sh/d' "$TMP_CRON"
+  rm -f "$TMP_CRON.bak"
+  PRICE_POSITION_SNAPSHOT_CRON_LINE="50 23 * * * APP_DIR=$APP_DIR APP_PORT=$APP_PORT PRICE_POSITION_SNAPSHOT_LOG=$PRICE_POSITION_SNAPSHOT_LOG $APP_DIR/scripts/run-price-position-snapshot.sh"
+  echo "$PRICE_POSITION_SNAPSHOT_CRON_LINE" >> "$TMP_CRON"
   CONTENT_REVIEW_LOG="${CONTENT_REVIEW_LOG:-/tmp/agromat-content-review.log}"
   touch "$CONTENT_REVIEW_LOG" 2>/dev/null || true
   chmod +x "$APP_DIR/scripts/run-content-review-check.sh"
@@ -173,6 +194,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   echo "  cron: $AGROMAT_PRICE_CRON_LINE"
   echo "  tile cron: $SIMPLE_PRICE_CRON_LINE"
   echo "  dashboard prewarm cron: $DASHBOARD_PREWARM_CRON_LINE"
+  echo "  price-position snapshot cron: $PRICE_POSITION_SNAPSHOT_CRON_LINE"
   echo "  content review cron: $CONTENT_REVIEW_CRON_LINE"
 
   CURRENT_STEP="deploy companion Agromat_Parcer"
