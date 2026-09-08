@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getServerResult } from "@/lib/server-result-cache";
 import { readSalesWebshopReturnLookup, type SalesWebshopReturnInfo } from "@/lib/sales-s3";
 import { webshopFinalStatus } from "@/lib/sales-webshop-status";
+import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
+import { orderInDateRange, ordersApiEndDate } from "@/lib/orders-date-range";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +71,6 @@ type ApiResponse = {
   meta: { total: number; page: number; per_page: number; total_pages: number; movements_included: boolean };
 };
 
-const DAILY_CACHE_TTL_MS = 26 * 60 * 60 * 1000;
 const DETAIL_PAGE_SIZE = 50;
 
 type PaymentFilter = "all" | "cash" | "bank" | "online_full" | "online_parts";
@@ -98,8 +99,7 @@ async function fetchOrders(params: URLSearchParams) {
   // The trailing slash is required: the upstream redirect from /orders drops query parameters.
   const response = await fetch(`${baseUrl}/orders/?${params.toString()}`, {
     headers: { Accept: "application/json", "X-API-Key": apiKey },
-    cache: "force-cache",
-    next: { revalidate: 24 * 60 * 60 },
+    cache: "no-store",
   });
   const payload = await response.json().catch(() => null) as ApiResponse | { message?: string; error?: string } | null;
   if (!response.ok || !payload || !("data" in payload)) {
@@ -201,7 +201,7 @@ function cacheDayInKyiv() {
 
 function applyOrderFilters(params: URLSearchParams, dateFrom: string, dateTo: string, synced: string | null) {
   if (dateFrom) params.set("date_from", dateFrom);
-  if (dateTo) params.set("date_to", dateTo);
+  if (dateTo) params.set("date_to", ordersApiEndDate(dateTo));
   if (synced === "true" || synced === "false") params.set("synced", synced);
 }
 
@@ -213,7 +213,7 @@ async function fetchCompleteOrders(dateFrom: string, dateTo: string, synced: str
   orders.push(...first.data);
 
   // P2 movements are available only for pages up to 50 rows. Load a few pages
-  // concurrently and cache the completed dataset for the whole Kyiv day.
+  // concurrently and cache the completed dataset for the refresh interval.
   for (let startPage = 2; startPage <= first.meta.total_pages; startPage += 6) {
     const requests: Array<Promise<ApiResponse>> = [];
     for (let page = startPage; page < Math.min(startPage + 6, first.meta.total_pages + 1); page += 1) {
@@ -225,7 +225,7 @@ async function fetchCompleteOrders(dateFrom: string, dateTo: string, synced: str
     responses.forEach((response) => orders.push(...response.data));
   }
 
-  return orders;
+  return orders.filter((order) => orderInDateRange(order.date, dateFrom, dateTo));
 }
 
 function summarizeOrders(orders: ApiOrder[]) {
@@ -250,9 +250,9 @@ export async function GET(req: Request) {
     if (orderId && /^\d+$/.test(orderId)) {
       const params = new URLSearchParams({ search: orderId, per_page: "50", with_movements: "true" });
       const detailResult = await getServerResult({
-        namespace: "webshop-order-detail-daily",
+        namespace: "webshop-order-detail-15m-v1",
         key: `${cacheDayInKyiv()}|${orderId}`,
-        ttlMs: DAILY_CACHE_TTL_MS,
+        ttlMs: SALES_AUTO_REFRESH_MS,
         maxEntries: 256,
         load: () => fetchOrders(params),
       });
@@ -262,7 +262,7 @@ export async function GET(req: Request) {
       const order = rawOrder ? enrichOrder(rawOrder, returnLookup, returnedWebshopIds) : null;
       if (!order) return NextResponse.json({ error: "Замовлення не знайдено" }, { status: 404 });
       return NextResponse.json({ data: order }, {
-        headers: { "Cache-Control": "private, max-age=300, stale-while-revalidate=3600", "X-Agromat-Cache": detailResult.status },
+        headers: { "Cache-Control": "private, no-store", "X-Agromat-Cache": detailResult.status },
       });
     }
 
@@ -273,9 +273,9 @@ export async function GET(req: Request) {
 
     const scopeKey = `${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}|${synced || "all"}`;
     const ordersResult = await getServerResult({
-      namespace: "webshop-orders-dataset-with-p2-daily-v1",
+      namespace: "webshop-orders-dataset-with-p2-15m-v2",
       key: scopeKey,
-      ttlMs: DAILY_CACHE_TTL_MS,
+      ttlMs: SALES_AUTO_REFRESH_MS,
       maxEntries: 16,
       load: () => fetchCompleteOrders(dateFrom, dateTo, synced),
     });
@@ -314,7 +314,7 @@ export async function GET(req: Request) {
       summary,
     }, {
       headers: {
-        "Cache-Control": "private, max-age=300, stale-while-revalidate=3600",
+        "Cache-Control": "private, no-store",
         "X-Agromat-Cache": ordersResult.status,
       },
     });

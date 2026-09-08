@@ -5,6 +5,7 @@ import {
   type SalesDateFilter,
 } from "@/lib/sales-s3";
 import { getServerResult } from "@/lib/server-result-cache";
+import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -35,9 +36,9 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean) {
         : filter.statuses || "",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-json-v8",
+      namespace: "sales-json-v9",
       key,
-      ttlMs: compact ? 20 * 60_000 : 5 * 60_000,
+      ttlMs: compact ? SALES_AUTO_REFRESH_MS : 5 * 60_000,
       maxEntries: 16,
       load: async () => {
         const dataset = await readSalesDataset(filter, {
@@ -49,7 +50,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean) {
     return new NextResponse(json, {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "private, max-age=60, stale-while-revalidate=600",
+        "Cache-Control": "private, no-store",
         "X-Agromat-Cache": status,
       },
     });

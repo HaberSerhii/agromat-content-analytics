@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { POST as parserPricesPost } from "@/app/api/parser/prices/route";
+import { isWaffleDotActive, waffleActiveDotCount } from "@/lib/waffle-grid";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -266,9 +267,9 @@ function buildPdfHtml(
   }).sort((a, b) => b.matches - a.matches);
 
   const dotGrid = (share: number) => {
-    const active = Math.max(0, Math.min(100, Math.round(share * 100)));
+    const active = waffleActiveDotCount(share);
     return `<div class="dot-grid">${Array.from({ length: 100 }, (_, index) =>
-      `<i class="${index >= 100 - active ? "active" : ""}"></i>`).join("")}</div>`;
+      `<i class="${isWaffleDotActive(index, active) ? "active" : ""}"></i>`).join("")}</div>`;
   };
 
   const distribution = (items: ReportRow[]) => {

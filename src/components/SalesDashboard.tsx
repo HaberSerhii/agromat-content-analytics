@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 
 type SalesRow = {
   docsRef: string;
@@ -814,11 +815,21 @@ function yearToDateRange() {
 }
 
 function currentMonthRange() {
-  const now = new Date();
+  const today = kyivToday();
   return {
-    from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`,
-    to: toInputDate(now),
+    from: `${today.slice(0, 7)}-01`,
+    to: today,
   };
+}
+
+function kyivToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Kyiv", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+function shiftDay(day: string, offset: number) {
+  const date = new Date(`${day}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
 }
 
 function previousMonthRange() {
@@ -1376,6 +1387,7 @@ export function SalesDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [categoryProducts, setCategoryProducts] = useState<Record<string, CategoryProductSummary[]>>({});
   const [loadingCategory, setLoadingCategory] = useState<string | null>(null);
@@ -1388,6 +1400,36 @@ export function SalesDashboard() {
   const [selectedDocumentSegment, setSelectedDocumentSegment] = useState<DocumentSegment>("Усі");
   const hasLoadedRef = useRef(false);
   const webshopScopeRef = useRef("");
+  const liveCurrentMonthRef = useRef(true);
+
+  useEffect(() => {
+    let lastRefreshAt = Date.now();
+    const refresh = () => {
+      if (liveCurrentMonthRef.current) {
+        const range = currentMonthRange();
+        setDateFrom(range.from);
+        setDateTo(range.to);
+      }
+      lastRefreshAt = Date.now();
+      setRefreshTick((current) => current + 1);
+    };
+    const interval = window.setInterval(refresh, SALES_AUTO_REFRESH_MS);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastRefreshAt >= SALES_AUTO_REFRESH_MS) {
+        refresh();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
+
+  useEffect(() => {
+    setCategoryProducts({});
+    setBrandProducts({});
+  }, [dateFrom, dateTo, selectedStatuses, refreshTick]);
 
   useEffect(() => {
     let alive = true;
@@ -1397,12 +1439,8 @@ export function SalesDashboard() {
     } else {
       setLoading(true);
     }
-    setExpandedCategory(null);
-    setCategoryProducts({});
     setLoadingCategory(null);
     setCategoryError(null);
-    setExpandedBrand(null);
-    setBrandProducts({});
     setLoadingBrand(null);
     setBrandError(null);
     const params = new URLSearchParams();
@@ -1438,7 +1476,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, selectedStatuses]);
+  }, [dateFrom, dateTo, selectedStatuses, refreshTick]);
 
   useEffect(() => {
     if (!compareWithPreviousYear || !dateFrom || !dateTo) {
@@ -1475,7 +1513,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses]);
+  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, refreshTick]);
 
   useEffect(() => {
     if (view !== "webshop") return;
@@ -1515,7 +1553,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopSyncFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter]);
+  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopSyncFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, refreshTick]);
 
   useEffect(() => {
     const category = expandedCategory;
@@ -1626,7 +1664,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, view]);
+  }, [dateFrom, dateTo, view, refreshTick]);
   useEffect(() => {
     if (!data || !expandedCategory) return;
     if (!data.summary.categories.some((item) => item.label === expandedCategory)) {
@@ -1670,23 +1708,42 @@ export function SalesDashboard() {
   const planPct = plan.completionPct ?? 0;
   const forecastPct = plan.forecastCompletionPct ?? null;
   const statusLabel = selectedStatuses.length ? selectedStatuses.map(fmtStatusLabel).join(", ") : "усіх статусів";
+  const today = kyivToday();
+  const dayAnchor = dateTo && dateTo <= today ? dateTo : today;
+  const selectDay = (day: string) => {
+    liveCurrentMonthRef.current = false;
+    setDateFrom(day);
+    setDateTo(day);
+    setWebshopOrdersPage(1);
+  };
   const applyCurrentMonth = () => {
     const range = currentMonthRange();
+    liveCurrentMonthRef.current = true;
     setDateFrom(range.from);
     setDateTo(range.to);
     setWebshopOrdersPage(1);
   };
   const applyPreviousMonth = () => {
     const range = previousMonthRange();
+    liveCurrentMonthRef.current = false;
     setDateFrom(range.from);
     setDateTo(range.to);
     setWebshopOrdersPage(1);
   };
   const applyAllPeriod = () => {
+    liveCurrentMonthRef.current = false;
     setDateFrom("");
     setDateTo("");
     setCompareWithPreviousYear(false);
     setWebshopOrdersPage(1);
+  };
+  const refreshNow = () => {
+    if (liveCurrentMonthRef.current) {
+      const range = currentMonthRange();
+      setDateFrom(range.from);
+      setDateTo(range.to);
+    }
+    setRefreshTick((current) => current + 1);
   };
   const toggleStatus = (status: string) => {
     setSelectedStatuses((current) => (
@@ -1767,7 +1824,7 @@ export function SalesDashboard() {
           <div className="mt-8 rounded-xl border border-[#304152] bg-[#1d2a36] p-3">
             <div className="text-[9px] font-bold uppercase tracking-[.14em] text-[#7f90a0]">Поточний фільтр</div>
             <div className="mt-2 text-[10px] font-bold leading-4 text-[#dce8f3]">{data.filter.label}</div>
-            <div className="mt-1 text-[9px] leading-4 text-[#8192a2]">Дані продажів оновлюються з облікової системи щодня.</div>
+            <div className="mt-1 text-[9px] leading-4 text-[#8192a2]">Дашборд перевіряє нові дані та статуси кожні 15 хвилин.</div>
           </div>
         </aside>
 
@@ -1776,6 +1833,7 @@ export function SalesDashboard() {
             <div className="text-xs text-[#8b949e]">Аналіз продажів&nbsp; / &nbsp;<b className="text-[#27313c]">{activeView.label}</b></div>
             <div className="flex flex-wrap items-center gap-2">
               {refreshing && <span className="rounded-lg bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2]">Оновлення…</span>}
+              <button type="button" onClick={refreshNow} disabled={refreshing || webshopOrdersLoading} className="rounded-lg border border-[#cfe3f5] bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2] disabled:cursor-wait disabled:opacity-60">Оновити зараз</button>
               <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">{view === "webshop" ? "Orders API + P2" : "облікова система + GA4"}</b></span>
             </div>
           </header>
@@ -1798,13 +1856,18 @@ export function SalesDashboard() {
               <div className="flex flex-wrap items-end gap-2">
                 <label className="min-w-[150px] flex-1 sm:max-w-[190px]">
                   <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата від</span>
-                  <input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
+                  <input type="date" value={dateFrom} onChange={(event) => { liveCurrentMonthRef.current = false; setDateFrom(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
                 </label>
                 <label className="min-w-[150px] flex-1 sm:max-w-[190px]">
                   <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата до</span>
-                  <input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
+                  <input type="date" value={dateTo} onChange={(event) => { liveCurrentMonthRef.current = false; setDateTo(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
                 </label>
                 <button type="button" onClick={applyCurrentMonth} className="h-9 rounded-lg border-0 bg-[#118dff] px-3 text-[10px] font-bold text-white">Поточний місяць</button>
+                <div className="flex items-center gap-1" aria-label="Перегляд за днями">
+                  <button type="button" title="Попередній день" aria-label="Попередній день" onClick={() => selectDay(shiftDay(dayAnchor, -1))} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-sm font-bold text-[#586572]">←</button>
+                  <button type="button" onClick={() => selectDay(today)} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Сьогодні</button>
+                  <button type="button" title="Наступний день" aria-label="Наступний день" disabled={dayAnchor >= today} onClick={() => selectDay(shiftDay(dayAnchor, 1))} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-sm font-bold text-[#586572] disabled:cursor-not-allowed disabled:opacity-35">→</button>
+                </div>
                 <button type="button" onClick={applyPreviousMonth} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Минулий місяць</button>
                 <button type="button" onClick={applyAllPeriod} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Весь період</button>
                 {view !== "webshop" && <button
