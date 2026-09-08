@@ -263,7 +263,9 @@ type SalesWebshopOrder = {
   return_info?: { webshopId: string; docsRef: string; number: string; returnSum: number; returnGoodsCodes: string[] } | null;
 };
 
+type UtmOption = { value: string; label: string; count: number };
 type SalesWebshopOrdersDataset = {
+  utm?: { sources: UtmOption[]; campaigns: UtmOption[] };
   data: SalesWebshopOrder[];
   meta: { total: number; page: number; per_page: number; total_pages: number; movements_included: boolean };
   summary: {
@@ -1225,7 +1227,7 @@ function DistributionList({ title, rows, label, selectedKey, onSelect, totalOver
   );
 }
 
-function WebshopOrdersRegister({ dataset, loading, error, page, syncFilter, paymentFilter, deliveryFilter, statusFilter, onPageChange, onSyncFilterChange, onPaymentFilterChange, onDeliveryFilterChange, onStatusFilterChange }: { dataset: SalesWebshopOrdersDataset | null; loading: boolean; error: string | null; page: number; syncFilter: WebshopSyncFilter; paymentFilter: WebshopPaymentFilter; deliveryFilter: WebshopDeliveryFilter; statusFilter: string; onPageChange: (page: number) => void; onSyncFilterChange: (filter: WebshopSyncFilter) => void; onPaymentFilterChange: (filter: WebshopPaymentFilter) => void; onDeliveryFilterChange: (filter: WebshopDeliveryFilter) => void; onStatusFilterChange: (filter: string) => void }) {
+function WebshopOrdersRegister({ dataset, loading, error, page, syncFilter, paymentFilter, deliveryFilter, statusFilter, utmSource, utmCampaign, onUtmSourceChange, onUtmCampaignChange, onPageChange, onSyncFilterChange, onPaymentFilterChange, onDeliveryFilterChange, onStatusFilterChange }: { dataset: SalesWebshopOrdersDataset | null; loading: boolean; error: string | null; page: number; syncFilter: WebshopSyncFilter; paymentFilter: WebshopPaymentFilter; deliveryFilter: WebshopDeliveryFilter; statusFilter: string; utmSource: string; utmCampaign: string; onUtmSourceChange: (value: string) => void; onUtmCampaignChange: (value: string) => void; onPageChange: (page: number) => void; onSyncFilterChange: (filter: WebshopSyncFilter) => void; onPaymentFilterChange: (filter: WebshopPaymentFilter) => void; onDeliveryFilterChange: (filter: WebshopDeliveryFilter) => void; onStatusFilterChange: (filter: string) => void }) {
   const [query, setQuery] = useState("");
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<{ item: SalesWebshopOrderItem; orderId: number } | null>(null);
@@ -1267,7 +1269,14 @@ function WebshopOrdersRegister({ dataset, loading, error, page, syncFilter, paym
       <section className="grid gap-3 rounded-xl border border-[#dfe4ea] bg-white p-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_auto]">
         <label><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Спосіб оплати</span><select value={paymentFilter} onChange={(event) => onPaymentFilterChange(event.target.value as WebshopPaymentFilter)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] font-bold text-[#52606d] outline-none focus:border-[#118dff]"><option value="all">Усі способи оплати</option><option value="online_full">Онлайн · повна оплата</option><option value="online_parts">Оплата частинами</option><option value="cash">Готівка</option><option value="bank">Безготівкова</option></select></label>
         <label><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Спосіб доставки</span><select value={deliveryFilter} onChange={(event) => onDeliveryFilterChange(event.target.value as WebshopDeliveryFilter)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] font-bold text-[#52606d] outline-none focus:border-[#118dff]"><option value="all">Усі способи доставки</option><option value="npDepartment">Нова пошта · відділення</option><option value="npCourier">Нова пошта · кур&apos;єр</option><option value="agrWarehouse">Самовивіз AGROMAT</option><option value="agrCity">Доставка AGROMAT · місто</option><option value="agrUkraine">Доставка AGROMAT · Україна</option></select></label>
-        <button type="button" disabled={paymentFilter === "all" && deliveryFilter === "all" && statusFilter === "all"} onClick={() => { onPaymentFilterChange("all"); onDeliveryFilterChange("all"); onStatusFilterChange("all"); }} className="h-9 self-end rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-4 text-[10px] font-bold text-[#586572] disabled:opacity-40">Скинути фільтри</button>
+        <button type="button" disabled={paymentFilter === "all" && deliveryFilter === "all" && statusFilter === "all" && !utmSource && !utmCampaign} onClick={() => { onPaymentFilterChange("all"); onDeliveryFilterChange("all"); onStatusFilterChange("all"); onUtmSourceChange(""); onUtmCampaignChange(""); }} className="h-9 self-end rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-4 text-[10px] font-bold text-[#586572] disabled:opacity-40">Скинути фільтри</button>
+      </section>
+
+      <section className="grid gap-3 rounded-xl border border-[#dfe4ea] bg-white p-4 sm:grid-cols-2" aria-label="UTM-фільтри">
+        {([
+          { label: "UTM Source · джерело", value: utmSource, options: dataset?.utm?.sources || [], change: onUtmSourceChange },
+          { label: "UTM Campaign · кампанія", value: utmCampaign, options: dataset?.utm?.campaigns || [], change: onUtmCampaignChange },
+        ]).map((field) => <label key={field.label}><span className="mb-1 block text-[9px] font-black uppercase text-[#84909b]">{field.label}</span><select value={field.value} onChange={(event) => field.change(event.target.value)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] text-[#52606d]"><option value="">Усі</option>{field.value && !field.options.some((option) => option.value === field.value) && <option value={field.value}>{field.value === "missing" ? "Без UTM" : field.value.slice(6)} · 0</option>}{field.options.map((option) => <option key={option.value} value={option.value}>{option.label} · {option.count}</option>)}</select></label>)}
       </section>
 
       <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
@@ -1384,6 +1393,8 @@ export function SalesDashboard() {
   const [webshopPaymentFilter, setWebshopPaymentFilter] = useState<WebshopPaymentFilter>("all");
   const [webshopDeliveryFilter, setWebshopDeliveryFilter] = useState<WebshopDeliveryFilter>("all");
   const [webshopStatusFilter, setWebshopStatusFilter] = useState("all");
+  const [utmSource, setUtmSource] = useState("");
+  const [utmCampaign, setUtmCampaign] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1526,7 +1537,9 @@ export function SalesDashboard() {
     if (webshopPaymentFilter !== "all") params.set("payment", webshopPaymentFilter);
     if (webshopDeliveryFilter !== "all") params.set("delivery", webshopDeliveryFilter);
     if (webshopStatusFilter !== "all") params.set("order_status", webshopStatusFilter);
-    const scopeKey = `${dateFrom}|${dateTo}|${webshopSyncFilter}|${webshopPaymentFilter}|${webshopDeliveryFilter}|${webshopStatusFilter}`;
+    if (utmSource) params.set("utm_source", utmSource);
+    if (utmCampaign) params.set("utm_campaign", utmCampaign);
+    const scopeKey = `${dateFrom}|${dateTo}|${webshopSyncFilter}|${webshopPaymentFilter}|${webshopDeliveryFilter}|${webshopStatusFilter}|${utmSource}|${utmCampaign}`;
     if (webshopScopeRef.current !== scopeKey) {
       webshopScopeRef.current = scopeKey;
       setWebshopOrders(null);
@@ -1553,7 +1566,7 @@ export function SalesDashboard() {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopSyncFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, refreshTick]);
+  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopSyncFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick]);
 
   useEffect(() => {
     const category = expandedCategory;
@@ -1932,7 +1945,7 @@ export function SalesDashboard() {
               </div>
             )}
 
-            {view === "webshop" && <WebshopOrdersRegister dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
+            {view === "webshop" && <WebshopOrdersRegister dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} utmSource={utmSource} utmCampaign={utmCampaign} onUtmSourceChange={(value) => { setUtmSource(value); setWebshopOrdersPage(1); }} onUtmCampaignChange={(value) => { setUtmCampaign(value); setWebshopOrdersPage(1); }} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
 
             {view === "web" && (
               <div className="space-y-4">

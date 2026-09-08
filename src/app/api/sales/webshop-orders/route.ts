@@ -4,6 +4,7 @@ import { readSalesWebshopReturnLookup, type SalesWebshopReturnInfo } from "@/lib
 import { webshopFinalStatus } from "@/lib/sales-webshop-status";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import { orderInDateRange, ordersApiEndDate } from "@/lib/orders-date-range";
+import { matchesUtm, utmOptions } from "@/lib/orders-utm";
 
 export const dynamic = "force-dynamic";
 
@@ -270,6 +271,8 @@ export async function GET(req: Request) {
     const payment: PaymentFilter = isPaymentFilter(requestedPayment) ? requestedPayment : "all";
     const delivery = url.searchParams.get("delivery") || "all";
     const orderStatus = url.searchParams.get("order_status") || "all";
+    const utmSource = url.searchParams.get("utm_source") || "";
+    const utmCampaign = url.searchParams.get("utm_campaign") || "";
 
     const scopeKey = `${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}|${synced || "all"}`;
     const ordersResult = await getServerResult({
@@ -281,7 +284,17 @@ export async function GET(req: Request) {
     });
     const returnLookup = await readSalesWebshopReturnLookup();
     const returnedWebshopIds = new Set(returnLookup.keys());
-    const enrichedOrders = ordersResult.value.map((order) => enrichOrder(order, returnLookup, returnedWebshopIds));
+    const allOrders = ordersResult.value.map((order) => enrichOrder(order, returnLookup, returnedWebshopIds));
+    const facetOrders = allOrders.filter((order) => (
+      (payment === "all" || paymentCategory(order) === payment)
+      && (delivery === "all" || order.delivery?.type === delivery)
+      && (orderStatus === "all" || fulfillmentStatus(order) === orderStatus)
+    ));
+    const utm = {
+      sources: utmOptions(facetOrders.filter((order) => matchesUtm(order, "", utmCampaign)), "utm_source"),
+      campaigns: utmOptions(facetOrders.filter((order) => matchesUtm(order, utmSource, "")), "utm_campaign"),
+    };
+    const enrichedOrders = allOrders.filter((order) => matchesUtm(order, utmSource, utmCampaign));
     const filteredOrders = enrichedOrders.filter((order) => (
       (payment === "all" || paymentCategory(order) === payment)
       && (delivery === "all" || order.delivery?.type === delivery)
@@ -312,6 +325,7 @@ export async function GET(req: Request) {
       data: filteredOrders.slice(start, start + DETAIL_PAGE_SIZE),
       meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: true },
       summary,
+      utm,
     }, {
       headers: {
         "Cache-Control": "private, no-store",
