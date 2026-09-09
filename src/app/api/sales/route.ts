@@ -42,7 +42,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean, refresh 
         : filter.statuses || "",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-json-v9",
+      namespace: "sales-json-v10",
       key,
       ttlMs: compact ? SALES_AUTO_REFRESH_MS : 5 * 60_000,
       maxEntries: 16,

@@ -47,6 +47,23 @@ type CategoryProductsResponse = {
   items: CategoryProductSummary[];
 };
 
+type CancellationProductSummary = {
+  code: string;
+  name: string;
+  url: string;
+  brand: string;
+  category: string;
+  docs: number;
+  qty: number;
+};
+
+type CancelReasonSummary = {
+  reason: string;
+  docs: number;
+  revenue: number;
+  products: CancellationProductSummary[];
+};
+
 type SalesDataset = {
   source: {
     bucket: string;
@@ -144,11 +161,11 @@ type SalesDataset = {
     categoryProducts: Record<string, CategoryProductSummary[]>;
     states: Array<{ state: string; docs: number; revenue: number }>;
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
-    cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+    cancelReasons: CancelReasonSummary[];
     documentStatusesBySegment: Array<{
       segment: "Плитка" | "Сантехніка";
       states: Array<{ state: string; docs: number; revenue: number }>;
-      cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+      cancelReasons: CancelReasonSummary[];
     }>;
     managers: Array<{
       seller: string;
@@ -170,7 +187,7 @@ type SalesDataset = {
       averageCompletedRevenue: number | null;
       averageRevenueCompletionPct: number | null;
       states: Array<{ state: string; docs: number; revenue: number }>;
-      cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+      cancelReasons: CancelReasonSummary[];
     }>;
   };
 };
@@ -1347,13 +1364,15 @@ function StatusSummaryList({
   labelKey,
   tone = "#118dff",
   shareLabel = "від документів",
+  onSelect,
 }: {
   title: string;
   subtitle: string;
-  rows: Array<{ docs: number; revenue: number } & Record<string, string | number>>;
+  rows: Array<{ docs: number; revenue: number; state?: string; reason?: string }>;
   labelKey: "state" | "reason";
   tone?: string;
   shareLabel?: string;
+  onSelect?: (row: { docs: number; revenue: number; state?: string; reason?: string }) => void;
 }) {
   const totalDocs = rows.reduce((sum, row) => sum + row.docs, 0);
   const maxDocs = Math.max(1, ...rows.map((row) => row.docs));
@@ -1364,20 +1383,89 @@ function StatusSummaryList({
         <p className="mt-1 text-[10px] text-[#8a939c]">{subtitle}</p>
       </div>
       <div className="divide-y divide-[#edf0f2]">
-        {rows.map((row, index) => (
-          <div key={`${String(row[labelKey])}-${index}`} className="grid gap-3 px-5 py-3.5 md:grid-cols-[minmax(180px,1fr)_minmax(120px,1.2fr)_90px_150px] md:items-center">
+        {rows.map((row, index) => {
+          const content = <>
             <div className="min-w-0">
-              <div className="truncate text-xs font-bold text-[#33404c]" title={String(row[labelKey])}>{String(row[labelKey])}</div>
+              <div className={`truncate text-xs font-bold text-[#33404c] ${onSelect ? "underline decoration-[#b7c2cc] decoration-dotted underline-offset-4" : ""}`} title={String(row[labelKey])}>{String(row[labelKey])}</div>
               <div className="mt-0.5 text-[9px] text-[#98a1aa]">{totalDocs ? fmtPct((row.docs / totalDocs) * 100) : "—"} {shareLabel}</div>
             </div>
             <ProgressBar value={(row.docs / maxDocs) * 100} color={tone} />
             <div className="text-right text-xs font-black tabular-nums text-[#33404c]">{fmtNum(row.docs)}</div>
             <div className="text-right text-xs font-bold tabular-nums text-[#63707c]">{fmtMoney(row.revenue)}</div>
-          </div>
-        ))}
+          </>;
+          const className = "grid w-full gap-3 px-5 py-3.5 text-left md:grid-cols-[minmax(180px,1fr)_minmax(120px,1.2fr)_90px_150px] md:items-center";
+          return onSelect ? (
+            <button key={`${String(row[labelKey])}-${index}`} type="button" onClick={() => onSelect(row)} className={`${className} transition-colors hover:bg-[#fff7f7] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#e45858]`} aria-label={`Показати товари: ${String(row[labelKey])}`}>
+              {content}
+            </button>
+          ) : (
+            <div key={`${String(row[labelKey])}-${index}`} className={className}>{content}</div>
+          );
+        })}
         {!rows.length && <div className="px-5 py-10 text-center text-xs text-[#8a939c]">Немає даних за обраний період</div>}
       </div>
     </section>
+  );
+}
+
+function CancellationProductsDialog({
+  reason,
+  periodLabel,
+  segment,
+  onClose,
+}: {
+  reason: CancelReasonSummary;
+  periodLabel: string;
+  segment: DocumentSegment;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  const totalQty = reason.products.reduce((sum, product) => sum + product.qty, 0);
+  return (
+    <div role="dialog" aria-modal="true" aria-labelledby="cancellation-products-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[#15202b]/60 p-3 sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="flex max-h-[88dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[#dce2e7] bg-white shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-[#e7ebee] px-5 py-4 sm:px-6">
+          <div className="min-w-0">
+            <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#e45858]">Товари у скасованих замовленнях</div>
+            <h2 id="cancellation-products-title" className="mt-1 text-base font-black text-[#26313d]">{reason.reason}</h2>
+            <p className="mt-1 text-[10px] text-[#7c8791]">{periodLabel} · сегмент: {segment}</p>
+          </div>
+          <button type="button" onClick={onClose} autoFocus className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#d8dde3] text-lg text-[#687582] transition hover:bg-[#f3f5f7]" aria-label="Закрити">×</button>
+        </header>
+        <div className="grid grid-cols-3 gap-px border-b border-[#e7ebee] bg-[#e7ebee]">
+          <div className="bg-[#fbfcfd] px-4 py-3 text-center"><div className="text-[9px] font-bold uppercase text-[#8b949d]">Товарів</div><div className="mt-1 text-sm font-black text-[#26313d]">{fmtNum(reason.products.length)}</div></div>
+          <div className="bg-[#fbfcfd] px-4 py-3 text-center"><div className="text-[9px] font-bold uppercase text-[#8b949d]">Кількість</div><div className="mt-1 text-sm font-black text-[#e45858]">{fmtNum(totalQty)} шт</div></div>
+          <div className="bg-[#fbfcfd] px-4 py-3 text-center"><div className="text-[9px] font-bold uppercase text-[#8b949d]">Замовлень</div><div className="mt-1 text-sm font-black text-[#26313d]">{fmtNum(reason.docs)}</div></div>
+        </div>
+        <div className="overflow-auto">
+          <table className="w-full min-w-[680px] border-collapse text-[10px]">
+            <thead className="sticky top-0 z-10 bg-[#f4f6f8] text-[#75808b]">
+              <tr><th className="px-5 py-2.5 text-left">Код</th><th className="px-3 py-2.5 text-left">Товар</th><th className="px-3 py-2.5 text-left">Бренд / категорія</th><th className="px-3 py-2.5 text-right">Замовлень</th><th className="px-5 py-2.5 text-right">К-ть</th></tr>
+            </thead>
+            <tbody>
+              {reason.products.map((product, index) => (
+                <tr key={`${product.code || product.name}-${index}`} className="border-t border-[#edf0f2] hover:bg-[#fbfcfd]">
+                  <td className="px-5 py-3 tabular-nums text-[#687582]">{product.code || "—"}</td>
+                  <td className="px-3 py-3 font-bold text-[#33404c]">{product.url ? <a href={product.url} target="_blank" rel="noreferrer" className="hover:text-[#118dff] hover:underline">{product.name}</a> : product.name}</td>
+                  <td className="px-3 py-3 text-[#687582]"><div>{product.brand}</div><div className="mt-0.5 text-[9px] text-[#98a1aa]">{product.category}</div></td>
+                  <td className="px-3 py-3 text-right tabular-nums text-[#687582]">{fmtNum(product.docs)}</td>
+                  <td className="px-5 py-3 text-right font-black tabular-nums text-[#e45858]">{fmtNum(product.qty)} шт</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!reason.products.length && <div className="px-5 py-12 text-center text-xs text-[#8a939c]">У скасованих документах немає товарних позицій</div>}
+        </div>
+        <footer className="flex justify-end border-t border-[#e7ebee] px-5 py-3"><button type="button" onClick={onClose} className="rounded-lg border border-[#d8dde3] px-4 py-2 text-[10px] font-bold text-[#586572] hover:bg-[#f5f7f8]">Закрити</button></footer>
+      </section>
+    </div>
   );
 }
 
@@ -1420,6 +1508,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [brandError, setBrandError] = useState<string | null>(null);
   const [selectedManager, setSelectedManager] = useState<string | null>(null);
   const [selectedDocumentSegment, setSelectedDocumentSegment] = useState<DocumentSegment>("Усі");
+  const [selectedCancelReason, setSelectedCancelReason] = useState<CancelReasonSummary | null>(null);
   const hasLoadedRef = useRef(false);
   const webshopScopeRef = useRef("");
   const liveCurrentMonthRef = useRef(true);
@@ -1455,7 +1544,12 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     setCategoryProducts({});
     setBrandProducts({});
+    setSelectedCancelReason(null);
   }, [dateFrom, dateTo, pricePosition, selectedStatuses, refreshTick]);
+
+  useEffect(() => {
+    setSelectedCancelReason(null);
+  }, [selectedDocumentSegment]);
 
   useEffect(() => {
     let alive = true;
@@ -2059,12 +2153,16 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <SalesMetricCard label="Сума скасувань" value={fmtMoney(canceledStatusRevenue)} hint="втрачений оборот" symbol="₴" tone="#e39a25" />
                   <SalesMetricCard label="Частка скасувань" value={statusDocsTotal ? fmtPct((canceledStatusDocs / statusDocsTotal) * 100) : "—"} hint="від документів сегмента" symbol="%" tone="#805ad5" />
                 </div>
-                <StatusSummaryList title={`Причини скасування · ${selectedDocumentSegment}`} subtitle="Частка кожної причини серед скасувань вибраного сегмента" rows={visibleCancelReasonRows} labelKey="reason" tone="#e45858" shareLabel="від скасувань" />
+                <StatusSummaryList title={`Причини скасування · ${selectedDocumentSegment}`} subtitle="Натисніть на причину, щоб переглянути товари та їх кількість за вибраний період" rows={visibleCancelReasonRows} labelKey="reason" tone="#e45858" shareLabel="від скасувань" onSelect={(row) => {
+                  const selected = visibleCancelReasonRows.find((item) => item.reason === row.reason);
+                  if (selected) setSelectedCancelReason(selected);
+                }} />
               </div>
             )}
           </div>
         </main>
       </div>
+      {selectedCancelReason && <CancellationProductsDialog reason={selectedCancelReason} periodLabel={data.filter.label} segment={selectedDocumentSegment} onClose={() => setSelectedCancelReason(null)} />}
     </div>
   );
 }

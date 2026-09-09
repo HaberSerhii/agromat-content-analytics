@@ -163,9 +163,26 @@ export type SalesWebshopReturnInfo = {
   returnGoodsCodes: string[];
 };
 
+export type SalesCancellationProductSummary = {
+  code: string;
+  name: string;
+  url: string;
+  brand: string;
+  category: string;
+  docs: number;
+  qty: number;
+};
+
+export type SalesCancelReasonSummary = {
+  reason: string;
+  docs: number;
+  revenue: number;
+  products: SalesCancellationProductSummary[];
+};
+
 export type SalesDocumentStatusSummary = {
   states: Array<{ state: string; docs: number; revenue: number }>;
-  cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+  cancelReasons: SalesCancelReasonSummary[];
 };
 
 export type SalesManagerSummary = SalesDocumentStatusSummary & {
@@ -236,7 +253,7 @@ export type SalesDataset = {
     categoryProducts: Record<string, SalesProductSummary[]>;
     states: Array<{ state: string; docs: number; revenue: number }>;
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
-    cancelReasons: Array<{ reason: string; docs: number; revenue: number }>;
+    cancelReasons: SalesCancelReasonSummary[];
     documentStatusesBySegment: Array<SalesDocumentStatusSummary & { segment: "Плитка" | "Сантехніка" }>;
     managers: SalesManagerSummary[];
   };
@@ -272,6 +289,10 @@ type ParsedSalesRow = SalesRow & {
 
 type MutableSalesProductSummary = SalesProductSummary & {
   orderRefs: Set<string>;
+};
+
+type MutableCancelReasonSummary = Omit<SalesCancelReasonSummary, "products"> & {
+  products: Map<string, SalesCancellationProductSummary & { orderRefs: Set<string> }>;
 };
 
 type CacheEntry = {
@@ -752,12 +773,52 @@ function addState(map: Map<string, { state: string; docs: number; revenue: numbe
   map.set(label, item);
 }
 
-function addCancelReason(map: Map<string, { reason: string; docs: number; revenue: number }>, reason: string, revenue: number) {
+function addCancelReason(map: Map<string, MutableCancelReasonSummary>, reason: string, row: ParsedSalesRow) {
   const label = reason || "Без причини";
-  const item = map.get(label) || { reason: label, docs: 0, revenue: 0 };
+  const item = map.get(label) || { reason: label, docs: 0, revenue: 0, products: new Map() };
   item.docs += 1;
-  item.revenue += revenue;
+  item.revenue += row.docsSum;
+  const orderRef = row.docsRef || row.number;
+  for (const product of row.items) {
+    if (isDeliverySalesItem(product)) continue;
+    const key = product.code || `${product.name}:${product.brand}`;
+    const current = item.products.get(key) || {
+      code: product.code,
+      name: product.name || "Без назви",
+      url: product.url,
+      brand: product.brand || "Без бренда",
+      category: product.category || "Без категорії",
+      docs: 0,
+      qty: 0,
+      orderRefs: new Set<string>(),
+    };
+    current.orderRefs.add(orderRef || `${key}:${current.orderRefs.size}`);
+    current.docs = current.orderRefs.size;
+    current.qty += Number(product.qty) || 0;
+    item.products.set(key, current);
+  }
   map.set(label, item);
+}
+
+function finishCancelReasons(map: Map<string, MutableCancelReasonSummary>): SalesCancelReasonSummary[] {
+  return [...map.values()]
+    .map((item) => ({
+      reason: item.reason,
+      docs: item.docs,
+      revenue: item.revenue,
+      products: [...item.products.values()]
+        .map((product) => ({
+          code: product.code,
+          name: product.name,
+          url: product.url,
+          brand: product.brand,
+          category: product.category,
+          docs: product.docs,
+          qty: product.qty,
+        }))
+        .sort((left, right) => right.qty - left.qty || left.name.localeCompare(right.name, "uk")),
+    }))
+    .sort((left, right) => right.docs - left.docs);
 }
 
 function addCategoryProduct(
@@ -1024,12 +1085,12 @@ function buildDataset(
   const categoryProducts = new Map<string, Map<string, MutableSalesProductSummary>>();
   const states = new Map<string, { state: string; docs: number; revenue: number }>();
   const availableStates = new Map<string, { state: string; docs: number; revenue: number }>();
-  const cancelReasons = new Map<string, { reason: string; docs: number; revenue: number }>();
+  const cancelReasons = new Map<string, MutableCancelReasonSummary>();
   const documentStatusesBySegment = new Map<
     "Плитка" | "Сантехніка",
     {
       states: Map<string, { state: string; docs: number; revenue: number }>;
-      cancelReasons: Map<string, { reason: string; docs: number; revenue: number }>;
+      cancelReasons: Map<string, MutableCancelReasonSummary>;
     }
   >([
     ["Плитка", { states: new Map(), cancelReasons: new Map() }],
@@ -1044,7 +1105,7 @@ function buildDataset(
       orderedRevenue: number;
       completedRevenue: number;
       states: Map<string, { state: string; docs: number; revenue: number }>;
-      cancelReasons: Map<string, { reason: string; docs: number; revenue: number }>;
+      cancelReasons: Map<string, MutableCancelReasonSummary>;
     }
   >();
   const managerPlanRevenueByMonth = new Map<string, Map<string, number>>();
@@ -1114,14 +1175,14 @@ function buildDataset(
       if (matchesStatusDate) {
         addState(availableStates, row.state, row.docsSum);
         addState(states, row.state, row.docsSum);
-        if (isCanceled(row.state)) addCancelReason(cancelReasons, row.cancelReason, row.docsSum);
+        if (isCanceled(row.state)) addCancelReason(cancelReasons, row.cancelReason, row);
 
         if (row.planGroup === "Плитка" || row.planGroup === "Сантехніка") {
           const segmentSummary = documentStatusesBySegment.get(row.planGroup);
           if (segmentSummary) {
             addState(segmentSummary.states, row.state, row.docsSum);
             if (isCanceled(row.state)) {
-              addCancelReason(segmentSummary.cancelReasons, row.cancelReason, row.docsSum);
+              addCancelReason(segmentSummary.cancelReasons, row.cancelReason, row);
             }
           }
         }
@@ -1135,7 +1196,7 @@ function buildDataset(
             orderedRevenue: 0,
             completedRevenue: 0,
             states: new Map<string, { state: string; docs: number; revenue: number }>(),
-            cancelReasons: new Map<string, { reason: string; docs: number; revenue: number }>(),
+            cancelReasons: new Map<string, MutableCancelReasonSummary>(),
           };
           manager.orderedDocs += 1;
           manager.orderedRevenue += row.docsSum;
@@ -1145,7 +1206,7 @@ function buildDataset(
             manager.completedRevenue += row.docsSum;
           }
           addState(manager.states, row.state, row.docsSum);
-          if (isCanceled(row.state)) addCancelReason(manager.cancelReasons, row.cancelReason, row.docsSum);
+          if (isCanceled(row.state)) addCancelReason(manager.cancelReasons, row.cancelReason, row);
           managers.set(seller, manager);
         }
       }
@@ -1310,7 +1371,7 @@ function buildDataset(
       orderedRevenue: 0,
       completedRevenue: 0,
       states: new Map<string, { state: string; docs: number; revenue: number }>(),
-      cancelReasons: new Map<string, { reason: string; docs: number; revenue: number }>(),
+      cancelReasons: new Map<string, MutableCancelReasonSummary>(),
     };
     const planRevenue = managerMonthRevenue.get(seller) || 0;
     const managerPlan = getMonthlyManagerPlan(planMonth, getSellerId(seller));
@@ -1339,7 +1400,7 @@ function buildDataset(
         ? (averageCompletedRevenue / averageOrderRevenue) * 100
         : null,
       states: [...manager.states.values()].sort((a, b) => b.docs - a.docs),
-      cancelReasons: [...manager.cancelReasons.values()].sort((a, b) => b.docs - a.docs),
+      cancelReasons: finishCancelReasons(manager.cancelReasons),
     };
   }).sort((a, b) => b.planRevenue - a.planRevenue);
 
@@ -1418,11 +1479,11 @@ function buildDataset(
       categoryProducts: categoryProductList,
       states: [...states.values()].sort((a, b) => b.docs - a.docs),
       availableStates: [...availableStates.values()].sort((a, b) => b.docs - a.docs),
-      cancelReasons: [...cancelReasons.values()].sort((a, b) => b.docs - a.docs),
+      cancelReasons: finishCancelReasons(cancelReasons),
       documentStatusesBySegment: [...documentStatusesBySegment.entries()].map(([segment, summary]) => ({
         segment,
         states: [...summary.states.values()].sort((a, b) => b.docs - a.docs),
-        cancelReasons: [...summary.cancelReasons.values()].sort((a, b) => b.docs - a.docs),
+        cancelReasons: finishCancelReasons(summary.cancelReasons),
       })),
       managers: managerList,
     },

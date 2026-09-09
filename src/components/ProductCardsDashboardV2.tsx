@@ -2043,7 +2043,9 @@ export function ProductCardsDashboardV2() {
   const [productSignal, setProductSignal] = useState<ProductSignal | "">("");
   const [chartMode, setChartMode] = useState<ChartMode>("categories");
   const [copied, setCopied] = useState("");
-  const [bulkAction, setBulkAction] = useState<"excel" | "copy" | "">("");
+  const [bulkAction, setBulkAction] = useState<
+    "excel" | "in-stock-excel" | "copy" | ""
+  >("");
   const [bulkActionError, setBulkActionError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<ProductRow | null>(
     null,
@@ -2626,6 +2628,23 @@ export function ProductCardsDashboardV2() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return (await response.json()) as DashboardResponse;
   };
+  const fetchAllInStockRows = async () => {
+    const response = await fetch("/api/products/dashboard-v2", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        view: "overview",
+        page: 1,
+        limit: 250_000,
+        exportAll: true,
+        includeAnalytics: false,
+        statusId: Number(DEFAULT_STATUS_ID),
+        processingStatus: "all",
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return (await response.json()) as DashboardResponse;
+  };
   const copyFilteredIds = async () => {
     setBulkAction("copy");
     setBulkActionError("");
@@ -2771,6 +2790,97 @@ export function ProductCardsDashboardV2() {
       );
     } catch {
       setBulkActionError("Не вдалося сформувати Excel. Спробуйте ще раз.");
+    } finally {
+      setBulkAction("");
+    }
+  };
+  const downloadInStockExcel = async () => {
+    setBulkAction("in-stock-excel");
+    setBulkActionError("");
+    try {
+      const [exported, XLSX] = await Promise.all([
+        fetchAllInStockRows(),
+        import("xlsx"),
+      ]);
+      const headerRow = 5;
+      const tableRows = exported.rows.map((row) => [
+        row.name,
+        row.code,
+        row.goodsRef,
+        row.sku || "",
+        row.categoryName || "Без категорії",
+        row.brand || "Без бренду",
+        row.price,
+        row.currency || "UAH",
+        row.stockQty,
+        row.imagesCount,
+        row.reviewsCount,
+        row.statusName || "В наявності",
+      ]);
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        ["Товари в наявності"],
+        ["Дата вивантаження", exported.currentDate],
+        ["Кількість товарів", exported.rows.length],
+        [],
+        [
+          "Товар",
+          "IDD",
+          "goods_ref",
+          "Артикул",
+          "Категорія",
+          "Бренд",
+          "Ціна",
+          "Валюта",
+          "Залишок",
+          "Кількість фото",
+          "Кількість відгуків",
+          "Статус",
+        ],
+        ...tableRows,
+      ]);
+      worksheet["!cols"] = [
+        { wch: 54 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 32 },
+        { wch: 24 },
+        { wch: 14 },
+        { wch: 10 },
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 19 },
+        { wch: 18 },
+      ];
+      worksheet["!autofilter"] = {
+        ref: `A${headerRow}:L${headerRow + exported.rows.length}`,
+      };
+      for (let index = 0; index < exported.rows.length; index++) {
+        const excelRow = headerRow + 1 + index;
+        const productCell = worksheet[`A${excelRow}`];
+        if (productCell && exported.rows[index].url) {
+          productCell.l = { Target: exported.rows[index].url };
+        }
+        const priceCell = worksheet[`G${excelRow}`];
+        if (priceCell) priceCell.z = "#,##0.00";
+        const stockCell = worksheet[`I${excelRow}`];
+        if (stockCell) stockCell.z = "#,##0.##";
+        for (const column of ["J", "K"]) {
+          const cell = worksheet[`${column}${excelRow}`];
+          if (cell) cell.z = "#,##0";
+        }
+      }
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "В наявності");
+      XLSX.writeFile(
+        workbook,
+        `tovary-v-nayavnosti-${exported.currentDate || "export"}.xlsx`,
+        { compression: true },
+      );
+    } catch {
+      setBulkActionError(
+        "Не вдалося сформувати Excel товарів у наявності. Спробуйте ще раз.",
+      );
     } finally {
       setBulkAction("");
     }
@@ -3149,33 +3259,54 @@ export function ProductCardsDashboardV2() {
             </span>
           </header>
           <div className="p-4 sm:p-5 xl:p-6">
-            <section className="mb-5">
-              <div className="mb-1 text-[10px] font-black uppercase tracking-[.2em] text-[#118dff]">
-                {data?.currentDate || "Актуальні дані"}
+            <section className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <div className="mb-1 text-[10px] font-black uppercase tracking-[.2em] text-[#118dff]">
+                  {data?.currentDate || "Актуальні дані"}
+                </div>
+                <h1 className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">
+                  {view === "overview" ? (
+                    <>
+                      Аналіз <span className="text-[#118dff]">карток товару</span>
+                    </>
+                  ) : (
+                    <span className="text-[#118dff]">{activeView.label}</span>
+                  )}
+                </h1>
+                <p className="mt-1 text-xs text-[#737d87]">
+                  {view === "new"
+                    ? "Нові товари з 01.09.2026 незалежно від статусу, які ще не призначені контент-менеджеру."
+                    : view === "categories"
+                      ? "Поточний стан контенту категорій та динаміка CTR Каталог → PDP."
+                      : view === "products"
+                        ? "Пошук точок зростання за видимістю, конверсією та якістю контенту."
+                        : view === "search"
+                          ? "Єдина черга пошукових запитів з BigQuery, Multisearch та Google Sheets."
+                          : view === "results"
+                            ? "Контроль ефекту контентних змін після завершення контрольного періоду."
+                            : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
+                </p>
               </div>
-              <h1 className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">
-                {view === "overview" ? (
-                  <>
-                    Аналіз <span className="text-[#118dff]">карток товару</span>
-                  </>
-                ) : (
-                  <span className="text-[#118dff]">{activeView.label}</span>
-                )}
-              </h1>
-              <p className="mt-1 text-xs text-[#737d87]">
-                {view === "new"
-                  ? "Нові товари з 01.09.2026 незалежно від статусу, які ще не призначені контент-менеджеру."
-                  : view === "categories"
-                    ? "Поточний стан контенту категорій та динаміка CTR Каталог → PDP."
-                    : view === "products"
-                      ? "Пошук точок зростання за видимістю, конверсією та якістю контенту."
-                    : view === "search"
-                        ? "Єдина черга пошукових запитів з BigQuery, Multisearch та Google Sheets."
-                        : view === "results"
-                          ? "Контроль ефекту контентних змін після завершення контрольного періоду."
-                          : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
-              </p>
+              {view === "overview" && (
+                <button
+                  type="button"
+                  onClick={() => void downloadInStockExcel()}
+                  disabled={Boolean(bulkAction) || !data}
+                  title="Вивантажити всі товари зі статусом «В наявності»: ціни, залишки, фото та відгуки"
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#b9ddcb] bg-[#eaf7f1] px-4 py-2.5 text-[10px] font-black text-[#087a55] shadow-sm transition hover:bg-[#dff2e9] disabled:cursor-wait disabled:opacity-50"
+                >
+                  <span aria-hidden="true">↓</span>
+                  {bulkAction === "in-stock-excel"
+                    ? "Формування Excel…"
+                    : "Excel · Товари в наявності"}
+                </button>
+              )}
             </section>
+            {bulkActionError && view === "overview" && (
+              <div className="mb-4 rounded-lg border border-[#f1b7b7] bg-[#fff2f2] px-3 py-2 text-[9px] font-semibold text-[#bd3b3b]">
+                {bulkActionError}
+              </div>
+            )}
             {analyticsLoading && data && view === "overview" && (
               <p role="status" className="mb-3 text-xs text-[#687888]">Каталог готовий. Показники переходів GA4 оновлюються…</p>
             )}
