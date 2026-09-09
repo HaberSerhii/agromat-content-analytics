@@ -8,6 +8,7 @@
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
+import { promisify } from "node:util";
 import type { ProductLite } from "./products-store";
 
 const DEFAULT_SNAPSHOT_DIR = path.join(process.cwd(), "data", "product-snapshots");
@@ -113,14 +114,42 @@ export function writeDailySnapshotToDisk(date: string, products: ProductLite[], 
   pruneDailySnapshotsOnDisk(keep);
 }
 
-export function readDailySnapshotFromDisk(date: string): { products: ProductLite[]; syncedAt: string | null } | null {
+type SnapshotValue = { products: ProductLite[]; syncedAt: string | null };
+const snapshotCache = new Map<string, { signature: string; value: SnapshotValue }>();
+const snapshotPending = new Map<string, Promise<SnapshotValue | null>>();
+const gunzip = promisify(zlib.gunzip);
+
+export async function readDailySnapshotFromDisk(date: string): Promise<SnapshotValue | null> {
+  const pending = snapshotPending.get(date);
+  if (pending) return pending;
+  const work = loadDailySnapshot(date).finally(() => snapshotPending.delete(date));
+  snapshotPending.set(date, work);
+  return work;
+}
+
+async function loadDailySnapshot(date: string): Promise<SnapshotValue | null> {
   try {
-    const gz = fs.readFileSync(snapshotFile(date));
-    const json = zlib.gunzipSync(gz).toString("utf-8");
+    const file = snapshotFile(date);
+    const stat = await fs.promises.stat(file);
+    const signature = `${stat.ino}:${stat.mtimeMs}:${stat.size}`;
+    const cached = snapshotCache.get(date);
+    if (cached?.signature === signature) {
+      snapshotCache.delete(date);
+      snapshotCache.set(date, cached);
+      return cached.value;
+    }
+    const gz = await fs.promises.readFile(file);
+    const json = (await gunzip(gz)).toString("utf-8");
     const snap = JSON.parse(json) as DailySnapshotPayload;
     if (!Array.isArray(snap.products)) return null;
-    return { products: snap.products, syncedAt: snap.syncedAt ?? null };
+    const value = { products: snap.products, syncedAt: snap.syncedAt ?? null };
+    snapshotCache.delete(date);
+    // Only the recent comparison and month baseline normally need to be resident.
+    while (snapshotCache.size >= 2) snapshotCache.delete(snapshotCache.keys().next().value!);
+    snapshotCache.set(date, { signature, value });
+    return value;
   } catch (e) {
+    snapshotCache.delete(date);
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
       console.error("[products-daily-snapshots] read failed:", e);
     }

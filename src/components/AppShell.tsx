@@ -110,6 +110,8 @@ export function AppShell() {
 
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
+  const [competitorsVisited, setCompetitorsVisited] = useState(isCompetitors);
+  useEffect(() => { if (isCompetitors) setCompetitorsVisited(true); }, [isCompetitors]);
   const [catalogVisited, setCatalogVisited] = useState(isCatalog);
   const [promotionsVisited, setPromotionsVisited] = useState(isPromotions);
   const [salesVisited, setSalesVisited] = useState(isSales);
@@ -125,7 +127,7 @@ export function AppShell() {
 
   return (
     <>
-      {isCompetitors && <CompetitorDashboard />}
+      {competitorsVisited && <div style={{ display: isCompetitors ? "block" : "none" }}><CompetitorDashboard isActive={isCompetitors} /></div>}
 
       {catalogVisited && (
         <div style={{ display: isCatalog ? "block" : "none" }}>
@@ -141,7 +143,7 @@ export function AppShell() {
 
       {salesVisited && (
         <div style={{ display: isSales ? "block" : "none" }}>
-          <SalesDashboard />
+          <SalesDashboard isActive={isSales} />
         </div>
       )}
     </>

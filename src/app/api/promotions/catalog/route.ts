@@ -47,7 +47,6 @@ import { getServerResult, putServerResult } from "@/lib/server-result-cache";
 export const dynamic = "force-dynamic";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const DEFAULT_CACHE_KEY = "default|default";
 const MEMORY_CACHE_TTL_MS = 5 * 60_000;
 const DISK_CACHE_MAX_AGE_MS = 30 * 60_000;
 
@@ -168,6 +167,7 @@ function membershipMap(promotions: ApiPromotion[]): Map<string, Set<number>> {
 async function buildCatalogPayload(
   requestedFrom: string | null,
   requestedTo: string | null,
+  refresh = false,
 ): Promise<PromotionsCatalogPayload> {
     const today = kyivToday();
     const toDate = requestedTo ?? today;
@@ -185,7 +185,10 @@ async function buildCatalogPayload(
         return { products: disk?.products ?? [], syncedAt: disk?.syncedAt ?? null };
       });
     const [allLivePromotions, liveCatalog] = await Promise.all([
-      fetchAllPromotions(),
+      getServerResult({
+        namespace: "promotions-live-source", key: today, ttlMs: MEMORY_CACHE_TTL_MS,
+        maxEntries: 1, refresh, load: fetchAllPromotions,
+      }).then((result) => result.value),
       liveCatalogData,
     ]);
     const liveCapturedAt = new Date().toISOString();
@@ -438,6 +441,7 @@ async function buildCatalogPayload(
 }
 
 export async function GET(request: Request) {
+  const started = performance.now();
   try {
     const url = new URL(request.url);
     const requestedFrom = url.searchParams.get("from");
@@ -468,21 +472,24 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Розмір сторінки має бути від 1 до 500" }, { status: 400 });
     }
 
-    const cacheKey = `${requestedFrom || "default"}|${requestedTo || "default"}`;
+    const defaultFrom = [...listPromotionsSnapshotDates()].reverse().find((date) => date < effectiveTo) ?? effectiveTo;
+    const effectiveFrom = requestedFrom ?? defaultFrom;
+    const cacheKey = `${effectiveFrom}|${effectiveTo}`;
+    const isDefaultRange = effectiveTo === kyivToday() && effectiveFrom === defaultFrom;
     let payload: PromotionsCatalogPayload;
-    let status: "hit" | "miss" | "shared" | "disk" | "refresh";
+    let status: "hit" | "miss" | "shared" | "disk" | "refresh" | "stale";
 
     if (forceRefresh) {
-      payload = await buildCatalogPayload(requestedFrom, requestedTo);
+      payload = await buildCatalogPayload(requestedFrom, requestedTo, true);
       await writePromotionsCatalogDiskCache(JSON.stringify(payload)).catch((error) => {
         console.warn("[promotions/catalog] disk cache write failed:", error instanceof Error ? error.message : error);
       });
       putServerResult({
         namespace: "promotions-catalog-payload",
-        key: DEFAULT_CACHE_KEY,
+        key: cacheKey,
         value: payload,
         ttlMs: MEMORY_CACHE_TTL_MS,
-        maxEntries: 2,
+        maxEntries: 8,
       });
       status = "refresh";
     } else {
@@ -490,23 +497,27 @@ export async function GET(request: Request) {
       const cached = await getServerResult({
         namespace: "promotions-catalog-payload",
         key: cacheKey,
-        ttlMs: requestedFrom || requestedTo ? 60_000 : MEMORY_CACHE_TTL_MS,
-        maxEntries: 2,
+        ttlMs: MEMORY_CACHE_TTL_MS,
+        staleMs: 5 * 60_000,
+        maxEntries: 8,
         load: async () => {
-          if (cacheKey === DEFAULT_CACHE_KEY) {
+          if (isDefaultRange) {
             const disk = await readPromotionsCatalogDiskCache(DISK_CACHE_MAX_AGE_MS);
             if (disk) {
               try {
-                loadedFromDisk = true;
-                return JSON.parse(disk) as PromotionsCatalogPayload;
+                const saved = JSON.parse(disk) as PromotionsCatalogPayload;
+                if (saved.fromDate === effectiveFrom && saved.toDate === effectiveTo) {
+                  loadedFromDisk = true;
+                  return saved;
+                }
               } catch (error) {
                 loadedFromDisk = false;
                 console.warn("[promotions/catalog] disk cache parse failed:", error instanceof Error ? error.message : error);
               }
             }
           }
-          const built = await buildCatalogPayload(requestedFrom, requestedTo);
-          if (cacheKey === DEFAULT_CACHE_KEY) {
+          const built = await buildCatalogPayload(effectiveFrom, effectiveTo);
+          if (isDefaultRange) {
             await writePromotionsCatalogDiskCache(JSON.stringify(built)).catch((error) => {
               console.warn("[promotions/catalog] disk cache write failed:", error instanceof Error ? error.message : error);
             });
@@ -534,6 +545,7 @@ export async function GET(request: Request) {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
           "X-Agromat-Cache": status,
+        "Server-Timing": `catalog;dur=${(performance.now() - started).toFixed(1)}`,
         },
       });
     }
@@ -567,6 +579,7 @@ export async function GET(request: Request) {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
         "X-Agromat-Cache": status,
+        "Server-Timing": `catalog;dur=${(performance.now() - started).toFixed(1)}`,
       },
     });
   } catch (error) {

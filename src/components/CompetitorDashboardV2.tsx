@@ -434,7 +434,7 @@ async function downloadLegacyReport(path: string, payload: Record<string, unknow
   triggerDownload(await response.blob(), filename);
 }
 
-export function CompetitorDashboardV2() {
+export function CompetitorDashboardV2({ isActive = true }: { isActive?: boolean }) {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -478,6 +478,7 @@ export function CompetitorDashboardV2() {
   const [violationCompetitorId, setViolationCompetitorId] = useState(0);
   const [copiedKey, setCopiedKey] = useState("");
 
+  const lastLoadedRef = useRef<{ query: string; at: number } | null>(null);
   const selectedKey = [...selectedCompetitors].sort((a, b) => a - b).join(",");
 
   useEffect(() => {
@@ -506,6 +507,7 @@ export function CompetitorDashboardV2() {
   }, [competitorSelectionReady, selectedCompetitors]);
 
   useEffect(() => {
+    if (!isActive || !competitorSelectionReady) return;
     const controller = new AbortController();
     const query = new URLSearchParams({ page: String(page), limit: String(ROWS_PER_PAGE), view });
     const forceRefresh = refreshRequest > handledRefreshRequest.current;
@@ -521,6 +523,7 @@ export function CompetitorDashboardV2() {
     if (vtmOnly) query.set("vtm", "1");
     if (segmentFilter !== "all") query.set("segment", segmentFilter);
     if (metricDrilldown) query.set("drilldown", "1");
+    if (!forceRefresh && lastLoadedRef.current?.query === query.toString() && Date.now() - lastLoadedRef.current.at < 60_000) return;
     setLoading(true);
     setError("");
     fetch(`/api/parser/dashboard-v2?${query}`, { signal: controller.signal })
@@ -530,6 +533,8 @@ export function CompetitorDashboardV2() {
         return body;
       })
       .then((body) => {
+        if (controller.signal.aborted) return;
+        lastLoadedRef.current = { query: query.toString(), at: Date.now() };
         if (forceRefresh) handledRefreshRequest.current = refreshRequest;
         setData(body);
       })
@@ -537,9 +542,9 @@ export function CompetitorDashboardV2() {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
         setError(reason instanceof Error ? reason.message : "Не вдалося завантажити прототип");
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [brand, category, competitorPriceMode, metricDrilldown, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
+  }, [isActive, competitorSelectionReady, brand, category, competitorPriceMode, metricDrilldown, page, priceMode, productIds, refreshRequest, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
 
   useEffect(() => setPage(1), [brand, category, competitorPriceMode, priceMode, productIds, search, selectedKey, view, violationCompetitorId, vtmOnly, segmentFilter]);
 
@@ -578,11 +583,12 @@ export function CompetitorDashboardV2() {
   }, [data, job, productSearchResults, view]);
 
   useEffect(() => {
-    const heartbeat = () => fetch("/api/dashboard/sessions", { cache: "no-store" }).catch(() => undefined);
+    if (!isActive) return;
+    const heartbeat = () => { if (document.visibilityState === "visible") void fetch("/api/dashboard/sessions", { cache: "no-store" }).catch(() => undefined); };
     heartbeat();
     const timer = window.setInterval(heartbeat, 5 * 60 * 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [isActive]);
 
   const visibleCompetitorIds = selectedCompetitors;
   const visibleCompetitors = (data?.competitors || []).filter((competitor) => visibleCompetitorIds.has(competitor.id));

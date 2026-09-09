@@ -2096,6 +2096,8 @@ export function ProductCardsDashboardV2() {
   const [resultManager, setResultManager] = useState<ContentManager | "">("");
   const [resultMonth, setResultMonth] = useState("");
   const loadRequestRef = useRef(0);
+  const overviewAnalyticsLoadedRef = useRef(false);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const interventionsLoadedRef = useRef(false);
   const newAssignmentsLoadedRef = useRef(false);
   const loadScopeKey = JSON.stringify([
@@ -2125,11 +2127,8 @@ export function ProductCardsDashboardV2() {
       setLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/products/dashboard-v2", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal,
-          body: JSON.stringify({
+        const progressive = view === "overview" && !overviewAnalyticsLoadedRef.current;
+        const requestBody = {
             view,
             page,
             limit: PAGE_SIZE,
@@ -2145,13 +2144,27 @@ export function ProductCardsDashboardV2() {
             minStock: minStock ? Number(minStock) : null,
             maxStock: maxStock ? Number(maxStock) : null,
             productSignal: productSignal || null,
-          }),
+          };
+        const fetchDashboard = (includeAnalytics: boolean) => fetch("/api/products/dashboard-v2", {
+          method: "POST", headers: { "Content-Type": "application/json" }, signal,
+          body: JSON.stringify({ ...requestBody, includeAnalytics }),
         });
+        setAnalyticsLoading(progressive);
+        const response = await fetchDashboard(!progressive);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const next = (await response.json()) as DashboardResponse;
         if (requestId !== loadRequestRef.current) return;
         setData(next);
         setAllFacets((current) => current || next.facets);
+        if (progressive) {
+          setLoading(false);
+          const enriched = await fetchDashboard(true);
+          if (!enriched.ok) throw new Error(`HTTP ${enriched.status}`);
+          const complete = await enriched.json() as DashboardResponse;
+          if (signal?.aborted || requestId !== loadRequestRef.current) return;
+          overviewAnalyticsLoadedRef.current = true;
+          setData(complete);
+        }
       } catch (cause) {
         if (signal?.aborted || requestId !== loadRequestRef.current) return;
         setError(
@@ -2160,7 +2173,7 @@ export function ProductCardsDashboardV2() {
             : "Не вдалося завантажити дашборд",
         );
       } finally {
-        if (requestId === loadRequestRef.current) setLoading(false);
+        if (requestId === loadRequestRef.current) { setLoading(false); setAnalyticsLoading(false); }
       }
     },
     [
@@ -3163,6 +3176,9 @@ export function ProductCardsDashboardV2() {
                           : "Єдиний простір огляду каталогу, товарних статусів та ефективності переходів."}
               </p>
             </section>
+            {analyticsLoading && data && view === "overview" && (
+              <p role="status" className="mb-3 text-xs text-[#687888]">Каталог готовий. Показники переходів GA4 оновлюються…</p>
+            )}
             {error && (
               <button
                 onClick={() => void load()}

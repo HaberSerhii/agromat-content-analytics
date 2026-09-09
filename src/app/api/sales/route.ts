@@ -1,3 +1,4 @@
+import { hasServerBearer } from "@/lib/dashboard-auth";
 import { NextResponse } from "next/server";
 import {
   readSalesDataset,
@@ -26,7 +27,8 @@ function compactSalesDataset(dataset: SalesDataset): SalesDataset {
   };
 }
 
-async function salesResponse(filter: SalesDateFilter, compact: boolean) {
+async function salesResponse(filter: SalesDateFilter, compact: boolean, refresh = false) {
+  const started = performance.now();
   try {
     const key = JSON.stringify({
       compact,
@@ -44,6 +46,8 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean) {
       key,
       ttlMs: compact ? SALES_AUTO_REFRESH_MS : 5 * 60_000,
       maxEntries: 16,
+      refresh,
+      staleMs: compact ? 60_000 : 0,
       load: async () => {
         const dataset = await readSalesDataset(filter, {
           categoryProducts: compact ? false : "all",
@@ -56,6 +60,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean) {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "private, no-store",
         "X-Agromat-Cache": status,
+        "Server-Timing": `sales;dur=${(performance.now() - started).toFixed(1)}`,
       },
     });
   } catch (error) {
@@ -76,7 +81,7 @@ export async function GET(req: Request) {
       ? positionCodes.size ? [...positionCodes] : [-1]
       : url.searchParams.get("product_codes") || undefined,
     statuses: url.searchParams.getAll("status"),
-  }, compact);
+  }, compact, url.searchParams.get("prewarm") === "1" && hasServerBearer(req, "CRON_SECRET"));
 }
 
 export async function POST(req: Request) {

@@ -1,3 +1,4 @@
+import { getServerResult } from "@/lib/server-result-cache";
 import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
@@ -34,6 +35,7 @@ type SegmentMetric = {
 };
 
 type DashboardFilters = {
+  includeAnalytics?: boolean;
   view?: "overview" | "new" | "categories" | "products";
   page?: number;
   limit?: number;
@@ -165,6 +167,7 @@ let productPerformanceCache: {
   error?: string;
 } | null = null;
 let productAnalysisCache: {
+  attributeIndex: Map<number, { id: number; name: string }[]>;
   key: string;
   expiresAt: number;
   value: ProductAnalysisDataset;
@@ -737,6 +740,7 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
       ? Math.min(250_000, Math.max(1, Number(input.limit) || 250_000))
       : Math.min(100, Math.max(1, Number(input.limit) || 15)),
     exportAll,
+    includeAnalytics: input.includeAnalytics !== false,
     search: String(input.search || "").trim(),
     bulkIds: Array.isArray(input.bulkIds)
       ? input.bulkIds.filter(Number.isFinite).slice(0, 5000)
@@ -830,6 +834,7 @@ async function buildDashboard(input: DashboardFilters) {
   const cachedProductAnalysis =
     filters.view === "products" &&
     productAnalysisCache?.key === productAnalysisCacheKey &&
+    productAnalysisCache.attributeIndex === attrIndex &&
     productAnalysisCache.expiresAt > Date.now()
       ? productAnalysisCache.value
       : null;
@@ -848,7 +853,7 @@ async function buildDashboard(input: DashboardFilters) {
     exactMonthBaselineDate !== comparisonDate
       ? readDailySnapshot(exactMonthBaselineDate)
       : Promise.resolve(null),
-    filters.view === "overview"
+    filters.view === "overview" && filters.includeAnalytics
       ? readCtr(products, today)
       : Promise.resolve<CtrSummary>({
           available: false,
@@ -1625,6 +1630,7 @@ async function buildDashboard(input: DashboardFilters) {
         contentAvailable: baseRows.some((row) => row.requiredAttrsConfigured),
       };
       productAnalysisCache = {
+        attributeIndex: attrIndex,
         key: productAnalysisCacheKey,
         expiresAt:
           Date.now() +
@@ -1765,10 +1771,31 @@ async function buildDashboard(input: DashboardFilters) {
   };
 }
 
+async function dashboardResponse(input: DashboardFilters) {
+  const started = performance.now();
+  const filters = normalizeFilters(input || {});
+  filters.bulkIds = [...new Set(filters.bulkIds)].sort((a, b) => a - b);
+  const result = filters.exportAll
+    ? { value: JSON.stringify(await buildDashboard(filters)), status: "bypass" }
+    : await getServerResult({
+        namespace: "product-dashboard-json",
+        key: `${dateInKyiv()}:${JSON.stringify(filters)}`,
+        ttlMs: 30_000,
+        maxEntries: 48,
+        load: async () => JSON.stringify(await buildDashboard(filters)),
+      });
+  return new NextResponse(result.value, { headers: {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "private, no-store",
+    "X-Agromat-Cache": result.status,
+    "Server-Timing": `dashboard;dur=${(performance.now() - started).toFixed(1)}`,
+  } });
+}
+
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  return NextResponse.json(
-    await buildDashboard({
+  return dashboardResponse({
+      includeAnalytics: params.get("analytics") !== "0",
       view: (params.get("view") || "overview") as DashboardFilters["view"],
       page: Number(params.get("page")) || 1,
       limit: Number(params.get("limit")) || 15,
@@ -1786,20 +1813,10 @@ export async function GET(request: Request) {
         null) as DashboardFilters["productSignal"],
       processingStatus: (params.get("processingStatus") ||
         undefined) as DashboardFilters["processingStatus"],
-    }),
-    {
-      headers: {
-        "Cache-Control": "private, max-age=30, stale-while-revalidate=300",
-      },
-    },
-  );
+    });
 }
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
-  return NextResponse.json(await buildDashboard(body as DashboardFilters), {
-    headers: {
-      "Cache-Control": "private, max-age=30, stale-while-revalidate=300",
-    },
-  });
+  return dashboardResponse(body as DashboardFilters);
 }

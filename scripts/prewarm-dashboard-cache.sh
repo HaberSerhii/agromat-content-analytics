@@ -8,6 +8,12 @@ APP_PORT_OVERRIDE="${APP_PORT:-}"
 LOG_OVERRIDE="${DASHBOARD_PREWARM_LOG:-}"
 MAX_TIME_OVERRIDE="${DASHBOARD_PREWARM_MAX_TIME_SEC:-}"
 
+# Acquire a process lock before reading environment or contacting any source.
+# Linux flock is installed by the VPS storage setup (util-linux).
+if [ "${DASHBOARD_PREWARM_LOCKED:-0}" != "1" ]; then
+  exec flock -n "$APP_DIR/.dashboard-prewarm.lock" env DASHBOARD_PREWARM_LOCKED=1 bash "$0" "$@"
+fi
+
 cd "$APP_DIR"
 if [ -f ".env" ]; then
   set -a
@@ -27,7 +33,8 @@ if [ -z "${CRON_SECRET:-}" ]; then
 fi
 
 failed=0
-warm_url() {
+pending_warms=()
+warm_request() {
   local label="$1"
   local url="$2"
   local authorization="${3:-}"
@@ -39,9 +46,22 @@ warm_url() {
   if [ -n "$authorization" ]; then
     args+=( -H "Authorization: $authorization" )
   fi
-  printf "%s " "$label"
-  if ! curl -fsS "${args[@]}" "$url"; then
-    failed=1
+  local output
+  if output=$(curl -fsS "${args[@]}" "$url" 2>&1); then
+    printf "%s %s\n" "$label" "$output"
+  else
+    printf "%s %s\n" "$label" "$output"
+    return 1
+  fi
+}
+
+# Two independent requests at a time; every child exit is checked.
+warm_url() {
+  warm_request "$@" &
+  pending_warms+=("$!")
+  if [ "${#pending_warms[@]}" -ge 2 ]; then
+    if ! wait "${pending_warms[0]}"; then failed=1; fi
+    pending_warms=("${pending_warms[@]:1}")
   fi
 }
 
@@ -72,13 +92,16 @@ read -r promotion_week_from promotion_week_to < <(node -e '
     "http://127.0.0.1:${APP_PORT}/api/products?page=1&limit=50&status_ids=5%2C3&sort_by=firstSeenAt&sort_dir=desc"
   warm_url \
     "product_cards_v2_overview" \
-    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&page=1&limit=25&statusId=5"
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&page=1&limit=15&statusId=5&analytics=0"
+  warm_url \
+    "product_cards_v2_overview_analytics" \
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&page=1&limit=15&statusId=5"
   warm_url \
     "product_cards_v2_products" \
-    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=products&page=1&limit=25"
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=products&page=1&limit=15&statusId=5&processingStatus=unprocessed"
   warm_url \
     "product_cards_v2_categories" \
-    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=categories&page=1&limit=25"
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=categories&page=1&limit=15&statusId=5"
   # Keep the legacy comparison report warm too. Its 15-minute server cache is
   # invalidated immediately by parser jobs and manual report mutations.
   warm_url \
@@ -86,10 +109,12 @@ read -r promotion_week_from promotion_week_to < <(node -e '
     "http://127.0.0.1:5000/"
   warm_url \
     "parser_dashboard_v2" \
-    "http://127.0.0.1:${APP_PORT}/api/parser/dashboard-v2?limit=20"
+    "http://127.0.0.1:${APP_PORT}/api/parser/dashboard-v2?limit=20&prewarm=1" \
+    "Bearer ${CRON_SECRET}"
   warm_url \
     "sales_compact" \
-    "http://127.0.0.1:${APP_PORT}/api/sales?from=${month_start}&to=${today}&compact=1"
+    "http://127.0.0.1:${APP_PORT}/api/sales?from=${month_start}&to=${today}&compact=1&prewarm=1" \
+    "Bearer ${CRON_SECRET}"
   warm_url \
     "promotion_sales_compact" \
     "http://127.0.0.1:${APP_PORT}/api/promotions/sales?from=${month_start}&to=${today}&compact=1"
@@ -102,6 +127,9 @@ read -r promotion_week_from promotion_week_to < <(node -e '
   warm_url \
     "promotion_product_metrics_compact" \
     "http://127.0.0.1:${APP_PORT}/api/promotions/product-metrics?url=https%3A%2F%2Fwww.agromat.ua%2F&from=${promotion_week_from}&to=${promotion_week_to}&channel=all&device=all&include_out_of_stock=0&compact=1"
+  for warm_pid in "${pending_warms[@]}"; do
+    if ! wait "$warm_pid"; then failed=1; fi
+  done
 } >> "$LOG" 2>&1
 
 exit "$failed"

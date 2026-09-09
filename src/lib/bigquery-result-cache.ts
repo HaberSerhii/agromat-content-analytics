@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
-import fs from "fs";
+import { promises as fs } from "node:fs";
+import { promisify } from "node:util";
 import path from "path";
 import zlib from "zlib";
 
@@ -10,7 +11,19 @@ type CacheEnvelope<T> = {
   value: T;
 };
 
-const memoryCache = new Map<string, unknown>();
+const memoryCache = new Map<string, { value: unknown; expiresAt: number }>();
+const gzip = promisify(zlib.gzip);
+const gunzip = promisify(zlib.gunzip);
+const MAX_MEMORY_ENTRIES = 32;
+function remember(key: string, value: unknown) {
+  const now = Date.now();
+  for (const [name, entry] of memoryCache)
+    if (entry.expiresAt <= now) memoryCache.delete(name);
+  memoryCache.delete(key);
+  while (memoryCache.size >= MAX_MEMORY_ENTRIES)
+    memoryCache.delete(memoryCache.keys().next().value!);
+  memoryCache.set(key, { value, expiresAt: now + 60 * 60_000 });
+}
 const inFlight = new Map<string, Promise<unknown>>();
 const DEFAULT_RETENTION_DAYS = 35;
 const MAX_FILES_PER_NAMESPACE = 500;
@@ -41,45 +54,53 @@ function cacheFile(namespace: string, key: string): string {
 
 function retentionMs(): number {
   const configured = Number(
-    process.env.BIGQUERY_RESULT_CACHE_RETENTION_DAYS ||
-      DEFAULT_RETENTION_DAYS,
+    process.env.BIGQUERY_RESULT_CACHE_RETENTION_DAYS || DEFAULT_RETENTION_DAYS,
   );
-  const days = Number.isFinite(configured) && configured > 0
-    ? configured
-    : DEFAULT_RETENTION_DAYS;
+  const days =
+    Number.isFinite(configured) && configured > 0
+      ? configured
+      : DEFAULT_RETENTION_DAYS;
   return days * 24 * 60 * 60_000;
 }
 
-function pruneNamespace(directory: string): void {
+async function pruneNamespace(directory: string): Promise<void> {
   try {
     const now = Date.now();
-    const files = fs
-      .readdirSync(directory)
-      .filter((name) => name.endsWith(".json.gz"))
-      .map((name) => {
-        const file = path.join(directory, name);
-        return { file, modifiedAt: fs.statSync(file).mtimeMs };
-      })
-      .sort((left, right) => right.modifiedAt - left.modifiedAt);
-    for (const entry of files) {
-      if (now - entry.modifiedAt > retentionMs()) fs.unlinkSync(entry.file);
-    }
-    const remaining = files.filter(
-      (entry) => now - entry.modifiedAt <= retentionMs(),
+    const names = (await fs.readdir(directory)).filter((name) =>
+      name.endsWith(".json.gz"),
     );
-    for (const entry of remaining.slice(MAX_FILES_PER_NAMESPACE))
-      fs.unlinkSync(entry.file);
+    const files = [];
+    for (const name of names) {
+      const file = path.join(directory, name);
+      const stat = await fs.stat(file).catch(() => null);
+      if (stat) files.push({ file, modifiedAt: stat.mtimeMs });
+    }
+    files.sort((a, b) => b.modifiedAt - a.modifiedAt);
+    for (const [index, entry] of files.entries()) {
+      if (
+        now - entry.modifiedAt > retentionMs() ||
+        index >= MAX_FILES_PER_NAMESPACE
+      ) {
+        await fs.unlink(entry.file).catch(() => undefined);
+      }
+    }
   } catch (error) {
     console.error("[bigquery-cache] prune failed:", error);
   }
 }
 
-function readDisk<T>(namespace: string, key: string): T | null {
+async function readDisk<T>(namespace: string, key: string): Promise<T | null> {
   try {
     const file = cacheFile(namespace, key);
-    const raw = zlib.gunzipSync(fs.readFileSync(file)).toString("utf8");
+    const raw = (await gunzip(await fs.readFile(file))).toString("utf8");
     const envelope = JSON.parse(raw) as CacheEnvelope<T>;
-    if (envelope?.version !== 1 || envelope.key !== key) return null;
+    if (
+      envelope?.version !== 1 ||
+      envelope.key !== key ||
+      !Number.isFinite(Date.parse(envelope.createdAt)) ||
+      Date.now() - Date.parse(envelope.createdAt) > retentionMs()
+    )
+      return null;
     return envelope.value;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT")
@@ -88,10 +109,14 @@ function readDisk<T>(namespace: string, key: string): T | null {
   }
 }
 
-function writeDisk<T>(namespace: string, key: string, value: T): void {
+async function writeDisk<T>(
+  namespace: string,
+  key: string,
+  value: T,
+): Promise<void> {
   try {
     const file = cacheFile(namespace, key);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    await fs.mkdir(path.dirname(file), { recursive: true });
     const envelope: CacheEnvelope<T> = {
       version: 1,
       key,
@@ -99,12 +124,12 @@ function writeDisk<T>(namespace: string, key: string, value: T): void {
       value,
     };
     const temporary = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(
+    await fs.writeFile(
       temporary,
-      zlib.gzipSync(JSON.stringify(envelope), { level: 6 }),
+      await gzip(JSON.stringify(envelope), { level: 6 }),
     );
-    fs.renameSync(temporary, file);
-    pruneNamespace(path.dirname(file));
+    await fs.rename(temporary, file);
+    void pruneNamespace(path.dirname(file));
   } catch (error) {
     console.error(`[bigquery-cache] ${namespace} write failed:`, error);
   }
@@ -116,26 +141,27 @@ export async function readThroughBigQueryCache<T>(options: {
   load: () => Promise<T>;
 }): Promise<T> {
   const compositeKey = `${options.namespace}:${options.key}`;
-  if (memoryCache.has(compositeKey))
-    return memoryCache.get(compositeKey) as T;
-
-  const diskValue = readDisk<T>(options.namespace, options.key);
-  if (diskValue != null) {
-    memoryCache.set(compositeKey, diskValue);
-    return diskValue;
+  const cached = memoryCache.get(compositeKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    memoryCache.delete(compositeKey);
+    memoryCache.set(compositeKey, cached);
+    return cached.value as T;
   }
-
+  memoryCache.delete(compositeKey);
   const pending = inFlight.get(compositeKey);
   if (pending) return pending as Promise<T>;
 
-  const loadPromise = options
-    .load()
-    .then((value) => {
-      memoryCache.set(compositeKey, value);
-      writeDisk(options.namespace, options.key, value);
-      return value;
-    })
-    .finally(() => inFlight.delete(compositeKey));
-  inFlight.set(compositeKey, loadPromise);
-  return loadPromise;
+  const work = (async () => {
+    const diskValue = await readDisk<T>(options.namespace, options.key);
+    if (diskValue != null) {
+      remember(compositeKey, diskValue);
+      return diskValue;
+    }
+    const value = await options.load();
+    remember(compositeKey, value);
+    await writeDisk(options.namespace, options.key, value);
+    return value;
+  })().finally(() => inFlight.delete(compositeKey));
+  inFlight.set(compositeKey, work);
+  return work;
 }

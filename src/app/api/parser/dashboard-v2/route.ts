@@ -1,3 +1,5 @@
+import { readPersistentResult, writePersistentResult } from "@/lib/persistent-result-cache";
+import { hasServerBearer } from "@/lib/dashboard-auth";
 import { NextResponse } from "next/server";
 import { GET as parserPricesGet } from "@/app/api/parser/prices/route";
 import { getSupabase } from "@/lib/supabase";
@@ -457,11 +459,10 @@ function changedProducts(currentRows: PriceRow[], previousRows: PriceRow[]): Set
 }
 
 async function buildDashboardBase(forceRefresh = false): Promise<DashboardBase> {
-  const current = await loadPrices(undefined, true, forceRefresh);
+  const [current, products] = await Promise.all([loadPrices(undefined, true, forceRefresh), fetchAllProducts()]);
   const priorDate = previousDate(current.snapshotDate);
-  const [prior, products, auditRows, newProductQueue] = await Promise.all([
+  const [prior, auditRows, newProductQueue] = await Promise.all([
     priorDate ? loadPrices(priorDate) : Promise.resolve({ rows: [] } as unknown as PricesPayload),
-    fetchAllProducts(),
     fetchAuditForDate(current.snapshotDate),
     fetchOpenNewProductQueue(),
   ]);
@@ -688,32 +689,39 @@ function facetValues(rows: PriceRow[], field: "category" | "brand"): FacetValue[
     .sort((a, b) => a.value.localeCompare(b.value, "uk"));
 }
 
+let restorePromise: Promise<void> | undefined;
+function restoreBase() {
+  restorePromise ??= (async () => {
+    const saved = await readPersistentResult<DashboardBase>("parser-dashboard-v1", BASE_TTL_MS + 5 * 60_000);
+    if (saved) putServerResult({
+      namespace: "parser-dashboard-v2", key: "base", value: saved.value,
+      ttlMs: Math.max(0, BASE_TTL_MS - (Date.now() - saved.createdAt)),
+      staleMs: Math.min(5 * 60_000, BASE_TTL_MS + 5 * 60_000 - (Date.now() - saved.createdAt)), maxEntries: 1,
+    });
+  })();
+  return restorePromise;
+}
+async function rebuildBase(force = false) {
+  const value = await buildDashboardBase(force);
+  await writePersistentResult("parser-dashboard-v1", value);
+  return value;
+}
+
 export async function GET(request: Request) {
+  const started = performance.now();
   try {
+    await restoreBase();
     const query = new URL(request.url).searchParams;
     const forceRefresh = query.get("refresh") === "1";
-    let base: DashboardBase;
-    let cacheStatus: string = "miss";
-    if (forceRefresh) {
-      base = await buildDashboardBase(true);
-      putServerResult({
-        namespace: "parser-dashboard-v2",
-        key: "base",
-        value: base,
-        ttlMs: BASE_TTL_MS,
-        maxEntries: 1,
-      });
-    } else {
-      const cached = await getServerResult({
-        namespace: "parser-dashboard-v2",
-        key: "base",
-        ttlMs: BASE_TTL_MS,
-        maxEntries: 1,
-        load: buildDashboardBase,
-      });
-      base = cached.value;
-      cacheStatus = cached.status;
-    }
+    const prewarm = query.get("prewarm") === "1" && hasServerBearer(request, "CRON_SECRET");
+    const cached = await getServerResult({
+      namespace: "parser-dashboard-v2", key: "base", ttlMs: BASE_TTL_MS,
+      maxEntries: 1, staleMs: 5 * 60_000,
+      refresh: forceRefresh || prewarm,
+      load: () => rebuildBase(forceRefresh || prewarm),
+    });
+    const base = cached.value;
+    const cacheStatus = cached.status;
     const page = Math.max(1, Number(query.get("page")) || 1);
     const limit = Math.min(100, Math.max(10, Number(query.get("limit")) || 20));
     const search = (query.get("search") || "").trim().toLowerCase();
@@ -816,6 +824,11 @@ export async function GET(request: Request) {
       page,
       limit,
     };
+    const responseOptions = { headers: {
+      "Cache-Control": "private, no-store",
+      "X-Agromat-Cache": cacheStatus,
+      "Server-Timing": `prices;dur=${(performance.now() - started).toFixed(1)}`,
+    } };
     if (query.get("compact") === "1") {
       return NextResponse.json({
         currentDate: base.currentDate,
@@ -824,9 +837,9 @@ export async function GET(request: Request) {
         total: responseBody.total,
         page,
         limit,
-      });
+      }, responseOptions);
     }
-    return NextResponse.json(responseBody);
+    return NextResponse.json(responseBody, responseOptions);
   } catch (error) {
     return NextResponse.json({
       error: error instanceof Error ? error.message : "parser_dashboard_v2_failed",

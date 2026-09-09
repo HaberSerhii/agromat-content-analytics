@@ -1,3 +1,4 @@
+import { invalidateServerResults } from "@/lib/server-result-cache";
 import { randomUUID } from "node:crypto";
 import { getRedis } from "@/lib/redis";
 import type {
@@ -181,6 +182,7 @@ export async function saveContentProductReview(
       member: review.id,
     }),
   ]);
+  invalidateServerResults("product-dashboard-json");
   return review;
 }
 
@@ -200,5 +202,6 @@ export async function completeContentProductReview(
     redis.del(activeKey(completed.code)),
     redis.zrem(DUE_INDEX_KEY, completed.id),
   ]);
+  invalidateServerResults("product-dashboard-json");
   return completed;
 }

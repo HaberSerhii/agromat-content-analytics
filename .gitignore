@@ -44,3 +44,6 @@ next-env.d.ts
 # generated reports, exports, workbooks, parser snapshots, and local output deps
 /output/
 /outputs/
+
+# Host-local lock for dashboard cache warming
+.dashboard-prewarm.lock

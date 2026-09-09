@@ -1381,7 +1381,7 @@ function StatusSummaryList({
   );
 }
 
-export function SalesDashboard() {
+export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [view, setView] = useState<SalesDashboardView>("overview");
   const [pricePosition, setPricePosition] = useState<PromotionPricePosition>("all");
@@ -1424,29 +1424,33 @@ export function SalesDashboard() {
   const webshopScopeRef = useRef("");
   const liveCurrentMonthRef = useRef(true);
 
+  const lastRefreshAtRef = useRef(Date.now());
   useEffect(() => {
-    let lastRefreshAt = Date.now();
+    if (!isActive) return;
+    const isVisible = () => document.visibilityState === "visible";
     const refresh = () => {
+      if (!isVisible()) return;
       if (liveCurrentMonthRef.current) {
         const range = currentMonthRange();
         setDateFrom(range.from);
         setDateTo(range.to);
       }
-      lastRefreshAt = Date.now();
+      lastRefreshAtRef.current = Date.now();
       setRefreshTick((current) => current + 1);
     };
     const interval = window.setInterval(refresh, SALES_AUTO_REFRESH_MS);
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible" && Date.now() - lastRefreshAt >= SALES_AUTO_REFRESH_MS) {
+      if (document.visibilityState === "visible" && Date.now() - lastRefreshAtRef.current >= SALES_AUTO_REFRESH_MS) {
         refresh();
       }
     };
+    refreshWhenVisible();
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
     setCategoryProducts({});

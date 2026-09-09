@@ -1,3 +1,6 @@
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { createHash } from "node:crypto";
+import { readPersistentResult, writePersistentResult } from "@/lib/persistent-result-cache";
 import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getMonthlyManagerPlan, getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
 import { readAllLite } from "@/lib/products-store";
@@ -887,17 +890,16 @@ async function getGroupNameById() {
   return groupNameByIdCache;
 }
 
-function parseSalesRows(
+function* iterateSalesRows(
   csvText: string,
   groupNameById: Map<string, string>,
   productMetaByCode: Map<string, { name: string; brand: string; category: string; url: string }>,
-): ParsedSalesRow[] {
+): Generator<ParsedSalesRow> {
   const lines = csvText.replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
   const headers = parseCsvLine(lines[0] || "");
   const idx = new Map(headers.map((header, index) => [header, index]));
 
   const get = (values: string[], key: string) => values[idx.get(key) ?? -1] || "";
-  const rows: ParsedSalesRow[] = [];
 
   for (const line of lines.slice(1)) {
     const values = parseCsvLine(line);
@@ -975,9 +977,22 @@ function parseSalesRows(
       hasOwnCostData: ownCosts.some((value) => value > 0),
     };
 
-    rows.push(row);
+    yield row;
   }
 
+}
+
+export function parseSalesRows(...args: Parameters<typeof iterateSalesRows>): ParsedSalesRow[] {
+  return Array.from(iterateSalesRows(...args));
+}
+
+async function parseSalesRowsBatched(...args: Parameters<typeof iterateSalesRows>): Promise<ParsedSalesRow[]> {
+  const rows: ParsedSalesRow[] = [];
+  for (const row of iterateSalesRows(...args)) {
+    rows.push(row);
+    // Yield between small batches so another dashboard is not blocked by CSV parsing.
+    if (rows.length % 256 === 0) await yieldToEventLoop();
+  }
   return rows;
 }
 
@@ -1485,7 +1500,6 @@ async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<Cache
   }
 
   const [groupNameById, productMetaByCode] = await Promise.all([getGroupNameById(), getProductMetaByCode()]);
-  const csvText = await readS3Text(getSalesS3Url());
 
   const nextRefresh = getNextKyivSix();
   const source = {
@@ -1496,7 +1510,12 @@ async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<Cache
     refreshPolicy: "Дані перечитуються з S3 після 06:00 за Києвом або коли зміниться файл",
     nextRefreshAt: nextRefresh.toISOString(),
   };
-  const rows = parseSalesRows(csvText, groupNameById, productMetaByCode);
+  const enrichmentKey = createHash("sha256").update(JSON.stringify([bucket, key, [...groupNameById], [...productMetaByCode]])).digest("hex");
+  const saved = await readPersistentResult<{ signature: string; enrichmentKey: string; rows: ParsedSalesRow[] }>("sales-rows-v1", 24 * 60 * 60_000);
+  const rows = saved?.value.signature === signature && saved.value.enrichmentKey === enrichmentKey
+    ? saved.value.rows
+    : await parseSalesRowsBatched(await readS3Text(getSalesS3Url()), groupNameById, productMetaByCode);
+  if (rows !== saved?.value.rows) await writePersistentResult("sales-rows-v1", { signature, enrichmentKey, rows });
   state.cached = { signature, rows, source, expiresAt: nextRefresh.getTime() };
   state.nextSignatureCheckAt = Math.min(Date.now() + revalidateMs, nextRefresh.getTime());
   return { rows, source };

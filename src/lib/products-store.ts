@@ -2,6 +2,7 @@
 // Redis stores live lite/full data, sync state, changes and timeline.
 // Daily "as of date" snapshots live on VPS disk as gzip files.
 
+import { getServerResult, invalidateServerResults } from "@/lib/server-result-cache";
 import { getRedis } from "@/lib/redis";
 import {
   listDailySnapshotsOnDisk,
@@ -474,6 +475,7 @@ const LITE_CACHE_FAST_TTL_MS = 30_000;        // skip Redis entirely
 const LITE_CACHE_PROBE_TTL_MS = 60 * 60_000;  // 1h — beyond this, force reload
 declare global {
   var _productsLiteCache: { ts: number; key: string; data: ProductLite[] } | undefined;
+  var _productsAttrGeneration: number | undefined;
   var _productsAttrIndexCache: { ts: number; key: string; data: Map<number, { id: number; name: string }[]> } | undefined;
 }
 
@@ -570,6 +572,7 @@ export async function writeAllLite(products: ProductLite[], syncedAt: string): P
   await Promise.all(writes);
   // Invalidate in-process cache so the next read picks up the fresh snapshot
   global._productsLiteCache = undefined;
+  invalidateServerResults("product-dashboard-json");
   // Mirror to disk so the next cold load skips the 31-shard Redis pipeline.
   // Sync I/O is OK here — sync already takes minutes; an extra ~100ms is noise.
   writeDiskSnapshot(products, syncedAt);
@@ -588,6 +591,7 @@ export async function readProductAttributeIndex(): Promise<Map<number, { id: num
   const redis = getRedis();
   const syncedAt = ((await redis.get(K.liteSyncAt)) as string | null) ?? "";
   const key = syncedAt;
+  const generation = global._productsAttrGeneration ?? 0;
   const cache = global._productsAttrIndexCache;
   const now = Date.now();
   if (cache && cache.key === key && now - cache.ts < LITE_CACHE_PROBE_TTL_MS) {
@@ -595,22 +599,38 @@ export async function readProductAttributeIndex(): Promise<Map<number, { id: num
     return cache.data;
   }
 
-  const pipe = redis.pipeline();
-  for (let i = 0; i < FULL_SHARD_COUNT; i++) pipe.get(K.fullShard(i));
-  const raws = (await pipe.exec()) as (string | null)[];
-
-  const out = new Map<number, { id: number; name: string }[]>();
-  for (const raw of raws) {
-    if (!raw) continue;
-    try {
-      const shard = JSON.parse(raw) as ProductFull[];
-      for (const p of shard) {
-        out.set(p.id, (p.attributes || []).map((a) => ({ id: a.id, name: a.name })));
+  const { value: data } = await getServerResult({
+    namespace: "product-attribute-index",
+    key,
+    ttlMs: LITE_CACHE_PROBE_TTL_MS,
+    maxEntries: 1,
+    load: async () => {
+      const compactRaw = await redis.get("products:attribute-index:v1") as string | null;
+      if (compactRaw) {
+        try {
+          const compact = JSON.parse(compactRaw) as { syncedAt: string; entries: [number, { id: number; name: string }[]][] };
+          if (compact.syncedAt === key && Array.isArray(compact.entries)) return new Map(compact.entries);
+        } catch { /* Older installations can rebuild from full shards. */ }
       }
-    } catch { /* skip corrupted shard */ }
-  }
-  global._productsAttrIndexCache = { ts: now, key, data: out };
-  return out;
+      const pipe = redis.pipeline();
+      for (let i = 0; i < FULL_SHARD_COUNT; i++) pipe.get(K.fullShard(i));
+      const raws = (await pipe.exec()) as (string | null)[];
+
+      const out = new Map<number, { id: number; name: string }[]>();
+      for (const raw of raws) {
+        if (!raw) continue;
+        try {
+          const shard = JSON.parse(raw) as ProductFull[];
+          for (const p of shard) {
+            out.set(p.id, (p.attributes || []).map((a) => ({ id: a.id, name: a.name })));
+          }
+        } catch { /* skip corrupted shard */ }
+      }
+      return out;
+    },
+  });
+  if ((global._productsAttrGeneration ?? 0) === generation) global._productsAttrIndexCache = { ts: now, key, data };
+  return data;
 }
 
 // ── Full record (for drill-down) ────────────────────────────────────────────
@@ -638,12 +658,17 @@ export async function writeFull(p: ProductFull): Promise<void> {
   const idx = shard.findIndex((x) => x.id === p.id);
   if (idx >= 0) shard[idx] = p; else shard.push(p);
   await redis.set(shardKey, JSON.stringify(shard), { ex: FULL_TTL_SEC });
+  await redis.del("products:attribute-index:v1");
+  global._productsAttrIndexCache = undefined;
+  global._productsAttrGeneration = (global._productsAttrGeneration ?? 0) + 1;
+  invalidateServerResults("product-attribute-index");
+  invalidateServerResults("product-dashboard-json");
 }
 
 // Bulk shard write — call at the end of a full sync. Spreads writes across
 // FULL_SHARD_COUNT shards via deterministic hashing; runs with capped parallelism
 // to stay within Upstash REST rate limits.
-export async function writeAllFull(fulls: ProductFull[]): Promise<{ shards: number; bytes: number }> {
+export async function writeAllFull(fulls: ProductFull[], syncedAt?: string): Promise<{ shards: number; bytes: number }> {
   const redis = getRedis();
   const buckets: ProductFull[][] = Array.from({ length: FULL_SHARD_COUNT }, () => []);
   for (const f of fulls) buckets[shardForId(f.id)].push(f);
@@ -660,6 +685,15 @@ export async function writeAllFull(fulls: ProductFull[]): Promise<{ shards: numb
       }),
     );
   }
+  if (syncedAt) {
+    // Publish only after all full shards succeeded, using the same sync version.
+    const entries = fulls.map((p) => [p.id, (p.attributes || []).map((a) => ({ id: a.id, name: a.name }))]);
+    await redis.set("products:attribute-index:v1", JSON.stringify({ syncedAt, entries }), { ex: FULL_TTL_SEC });
+  }
+  global._productsAttrIndexCache = undefined;
+  global._productsAttrGeneration = (global._productsAttrGeneration ?? 0) + 1;
+  invalidateServerResults("product-attribute-index");
+  invalidateServerResults("product-dashboard-json");
   return { shards: FULL_SHARD_COUNT, bytes: totalBytes };
 }
 
@@ -712,6 +746,7 @@ export async function readRequiredAttrs(): Promise<RequiredAttrsConfig> {
 export async function writeRequiredAttrs(cfg: RequiredAttrsConfig): Promise<void> {
   const redis = getRedis();
   await redis.set(K.requiredAttrs, JSON.stringify(cfg));
+  invalidateServerResults("product-dashboard-json");
 }
 
 // ── Excluded categories ─────────────────────────────────────────────────────

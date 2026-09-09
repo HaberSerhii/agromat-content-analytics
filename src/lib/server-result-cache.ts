@@ -1,7 +1,9 @@
-type CacheStatus = "hit" | "miss" | "shared";
+type CacheStatus = "hit" | "miss" | "shared" | "stale";
 
 type CacheEntry = {
   expiresAt: number;
+  staleUntil?: number;
+  retryAt?: number;
   lastAccess: number;
   hasValue: boolean;
   value?: unknown;
@@ -9,7 +11,9 @@ type CacheEntry = {
 };
 
 declare global {
-  var _agromatServerResultCaches: Map<string, Map<string, CacheEntry>> | undefined;
+  var _agromatServerResultCaches:
+    | Map<string, Map<string, CacheEntry>>
+    | undefined;
 }
 
 function namespaceCache(namespace: string): Map<string, CacheEntry> {
@@ -22,9 +26,14 @@ function namespaceCache(namespace: string): Map<string, CacheEntry> {
   return cache;
 }
 
-function prune(cache: Map<string, CacheEntry>, now: number, maxEntries: number) {
+function prune(
+  cache: Map<string, CacheEntry>,
+  now: number,
+  maxEntries: number,
+) {
   for (const [key, entry] of cache) {
-    if (!entry.pending && entry.expiresAt <= now) cache.delete(key);
+    if (!entry.pending && (entry.staleUntil ?? entry.expiresAt) <= now)
+      cache.delete(key);
   }
   while (cache.size >= maxEntries) {
     const oldest = [...cache.entries()]
@@ -44,42 +53,68 @@ export async function getServerResult<T>(options: {
   key: string;
   ttlMs: number;
   maxEntries?: number;
+  staleMs?: number;
+  refresh?: boolean;
   load: () => Promise<T>;
 }): Promise<{ value: T; status: CacheStatus }> {
   const cache = namespaceCache(options.namespace);
   const now = Date.now();
   const current = cache.get(options.key);
 
-  if (current?.hasValue && current.expiresAt > now) {
+  if (!options.refresh && current?.hasValue && current.expiresAt > now) {
     current.lastAccess = now;
     return { value: current.value as T, status: "hit" };
   }
+  const canServeStale =
+    !options.refresh && current?.hasValue && (current.staleUntil ?? 0) > now;
+  if (canServeStale && (current.pending || (current.retryAt ?? 0) > now)) {
+    current.lastAccess = now;
+    return { value: current.value as T, status: "stale" };
+  }
   if (current?.pending) {
-    return { value: await current.pending as T, status: "shared" };
+    return { value: (await current.pending) as T, status: "shared" };
   }
 
   prune(cache, now, Math.max(1, options.maxEntries ?? 32));
-  const entry: CacheEntry = {
-    expiresAt: 0,
-    lastAccess: now,
-    hasValue: false,
-  };
-  const pending = options.load();
+  const entry: CacheEntry = current?.hasValue
+    ? current
+    : {
+        expiresAt: 0,
+        lastAccess: now,
+        hasValue: false,
+      };
+  // Defer the loader until the promise is registered (including synchronous failures).
+  const pending = Promise.resolve().then(options.load);
   entry.pending = pending;
   cache.set(options.key, entry);
 
-  try {
-    const value = await pending;
-    entry.value = value;
-    entry.hasValue = true;
-    entry.pending = undefined;
-    entry.expiresAt = Date.now() + options.ttlMs;
-    entry.lastAccess = Date.now();
-    return { value, status: "miss" };
-  } catch (error) {
-    if (cache.get(options.key) === entry) cache.delete(options.key);
-    throw error;
+  const complete = async (): Promise<T> => {
+    try {
+      const value = await pending;
+      entry.value = value;
+      entry.hasValue = true;
+      entry.pending = undefined;
+      entry.expiresAt = Date.now() + options.ttlMs;
+      entry.staleUntil = entry.expiresAt + (options.staleMs ?? 0);
+      entry.retryAt = 0;
+      entry.lastAccess = Date.now();
+      return value;
+    } catch (error) {
+      entry.pending = undefined;
+      entry.retryAt = Date.now() + 10_000;
+      if (!entry.hasValue || (entry.staleUntil ?? 0) <= Date.now()) {
+        if (cache.get(options.key) === entry) cache.delete(options.key);
+      }
+      throw error;
+    }
+  };
+  const completion = complete();
+  entry.pending = completion;
+  if (canServeStale) {
+    void completion.catch(() => undefined);
+    return { value: entry.value as T, status: "stale" };
   }
+  return { value: await completion, status: "miss" };
 }
 
 export function putServerResult<T>(options: {
@@ -88,23 +123,34 @@ export function putServerResult<T>(options: {
   value: T;
   ttlMs: number;
   maxEntries?: number;
+  staleMs?: number;
 }) {
   const cache = namespaceCache(options.namespace);
   const now = Date.now();
   prune(cache, now, Math.max(1, options.maxEntries ?? 32));
   cache.set(options.key, {
     expiresAt: now + options.ttlMs,
+    staleUntil: now + options.ttlMs + (options.staleMs ?? 0),
     lastAccess: now,
     hasValue: true,
     value: options.value,
   });
 }
 
+/** In-flight readers may finish, but their result cannot repopulate this namespace. */
+export function invalidateServerResults(namespace: string) {
+  global._agromatServerResultCaches?.get(namespace)?.clear();
+}
+
 export function canonicalSearchParams(params: URLSearchParams): string {
   return [...params.entries()]
-    .sort(([leftKey, leftValue], [rightKey, rightValue]) => (
-      leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
-    ))
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .sort(
+      ([leftKey, leftValue], [rightKey, rightValue]) =>
+        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+    )
+    .map(
+      ([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
+    )
     .join("&");
 }

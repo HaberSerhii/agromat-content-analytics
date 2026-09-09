@@ -406,7 +406,7 @@ export async function runSync(): Promise<SyncState> {
     //    falls back to live API; the table still works.
     await writeAllLite(lites, startedAt);
     try {
-      await writeAllFull(fulls);
+      await writeAllFull(fulls, startedAt);
     } catch (e) {
       console.warn("[products-sync] writeAllFull failed (drill-downs will fetch live):", e instanceof Error ? e.message : e);
     }

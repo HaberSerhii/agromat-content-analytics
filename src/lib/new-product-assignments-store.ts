@@ -1,3 +1,4 @@
+import { invalidateServerResults } from "@/lib/server-result-cache";
 import { randomUUID } from "node:crypto";
 import { getRedis } from "@/lib/redis";
 import type { ContentReviewManager } from "@/lib/content-review-types";
@@ -123,6 +124,7 @@ export async function saveNewProductAssignment(
       member: assignment.id,
     }),
   ]);
+  invalidateServerResults("product-dashboard-json");
   return assignment;
 }
 
@@ -140,5 +142,6 @@ export async function completeNewProductAssignment(
     redis.set(recordKey(completed.id), JSON.stringify(completed)),
     redis.zrem(DUE_INDEX_KEY, completed.id),
   ]);
+  invalidateServerResults("product-dashboard-json");
   return completed;
 }
