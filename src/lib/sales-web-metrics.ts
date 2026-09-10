@@ -126,18 +126,31 @@ WITH calendar AS (
     INTERVAL 1 MONTH
   )) AS month
 ),
-base AS (
+raw_base AS (
   SELECT
     PARSE_DATE('%Y%m%d', event_date) AS event_day,
     event_timestamp,
     event_name,
     user_pseudo_id,
     CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS ga_session_id,
-    items
+    event_bundle_sequence_id,
+    items,
+    _TABLE_SUFFIX AS table_suffix
   FROM \`${project}.${dataset}.events_*\`
-  WHERE _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
+  WHERE (
+      _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
+      OR _TABLE_SUFFIX = CONCAT('intraday_', @suffixTo)
+    )
     AND event_name IN ('session_start', 'add_to_cart')
     AND geo.country = 'Ukraine'
+),
+base AS (
+  SELECT * EXCEPT(table_suffix)
+  FROM raw_base
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY event_timestamp, event_name, user_pseudo_id, ga_session_id, event_bundle_sequence_id
+    ORDER BY STARTS_WITH(table_suffix, 'intraday_')
+  ) = 1
 ),
 visits AS (
   SELECT
@@ -207,20 +220,44 @@ function buildProductAddToCartSql() {
   const project = projectId().replace(/`/g, "");
   const dataset = datasetId().replace(/`/g, "");
   return `
-WITH total_sessions AS (
+WITH raw_events AS (
+  SELECT
+    event_timestamp,
+    event_name,
+    user_pseudo_id,
+    CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS ga_session_id,
+    items,
+    geo,
+    event_bundle_sequence_id,
+    _TABLE_SUFFIX AS table_suffix
+  FROM \`${project}.${dataset}.events_*\`
+  WHERE (
+      _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
+      OR _TABLE_SUFFIX = CONCAT('intraday_', @suffixTo)
+    )
+    AND event_name IN ('session_start', 'add_to_cart')
+    AND geo.country = 'Ukraine'
+    AND user_pseudo_id IS NOT NULL
+),
+events AS (
+  SELECT * EXCEPT(table_suffix)
+  FROM raw_events
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY event_timestamp, event_name, user_pseudo_id, ga_session_id, event_bundle_sequence_id
+    ORDER BY STARTS_WITH(table_suffix, 'intraday_')
+  ) = 1
+),
+total_sessions AS (
   SELECT COUNT(DISTINCT CONCAT(
     user_pseudo_id,
     '/',
     COALESCE(
-      CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING),
+      ga_session_id,
       CAST(event_timestamp AS STRING)
     )
   )) AS total_sessions
-  FROM \`${project}.${dataset}.events_*\`
-  WHERE _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
-    AND event_name = 'session_start'
-    AND geo.country = 'Ukraine'
-    AND user_pseudo_id IS NOT NULL
+  FROM events
+  WHERE event_name = 'session_start'
 ),
 cart_rows AS (
 SELECT
@@ -229,17 +266,14 @@ SELECT
     event.user_pseudo_id,
     '/',
     COALESCE(
-      CAST((SELECT value.int_value FROM UNNEST(event.event_params) WHERE key = 'ga_session_id') AS STRING),
+      event.ga_session_id,
       CAST(event.event_timestamp AS STRING)
     )
   ) AS session_key,
   SUM(COALESCE(item.quantity, 1)) AS add_to_cart_items
-FROM \`${project}.${dataset}.events_*\` AS event
+FROM events AS event
 CROSS JOIN UNNEST(event.items) AS item
-WHERE _TABLE_SUFFIX BETWEEN @suffixFrom AND @suffixTo
-  AND event.event_name = 'add_to_cart'
-  AND event.geo.country = 'Ukraine'
-  AND event.user_pseudo_id IS NOT NULL
+WHERE event.event_name = 'add_to_cart'
   AND SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) IS NOT NULL
 GROUP BY goods_ref, session_key
 )
@@ -371,8 +405,8 @@ async function readConversionRankings(range: { from: string; to: string }) {
   const cacheKey = `${range.from}:${range.to}`;
   const [cartRows, products, actualOrderRefsByCode] = await Promise.all([
     readThroughBigQueryCache<ProductAddToCartQueryRow[]>({
-      namespace: "sales-conversion-add-to-cart",
-      key: `v1:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
+      namespace: "sales-conversion-add-to-cart-v2",
+      key: `v2:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
       load: async () => {
         const bigQuery = new BigQuery({ projectId: projectId() });
         const [rows] = await bigQuery.query({
@@ -467,8 +501,8 @@ export async function readSalesWebMetrics(input: {
   const cacheKey = `${range.from}:${range.to}`;
   const [rows, conversions] = await Promise.all([
     readThroughBigQueryCache<QueryRow[]>({
-      namespace: "sales-web-metrics-v2",
-      key: `v2:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
+      namespace: "sales-web-metrics-v3",
+      key: `v3:${bigQueryCacheDay()}:${projectId()}:${datasetId()}:${cacheKey}`,
       load: async () => {
         const bigQuery = new BigQuery({ projectId: projectId() });
         const [queryRows] = await bigQuery.query({
