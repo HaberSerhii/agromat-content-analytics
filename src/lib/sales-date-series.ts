@@ -54,3 +54,7 @@ export function fillOrderDateSeries<TManager>(
   if (!dates.length) return [...points].sort((left, right) => left.date.localeCompare(right.date));
   return dates.map((date) => byDate.get(date) || { date, docs: 0, managers: [] });
 }
+
+export function completedDateSeries<T extends { date: string }>(points: T[], today: string) {
+  return points.filter((point) => point.date < today);
+}

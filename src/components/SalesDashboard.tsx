@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
+import { completedDateSeries } from "@/lib/sales-date-series";
 import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
 type SalesRow = {
@@ -933,7 +934,7 @@ function SalesTrendChart({
   previousDays?: SalesDataset["summary"]["byDate"];
 }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const points = days.slice(-31);
+  const points = completedDateSeries(days, kyivToday()).slice(-31);
   const previousByDate = new Map(previousDays?.map((point) => [point.date, point]) || []);
   const comparisonPoints = previousDays
     ? points.map((point) => previousByDate.get(shiftIsoYear(point.date, -1)) || { date: shiftIsoYear(point.date, -1), docs: 0, goods: 0, revenue: 0 })
