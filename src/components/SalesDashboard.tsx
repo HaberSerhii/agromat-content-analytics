@@ -1024,7 +1024,7 @@ function OrdersTrendChart({
   previousDays?: SalesDataset["summary"]["ordersByDate"];
 }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const points = days.slice(-31);
+  const points = completedDateSeries(days, kyivToday()).slice(-31);
   const previousByDate = new Map(previousDays?.map((point) => [point.date, point]) || []);
   const comparisonPoints = previousDays
     ? points.map((point) => previousByDate.get(shiftIsoYear(point.date, -1)) || { date: shiftIsoYear(point.date, -1), docs: 0, managers: [] })
