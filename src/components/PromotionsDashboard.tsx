@@ -9,7 +9,6 @@ import type {
   PromotionsCatalogResponse,
 } from "@/lib/promotions-types";
 import type { PromotionsKpiFilter } from "@/lib/promotions-catalog-query";
-import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
 type Section = "catalog" | "overview" | "marketing" | "p2" | "brands" | "categories" | "web";
 type SetFilter = Set<string> | null;
@@ -580,7 +579,6 @@ function SummaryCard({
 
 export function PromotionsDashboard() {
   const [section, setSection] = useState<Section>("overview");
-  const [pricePosition, setPricePosition] = useState<PromotionPricePosition>("all");
   const [data, setData] = useState<PromotionsCatalogResponse | null>(null);
   const [historicalPromotions, setHistoricalPromotions] = useState<HistoricalPromotionLink[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -906,32 +904,6 @@ export function PromotionsDashboard() {
               <div className="inline-flex items-center gap-2 rounded-xl border border-[#cfe3f5] bg-[#eef7ff] px-3 py-2 text-[10px] font-bold text-[#176aa8]"><span className="h-2 w-2 rounded-full bg-[#20a66a]" /> Актуальні дані</div>
             </section>
 
-            {(["overview", "marketing", "p2", "brands", "categories"] as Section[]).includes(section) && (
-              <section className="mb-4 flex flex-col gap-3 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <div className="text-[10px] font-black uppercase tracking-[.13em] text-[#7c8792]">Цінова позиція акційних товарів</div>
-                  <div className="mt-1 text-[10px] text-[#8a949e]">Порівняння поточної ціни AGROMAT з мінімальною ціною серед знайдених конкурентів</div>
-                </div>
-                <div className="inline-flex self-start rounded-xl border border-[#d8dde3] bg-[#f2f5f7] p-1 lg:self-auto" role="group" aria-label="Фільтр за ціною конкурентів">
-                  {([
-                    ["all", "Усі товари"],
-                    ["lower", "АГРОМАТ — краща ціна"],
-                    ["higher", "АГРОМАТ — гірша ціна"],
-                  ] as Array<[PromotionPricePosition, string]>).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-pressed={pricePosition === value}
-                      onClick={() => setPricePosition(value)}
-                      className={`rounded-lg px-3 py-2 text-[10px] font-black transition ${pricePosition === value ? "bg-[#118dff] text-white shadow-sm" : "text-[#68737e] hover:bg-white"}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
-
       {section === "catalog" && <div
         className="rounded-2xl border p-3 sm:p-5"
         style={{ background: "var(--bg-card)", borderColor: "#118dff44", boxShadow: "var(--shadow-sm)" }}
@@ -1202,11 +1174,11 @@ export function PromotionsDashboard() {
           }))}
         />
       )}
-      {section === "marketing" && <PromotionMarketingDashboard pricePosition={pricePosition} />}
-      {section === "overview" && <PromotionSalesDashboard view="overview" pricePosition={pricePosition} />}
-      {section === "p2" && <PromotionSalesDashboard view="promotions" pricePosition={pricePosition} />}
-      {section === "brands" && <PromotionSalesDashboard view="brands" pricePosition={pricePosition} />}
-      {section === "categories" && <PromotionSalesDashboard view="categories" pricePosition={pricePosition} />}
+      {section === "marketing" && <PromotionMarketingDashboard />}
+      {section === "overview" && <PromotionSalesDashboard view="overview" />}
+      {section === "p2" && <PromotionSalesDashboard view="promotions" />}
+      {section === "brands" && <PromotionSalesDashboard view="brands" />}
+      {section === "categories" && <PromotionSalesDashboard view="categories" />}
 
       {section === "catalog" && (
         <div
