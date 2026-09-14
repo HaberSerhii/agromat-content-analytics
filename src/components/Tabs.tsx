@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
+  { href: "/cpo-analytics", label: "CPO Analytics Hub", shortLabel: "CPO" },
   { href: "/",           label: "Аналіз цін конкурентів", shortLabel: "Ціни" },
   { href: "/catalog",    label: "Аналіз карток товара", shortLabel: "Картки" },
   { href: "/promotions", label: "Аналіз акційних пропозицій", shortLabel: "Акції" },
@@ -13,7 +14,7 @@ export function Tabs() {
   const pathname = usePathname();
   return (
     <nav
-      className="grid w-full min-w-0 grid-cols-4 gap-1 rounded-xl p-0.5 lg:flex lg:w-auto"
+      className="grid w-full min-w-0 grid-cols-5 gap-1 rounded-xl p-0.5 lg:flex lg:w-auto"
       style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}
     >
       {TABS.map((t) => {

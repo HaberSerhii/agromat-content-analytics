@@ -110,6 +110,14 @@ const BigQueryAuditDashboard = dynamic(
   },
 );
 
+const CpoAnalyticsDashboard = dynamic(
+  () => import("@/components/CpoAnalyticsDashboard").then((m) => m.CpoAnalyticsDashboard),
+  {
+    ssr: false,
+    loading: () => <div className="py-6 text-center text-xs" style={{ color: "var(--text-dim)" }}>Завантаження CPO Analytics Hub…</div>,
+  },
+);
+
 // Renders all sections in a single persistent shell hosted by the root layout.
 // Heavy secondary dashboards stay mounted after their first visit so filters
 // and already-loaded data survive tab switches.
@@ -123,6 +131,7 @@ export function AppShell() {
   const isPromotions = pathname === "/promotions";
   const isSales = pathname === "/sales";
   const isBigQueryAudit = pathname === "/bigquery-audit";
+  const isCpoAnalytics = pathname === "/cpo-analytics";
 
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
@@ -164,6 +173,7 @@ export function AppShell() {
       )}
 
       {isBigQueryAudit && <BigQueryAuditDashboard />}
+      {isCpoAnalytics && <CpoAnalyticsDashboard />}
     </>
   );
 }
