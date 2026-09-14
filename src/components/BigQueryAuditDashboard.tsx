@@ -122,7 +122,7 @@ export function BigQueryAuditDashboard() {
             {snapshotMissing && (
               <div className="mt-3">
                 <button type="button" onClick={() => void runAudit(true)} disabled={loading} className="rounded-lg bg-[#a4262c] px-4 py-2 text-xs font-black text-white disabled:opacity-50">
-                  Створити єдиний знімок України (одноразово сканує BigQuery, ліміт 50 GB)
+                  Створити єдиний знімок України (одноразово сканує BigQuery, ліміт 70 GB)
                 </button>
               </div>
             )}

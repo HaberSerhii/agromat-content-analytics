@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 const COUNTRY = "Ukraine" as const;
 const EVENT_SENTINEL = "__event__";
-const MAXIMUM_BYTES_BILLED = "50000000000";
+const MAXIMUM_BYTES_BILLED = "70000000000";
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
 
