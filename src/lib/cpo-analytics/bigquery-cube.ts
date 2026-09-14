@@ -213,15 +213,23 @@ export async function buildCpoCube(): Promise<{ cube: CpoAnalyticsCube; compress
   // request open indefinitely while materialising all rows at once.
   const queryRows: QueryRow[] = [];
   let pageToken: string | undefined;
+  let jobComplete = false;
   do {
-    const [page, nextQuery] = await job.getQueryResults({
+    const [page, nextQuery, response] = await job.getQueryResults({
       autoPaginate: false,
       maxResults: 10000,
       ...(pageToken ? { pageToken } : {}),
     });
     queryRows.push(...(page as QueryRow[]));
     pageToken = nextQuery?.pageToken;
+    jobComplete = response?.jobComplete !== false;
+    if (!jobComplete && !pageToken) await new Promise((resolve) => setTimeout(resolve, 1000));
   } while (pageToken);
+  if (!jobComplete) {
+    const [page] = await job.getQueryResults({ autoPaginate: false, maxResults: 10000 });
+    queryRows.push(...(page as QueryRow[]));
+  }
+  if (queryRows.length === 0) throw new Error("BigQuery returned an empty CPO result");
   const [jobMetadata] = await job.getMetadata();
   const rows = (queryRows as QueryRow[]).map((row): CpoCubeRow => ({
     periodKind: row.period_kind,
