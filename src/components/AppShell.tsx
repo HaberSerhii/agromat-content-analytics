@@ -95,6 +95,21 @@ const CompetitorDashboard = dynamic(
   },
 );
 
+const BigQueryAuditDashboard = dynamic(
+  () =>
+    import("@/components/BigQueryAuditDashboard").then(
+      (m) => m.BigQueryAuditDashboard,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="py-6 text-center text-xs" style={{ color: "var(--text-dim)" }}>
+        Завантаження аудиту BigQuery…
+      </div>
+    ),
+  },
+);
+
 // Renders all sections in a single persistent shell hosted by the root layout.
 // Heavy secondary dashboards stay mounted after their first visit so filters
 // and already-loaded data survive tab switches.
@@ -107,6 +122,7 @@ export function AppShell() {
   const isCatalog = pathname === "/catalog";
   const isPromotions = pathname === "/promotions";
   const isSales = pathname === "/sales";
+  const isBigQueryAudit = pathname === "/bigquery-audit";
 
   // Sticky: once /catalog has been visited, keep ProductsCatalog mounted so
   // returning to it is instant (filters/state survive too).
@@ -146,6 +162,8 @@ export function AppShell() {
           <SalesDashboard isActive={isSales} />
         </div>
       )}
+
+      {isBigQueryAudit && <BigQueryAuditDashboard />}
     </>
   );
 }
