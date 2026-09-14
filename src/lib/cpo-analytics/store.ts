@@ -3,6 +3,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
 import type { CpoAnalyticsCube, CpoDiagnosticResult, CpoPeriodKind } from "./types";
+import { cpoPeriodRanges } from "@/lib/cpo-analytics/periods";
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -18,6 +19,13 @@ export function cpoCubeFile(): string {
   return path.join(root(), "ukraine-cpo-cube-v1.json.gz");
 }
 
+export async function cpoImportProgress(): Promise<number | null> {
+  try {
+    const state = JSON.parse(await fs.readFile(path.join(root(), 'recovery-progress.json'), 'utf8'));
+    return typeof state.rows === 'number' ? state.rows : null;
+  } catch { return null; }
+}
+
 async function atomicGzipWrite(file: string, value: unknown): Promise<number> {
   const compressed = await gzip(JSON.stringify(value), { level: 6 });
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -27,8 +35,28 @@ async function atomicGzipWrite(file: string, value: unknown): Promise<number> {
   return compressed.byteLength;
 }
 
-export async function readCpoCube(): Promise<{ cube: CpoAnalyticsCube; compressedBytes: number } | null> {
+export async function readCpoCube(selection?: { kind: CpoPeriodKind; period: number; year: number }): Promise<{ cube: CpoAnalyticsCube; compressedBytes: number } | null> {
   try {
+    if (selection) {
+      try {
+        const manifest = JSON.parse(await fs.readFile(path.join(root(), 'partition-manifest.json'), 'utf8')) as Omit<CpoAnalyticsCube, 'rows'> & { partitions: Record<string, string[]> };
+        if (manifest.version !== 1 || manifest.countryFilter !== 'Ukraine') throw new Error('Invalid CPO manifest');
+        const rows: CpoAnalyticsCube['rows'] = [];
+        let compressedBytes = 0;
+        for (const range of cpoPeriodRanges(selection.kind, selection.period, selection.year)) {
+          for (const file of manifest.partitions[`${selection.kind}-${range.year}-${range.number}`] || []) {
+            if (path.basename(file) !== file) throw new Error('Invalid partition filename');
+            const raw = await fs.readFile(path.join(root(), file));
+            compressedBytes += raw.length;
+            const page = JSON.parse((await gunzip(raw)).toString('utf8')) as CpoAnalyticsCube['rows'];
+            for (const row of page) rows.push(row);
+          }
+        }
+        return { cube: { ...manifest, rows }, compressedBytes };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
     const file = cpoCubeFile();
     const [raw, stat] = await Promise.all([gunzip(await fs.readFile(file)), fs.stat(file)]);
     const cube = JSON.parse(raw.toString("utf8")) as CpoAnalyticsCube;
@@ -63,4 +91,3 @@ export async function saveDiagnosticSnapshot(
   }
   return file;
 }
-
