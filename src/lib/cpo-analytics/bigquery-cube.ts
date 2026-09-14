@@ -200,8 +200,7 @@ async function context() {
 export async function estimateCpoCubeBytes(): Promise<number> {
   const { client, options } = await context();
   const [job] = await client.createQueryJob({ ...options, dryRun: true });
-  const [jobMetadata] = await job.getMetadata();
-  return scalar(jobMetadata.statistics?.query?.totalBytesProcessed || null);
+  return scalar(job.metadata.statistics?.query?.totalBytesProcessed || null);
 }
 
 export async function buildCpoCube(): Promise<{ cube: CpoAnalyticsCube; compressedBytes: number }> {
@@ -244,4 +243,3 @@ export async function buildCpoCube(): Promise<{ cube: CpoAnalyticsCube; compress
   };
   return { cube, compressedBytes: await saveCpoCube(cube) };
 }
-
