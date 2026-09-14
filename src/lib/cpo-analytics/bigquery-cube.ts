@@ -223,12 +223,8 @@ export async function buildCpoCube(): Promise<{ cube: CpoAnalyticsCube; compress
     queryRows.push(...(page as QueryRow[]));
     pageToken = nextQuery?.pageToken;
     jobComplete = response?.jobComplete !== false;
-    if (!jobComplete && !pageToken) await new Promise((resolve) => setTimeout(resolve, 1000));
-  } while (pageToken);
-  if (!jobComplete) {
-    const [page] = await job.getQueryResults({ autoPaginate: false, maxResults: 10000 });
-    queryRows.push(...(page as QueryRow[]));
-  }
+    if (!jobComplete && !pageToken) await new Promise((resolve) => setTimeout(resolve, 1500));
+  } while (pageToken || !jobComplete);
   if (queryRows.length === 0) throw new Error("BigQuery returned an empty CPO result");
   const [jobMetadata] = await job.getMetadata();
   const rows = (queryRows as QueryRow[]).map((row): CpoCubeRow => ({
