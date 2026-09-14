@@ -1,5 +1,9 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
 import { isDashboardRequest } from "@/lib/dashboard-auth";
 import type {
   BigQueryAuditCheck,
@@ -13,6 +17,14 @@ import type {
 export const dynamic = "force-dynamic";
 
 const MAXIMUM_BYTES_BILLED = "25000000000";
+const gzip = promisify(zlib.gzip);
+const gunzip = promisify(zlib.gunzip);
+
+type StoredAudit = {
+  version: 1;
+  savedAt: string;
+  value: BigQueryAuditResponse;
+};
 
 type TableRow = {
   table_count: number | string | null;
@@ -53,6 +65,54 @@ function projectId(): string {
 
 function datasetId(): string {
   return cleanIdentifier(process.env.BIGQUERY_DATASET_ID || "analytics_321347682");
+}
+
+function auditRoot(): string {
+  if (process.env.BIGQUERY_AUDIT_DIR) return process.env.BIGQUERY_AUDIT_DIR;
+  if (process.env.BIGQUERY_RESULT_CACHE_DIR) {
+    return path.join(path.dirname(process.env.BIGQUERY_RESULT_CACHE_DIR), "bigquery-audits");
+  }
+  if (process.env.PRODUCT_SNAPSHOTS_DIR) {
+    return path.join(path.dirname(process.env.PRODUCT_SNAPSHOTS_DIR), "bigquery-audits");
+  }
+  return path.join(process.cwd(), "data", "bigquery-audits");
+}
+
+function auditFile(kind: "week" | "month", year: number, period: number): string {
+  return path.join(auditRoot(), String(year), `${kind}-${String(period).padStart(2, "0")}.json.gz`);
+}
+
+async function readStoredAudit(kind: "week" | "month", year: number, period: number): Promise<BigQueryAuditResponse | null> {
+  try {
+    const file = auditFile(kind, year, period);
+    const [raw, stat] = await Promise.all([gunzip(await fs.readFile(file)), fs.stat(file)]);
+    const stored = JSON.parse(raw.toString("utf8")) as StoredAudit;
+    if (stored.version !== 1 || !stored.value) return null;
+    return {
+      ...stored.value,
+      storage: { source: "saved", savedAt: stored.savedAt, compressedBytes: stat.size },
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error("[bigquery-audit] failed to read saved audit:", error);
+    }
+    return null;
+  }
+}
+
+async function saveAudit(value: BigQueryAuditResponse): Promise<BigQueryAuditResponse> {
+  const file = auditFile(value.periodKind, value.selectedYear, value.selectedPeriod);
+  const savedAt = new Date().toISOString();
+  const stored: StoredAudit = { version: 1, savedAt, value };
+  const compressed = await gzip(JSON.stringify(stored), { level: 6 });
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, compressed, { mode: 0o600 });
+  await fs.rename(temporary, file);
+  return {
+    ...value,
+    storage: { source: "bigquery", savedAt, compressedBytes: compressed.byteLength },
+  };
 }
 
 function numberValue(value: number | string | null | undefined): number {
@@ -196,12 +256,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const input = await request.json().catch(() => ({})) as { periodKind?: "week" | "month"; period?: number };
+    const input = await request.json().catch(() => ({})) as { periodKind?: "week" | "month"; period?: number; refresh?: boolean };
     const today = currentKyivDate();
     const selectedYear = Number(today.slice(0, 4));
     const periodKind = input.periodKind === "month" ? "month" : "week";
     const defaultPeriod = periodKind === "month" ? Number(today.slice(5, 7)) : isoWeekNumber(today);
     const selectedPeriod = Math.round(Number(input.period || defaultPeriod));
+    if (!input.refresh) {
+      const saved = await readStoredAudit(periodKind, selectedYear, selectedPeriod);
+      if (saved) return NextResponse.json(saved);
+    }
     const project = projectId();
     const dataset = datasetId();
     const bigQuery = new BigQuery({ projectId: project });
@@ -364,8 +428,13 @@ export async function POST(request: Request) {
       parameters,
       checks: auditChecks(events, parameters),
       bytesProcessed,
+      storage: {
+        source: "bigquery",
+        savedAt: new Date().toISOString(),
+        compressedBytes: 0,
+      },
     };
-    return NextResponse.json(response);
+    return NextResponse.json(await saveAudit(response));
   } catch (error) {
     const message = error instanceof Error ? error.message : "BigQuery audit failed";
     const credentialsMissing = /credential|authentication|Could not load/i.test(message);

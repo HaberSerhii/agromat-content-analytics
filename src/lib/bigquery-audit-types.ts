@@ -73,4 +73,9 @@ export type BigQueryAuditResponse = {
   parameters: BigQueryAuditParameter[];
   checks: BigQueryAuditCheck[];
   bytesProcessed: number;
+  storage: {
+    source: "bigquery" | "saved";
+    savedAt: string;
+    compressedBytes: number;
+  };
 };
