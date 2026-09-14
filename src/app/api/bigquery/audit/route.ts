@@ -16,15 +16,11 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-const MAXIMUM_BYTES_BILLED = "25000000000";
+const COUNTRY = "Ukraine" as const;
+const EVENT_SENTINEL = "__event__";
+const MAXIMUM_BYTES_BILLED = "50000000000";
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
-
-type StoredAudit = {
-  version: 1;
-  savedAt: string;
-  value: BigQueryAuditResponse;
-};
 
 type TableRow = {
   table_count: number | string | null;
@@ -32,18 +28,10 @@ type TableRow = {
   data_to: string | { value?: string } | null;
 };
 
-type EventRow = {
-  period_key: "current" | "previous" | "yearAgo";
-  event_name: string | null;
-  events: number | string | null;
-  users: number | string | null;
-  sessions: number | string | null;
-  days_active: number | string | null;
-  first_seen: string | { value?: string } | null;
-  last_seen: string | { value?: string } | null;
-};
-
-type ParameterRow = {
+type AuditCubeRow = {
+  period_kind: "week" | "month";
+  period_year: number | string;
+  period_number: number | string;
   event_name: string | null;
   parameter_key: string | null;
   occurrences: number | string | null;
@@ -52,6 +40,32 @@ type ParameterRow = {
   integer_values: number | string | null;
   float_values: number | string | null;
   double_values: number | string | null;
+  users: number | string | null;
+  sessions: number | string | null;
+  days_active: number | string | null;
+  first_seen: string | { value?: string } | null;
+  last_seen: string | { value?: string } | null;
+};
+
+type StoredAuditCube = {
+  version: 2;
+  countryFilter: typeof COUNTRY;
+  savedAt: string;
+  projectId: string;
+  datasetId: string;
+  datasetLocation: string;
+  tableCount: number;
+  dataFrom: string;
+  dataTo: string;
+  bytesProcessed: number;
+  rows: AuditCubeRow[];
+};
+
+type AuditRange = {
+  key: "current" | "previous" | "yearAgo";
+  label: string;
+  from: string;
+  to: string;
 };
 
 function cleanIdentifier(value: string): string {
@@ -78,41 +92,33 @@ function auditRoot(): string {
   return path.join(process.cwd(), "data", "bigquery-audits");
 }
 
-function auditFile(kind: "week" | "month", year: number, period: number): string {
-  return path.join(auditRoot(), String(year), `${kind}-${String(period).padStart(2, "0")}.json.gz`);
+function auditCubeFile(): string {
+  return path.join(auditRoot(), "ukraine-period-cube-v2.json.gz");
 }
 
-async function readStoredAudit(kind: "week" | "month", year: number, period: number): Promise<BigQueryAuditResponse | null> {
+async function readAuditCube(): Promise<{ cube: StoredAuditCube; compressedBytes: number } | null> {
   try {
-    const file = auditFile(kind, year, period);
+    const file = auditCubeFile();
     const [raw, stat] = await Promise.all([gunzip(await fs.readFile(file)), fs.stat(file)]);
-    const stored = JSON.parse(raw.toString("utf8")) as StoredAudit;
-    if (stored.version !== 1 || !stored.value) return null;
-    return {
-      ...stored.value,
-      storage: { source: "saved", savedAt: stored.savedAt, compressedBytes: stat.size },
-    };
+    const cube = JSON.parse(raw.toString("utf8")) as StoredAuditCube;
+    if (cube.version !== 2 || cube.countryFilter !== COUNTRY || !Array.isArray(cube.rows)) return null;
+    return { cube, compressedBytes: stat.size };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.error("[bigquery-audit] failed to read saved audit:", error);
+      console.error("[bigquery-audit] failed to read saved cube:", error);
     }
     return null;
   }
 }
 
-async function saveAudit(value: BigQueryAuditResponse): Promise<BigQueryAuditResponse> {
-  const file = auditFile(value.periodKind, value.selectedYear, value.selectedPeriod);
-  const savedAt = new Date().toISOString();
-  const stored: StoredAudit = { version: 1, savedAt, value };
-  const compressed = await gzip(JSON.stringify(stored), { level: 6 });
+async function saveAuditCube(cube: StoredAuditCube): Promise<number> {
+  const file = auditCubeFile();
+  const compressed = await gzip(JSON.stringify(cube), { level: 6 });
   await fs.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   await fs.writeFile(temporary, compressed, { mode: 0o600 });
   await fs.rename(temporary, file);
-  return {
-    ...value,
-    storage: { source: "bigquery", savedAt, compressedBytes: compressed.byteLength },
-  };
+  return compressed.byteLength;
 }
 
 function numberValue(value: number | string | null | undefined): number {
@@ -160,8 +166,6 @@ function isoWeekStart(year: number, week: number): string {
   return januaryFourth.toISOString().slice(0, 10);
 }
 
-type AuditRange = { key: "current" | "previous" | "yearAgo"; label: string; from: string; to: string };
-
 function requestedRanges(kind: "week" | "month", value: number, year: number): AuditRange[] {
   if (kind === "week") {
     if (value < 1 || value > weeksInIsoYear(year)) throw new Error("Некоректний номер тижня");
@@ -192,27 +196,15 @@ function requestedRanges(kind: "week" | "month", value: number, year: number): A
   ];
 }
 
-function equalizeRanges(ranges: AuditRange[], dataTo: string): AuditRange[] {
-  const current = ranges[0];
-  if (current.from > dataTo) throw new Error("За обраний період ще немає завершених даних GA4");
-  const currentTo = current.to > dataTo ? dataTo : current.to;
-  const elapsedDays = Math.floor((new Date(`${currentTo}T12:00:00Z`).getTime() - new Date(`${current.from}T12:00:00Z`).getTime()) / 86_400_000);
-  return ranges.map((range, index) => ({
-    ...range,
-    to: index === 0 ? currentTo : shiftDays(range.from, elapsedDays),
-  }));
-}
-
-function valueType(row: ParameterRow): BigQueryAuditParameter["valueType"] {
+function valueType(row: AuditCubeRow): BigQueryAuditParameter["valueType"] {
   const types = [
     ["string", numberValue(row.string_values)],
     ["integer", numberValue(row.integer_values)],
     ["float", numberValue(row.float_values)],
     ["double", numberValue(row.double_values)],
   ] as const;
-  return [...types].sort((left, right) => right[1] - left[1])[0]?.[1] > 0
-    ? [...types].sort((left, right) => right[1] - left[1])[0][0]
-    : "unknown";
+  const winner = [...types].sort((left, right) => right[1] - left[1])[0];
+  return winner?.[1] > 0 ? winner[0] : "unknown";
 }
 
 function auditChecks(events: BigQueryAuditEvent[], parameters: BigQueryAuditParameter[]): BigQueryAuditCheck[] {
@@ -250,127 +242,208 @@ function auditChecks(events: BigQueryAuditEvent[], parameters: BigQueryAuditPara
   ];
 }
 
-export async function POST(request: Request) {
-  if (!isDashboardRequest(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+function cubeSql(project: string, dataset: string): string {
+  return `
+    WITH base AS (
+      SELECT
+        PARSE_DATE('%Y%m%d', event_date) AS event_day,
+        event_name,
+        user_pseudo_id,
+        event_timestamp,
+        event_params,
+        CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS session_id
+      FROM \`${project}.${dataset}.events_*\`
+      WHERE _TABLE_SUFFIX BETWEEN @fromSuffix AND @toSuffix
+        AND geo.country = @country
+    ),
+    periodized AS (
+      SELECT
+        dimensions.period_kind,
+        dimensions.period_year,
+        dimensions.period_number,
+        event_day,
+        event_name,
+        user_pseudo_id,
+        event_timestamp,
+        session_id,
+        event_params
+      FROM base
+      CROSS JOIN UNNEST([
+        STRUCT('week' AS period_kind, EXTRACT(ISOYEAR FROM event_day) AS period_year, EXTRACT(ISOWEEK FROM event_day) AS period_number),
+        STRUCT('month' AS period_kind, EXTRACT(YEAR FROM event_day) AS period_year, EXTRACT(MONTH FROM event_day) AS period_number)
+      ]) AS dimensions
+    ),
+    event_stats AS (
+      SELECT
+        period_kind,
+        period_year,
+        period_number,
+        event_name,
+        '${EVENT_SENTINEL}' AS parameter_key,
+        COUNT(*) AS occurrences,
+        COUNT(*) AS populated,
+        0 AS string_values,
+        0 AS integer_values,
+        0 AS float_values,
+        0 AS double_values,
+        APPROX_COUNT_DISTINCT(user_pseudo_id) AS users,
+        APPROX_COUNT_DISTINCT(CONCAT(user_pseudo_id, '/', COALESCE(session_id, CAST(event_timestamp AS STRING)))) AS sessions,
+        COUNT(DISTINCT event_day) AS days_active,
+        FORMAT_DATE('%Y-%m-%d', MIN(event_day)) AS first_seen,
+        FORMAT_DATE('%Y-%m-%d', MAX(event_day)) AS last_seen
+      FROM periodized
+      GROUP BY period_kind, period_year, period_number, event_name
+    ),
+    parameter_stats AS (
+      SELECT
+        period_kind,
+        period_year,
+        period_number,
+        event_name,
+        parameter.key AS parameter_key,
+        COUNT(*) AS occurrences,
+        COUNTIF(parameter.value.string_value IS NOT NULL OR parameter.value.int_value IS NOT NULL OR parameter.value.float_value IS NOT NULL OR parameter.value.double_value IS NOT NULL) AS populated,
+        COUNTIF(parameter.value.string_value IS NOT NULL) AS string_values,
+        COUNTIF(parameter.value.int_value IS NOT NULL) AS integer_values,
+        COUNTIF(parameter.value.float_value IS NOT NULL) AS float_values,
+        COUNTIF(parameter.value.double_value IS NOT NULL) AS double_values,
+        0 AS users,
+        0 AS sessions,
+        COUNT(DISTINCT event_day) AS days_active,
+        FORMAT_DATE('%Y-%m-%d', MIN(event_day)) AS first_seen,
+        FORMAT_DATE('%Y-%m-%d', MAX(event_day)) AS last_seen
+      FROM periodized, UNNEST(event_params) AS parameter
+      GROUP BY period_kind, period_year, period_number, event_name, parameter_key
+    )
+    SELECT * FROM event_stats
+    UNION ALL
+    SELECT * FROM parameter_stats
+    ORDER BY period_kind, period_year, period_number, occurrences DESC
+  `;
+}
+
+async function buildAuditCube(): Promise<{ cube: StoredAuditCube; compressedBytes: number }> {
+  const project = projectId();
+  const dataset = datasetId();
+  const bigQuery = new BigQuery({ projectId: project });
+  const [metadata] = await bigQuery.dataset(dataset).getMetadata();
+  const location = typeof metadata.location === "string" ? metadata.location : "EU";
+  const [tableRows] = await bigQuery.query({
+    query: `
+      SELECT
+        COUNT(*) AS table_count,
+        FORMAT_DATE('%Y-%m-%d', MIN(SAFE.PARSE_DATE('%Y%m%d', REGEXP_EXTRACT(table_name, r'^events_(\\d{8})$')))) AS data_from,
+        FORMAT_DATE('%Y-%m-%d', MAX(SAFE.PARSE_DATE('%Y%m%d', REGEXP_EXTRACT(table_name, r'^events_(\\d{8})$')))) AS data_to
+      FROM \`${project}.${dataset}.INFORMATION_SCHEMA.TABLES\`
+      WHERE REGEXP_CONTAINS(table_name, r'^events_(intraday_)?\\d{8}$')
+    `,
+    location,
+    maximumBytesBilled: MAXIMUM_BYTES_BILLED,
+  });
+  const tableInfo = (tableRows as TableRow[])[0];
+  const availableFrom = dateValue(tableInfo?.data_from);
+  const dataTo = dateValue(tableInfo?.data_to);
+  if (!availableFrom || !dataTo) throw new Error("У dataset не знайдено денні таблиці GA4 events_YYYYMMDD");
+  const currentYear = Number(currentKyivDate().slice(0, 4));
+  const requestedFrom = isoWeekStart(currentYear - 1, 1);
+  const dataFrom = availableFrom > requestedFrom ? availableFrom : requestedFrom;
+  const [job] = await bigQuery.createQueryJob({
+    query: cubeSql(project, dataset),
+    params: {
+      fromSuffix: dataFrom.replaceAll("-", ""),
+      toSuffix: dataTo.replaceAll("-", ""),
+      country: COUNTRY,
+    },
+    location,
+    maximumBytesBilled: MAXIMUM_BYTES_BILLED,
+    useQueryCache: true,
+  });
+  const [rows] = await job.getQueryResults();
+  const [jobMetadata] = await job.getMetadata();
+  const cube: StoredAuditCube = {
+    version: 2,
+    countryFilter: COUNTRY,
+    savedAt: new Date().toISOString(),
+    projectId: project,
+    datasetId: dataset,
+    datasetLocation: location,
+    tableCount: numberValue(tableInfo?.table_count),
+    dataFrom,
+    dataTo,
+    bytesProcessed: numberValue(jobMetadata.statistics?.query?.totalBytesProcessed),
+    rows: rows as AuditCubeRow[],
+  };
+  return { cube, compressedBytes: await saveAuditCube(cube) };
+}
+
+function periodIdentity(kind: "week" | "month", range: AuditRange): { year: number; number: number } {
+  if (kind === "week") {
+    const date = new Date(`${range.from}T12:00:00Z`);
+    const day = date.getUTCDay() || 7;
+    date.setUTCDate(date.getUTCDate() + 4 - day);
+    return { year: date.getUTCFullYear(), number: isoWeekNumber(range.from) };
+  }
+  return { year: Number(range.from.slice(0, 4)), number: Number(range.from.slice(5, 7)) };
+}
+
+function renderAudit(
+  stored: { cube: StoredAuditCube; compressedBytes: number },
+  periodKind: "week" | "month",
+  selectedPeriod: number,
+  selectedYear: number,
+  source: "bigquery" | "saved",
+): BigQueryAuditResponse {
+  const { cube, compressedBytes } = stored;
+  const ranges = requestedRanges(periodKind, selectedPeriod, selectedYear);
+  if (ranges[0].to > cube.dataTo) {
+    throw new Error(`Знімок містить завершені дані лише до ${cube.dataTo}. Оберіть завершений період.`);
+  }
+  const rangeRows = new Map<AuditRange["key"], AuditCubeRow[]>();
+  for (const range of ranges) {
+    const identity = periodIdentity(periodKind, range);
+    rangeRows.set(range.key, cube.rows.filter((row) => row.period_kind === periodKind
+      && numberValue(row.period_year) === identity.year
+      && numberValue(row.period_number) === identity.number));
   }
 
-  try {
-    const input = await request.json().catch(() => ({})) as { periodKind?: "week" | "month"; period?: number; refresh?: boolean };
-    const today = currentKyivDate();
-    const selectedYear = Number(today.slice(0, 4));
-    const periodKind = input.periodKind === "month" ? "month" : "week";
-    const defaultPeriod = periodKind === "month" ? Number(today.slice(5, 7)) : isoWeekNumber(today);
-    const selectedPeriod = Math.round(Number(input.period || defaultPeriod));
-    if (!input.refresh) {
-      const saved = await readStoredAudit(periodKind, selectedYear, selectedPeriod);
-      if (saved) return NextResponse.json(saved);
+  const emptyMetric = (): BigQueryAuditEventMetric => ({
+    events: 0,
+    users: 0,
+    sessions: 0,
+    daysActive: 0,
+    firstSeen: null,
+    lastSeen: null,
+  });
+  const byEvent = new Map<string, Record<AuditRange["key"], BigQueryAuditEventMetric>>();
+  for (const range of ranges) {
+    for (const row of rangeRows.get(range.key) || []) {
+      if (row.parameter_key !== EVENT_SENTINEL) continue;
+      const name = String(row.event_name || "(not set)");
+      const metrics = byEvent.get(name) || { current: emptyMetric(), previous: emptyMetric(), yearAgo: emptyMetric() };
+      metrics[range.key] = {
+        events: numberValue(row.occurrences),
+        users: numberValue(row.users),
+        sessions: numberValue(row.sessions),
+        daysActive: numberValue(row.days_active),
+        firstSeen: dateValue(row.first_seen),
+        lastSeen: dateValue(row.last_seen),
+      };
+      byEvent.set(name, metrics);
     }
-    const project = projectId();
-    const dataset = datasetId();
-    const bigQuery = new BigQuery({ projectId: project });
-    const [metadata] = await bigQuery.dataset(dataset).getMetadata();
-    const location = typeof metadata.location === "string" ? metadata.location : "EU";
-    const [tableRows] = await bigQuery.query({
-      query: `
-        SELECT
-          COUNT(*) AS table_count,
-          FORMAT_DATE('%Y-%m-%d', MIN(SAFE.PARSE_DATE('%Y%m%d', REGEXP_EXTRACT(table_name, r'^events_(\\d{8})$')))) AS data_from,
-          FORMAT_DATE('%Y-%m-%d', MAX(SAFE.PARSE_DATE('%Y%m%d', REGEXP_EXTRACT(table_name, r'^events_(\\d{8})$')))) AS data_to
-        FROM \`${project}.${dataset}.INFORMATION_SCHEMA.TABLES\`
-        WHERE REGEXP_CONTAINS(table_name, r'^events_(intraday_)?\\d{8}$')
-      `,
-      location,
-      maximumBytesBilled: MAXIMUM_BYTES_BILLED,
-    });
-    const tableInfo = (tableRows as TableRow[])[0];
-    const dataFrom = dateValue(tableInfo?.data_from);
-    const dataTo = dateValue(tableInfo?.data_to);
-    if (!dataTo) throw new Error("У dataset не знайдено денні таблиці GA4 events_YYYYMMDD");
-    const ranges = equalizeRanges(requestedRanges(periodKind, selectedPeriod, selectedYear), dataTo);
-    const currentRange = ranges[0];
-    const suffixFilter = ranges.map((range) => `(_TABLE_SUFFIX BETWEEN '${range.from.replaceAll("-", "")}' AND '${range.to.replaceAll("-", "")}')`).join(" OR ");
-    const periodRows = ranges.map((range) => `SELECT '${range.key}' AS period_key, DATE '${range.from}' AS date_from, DATE '${range.to}' AS date_to`).join(" UNION ALL ");
+  }
+  const deltaPct = (current: number, comparison: number) => comparison > 0
+    ? Math.round(((current - comparison) / comparison) * 10_000) / 100
+    : null;
+  const events = [...byEvent.entries()].map(([name, metrics]): BigQueryAuditEvent => ({
+    name,
+    ...metrics,
+    deltaPreviousPct: deltaPct(metrics.current.events, metrics.previous.events),
+    deltaYearAgoPct: deltaPct(metrics.current.events, metrics.yearAgo.events),
+  })).sort((left, right) => right.current.events - left.current.events || left.name.localeCompare(right.name));
 
-    const [eventJob] = await bigQuery.createQueryJob({
-      query: `
-        WITH periods AS (${periodRows}),
-        base AS (
-          SELECT *, PARSE_DATE('%Y%m%d', event_date) AS event_day
-          FROM \`${project}.${dataset}.events_*\`
-          WHERE ${suffixFilter}
-        )
-        SELECT
-          period_key,
-          event_name,
-          COUNT(*) AS events,
-          APPROX_COUNT_DISTINCT(user_pseudo_id) AS users,
-          APPROX_COUNT_DISTINCT(CONCAT(user_pseudo_id, '/', COALESCE(CAST((
-            SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id'
-          ) AS STRING), CAST(event_timestamp AS STRING)))) AS sessions,
-          COUNT(DISTINCT event_date) AS days_active,
-          FORMAT_DATE('%Y-%m-%d', MIN(PARSE_DATE('%Y%m%d', event_date))) AS first_seen,
-          FORMAT_DATE('%Y-%m-%d', MAX(PARSE_DATE('%Y%m%d', event_date))) AS last_seen
-        FROM base
-        JOIN periods ON event_day BETWEEN date_from AND date_to
-        GROUP BY period_key, event_name
-        ORDER BY period_key, events DESC
-      `,
-      location,
-      maximumBytesBilled: MAXIMUM_BYTES_BILLED,
-    });
-    const [eventRows] = await eventJob.getQueryResults();
-
-    const [parameterJob] = await bigQuery.createQueryJob({
-      query: `
-        SELECT
-          event_name,
-          parameter.key AS parameter_key,
-          COUNT(*) AS occurrences,
-          COUNTIF(parameter.value.string_value IS NOT NULL
-            OR parameter.value.int_value IS NOT NULL
-            OR parameter.value.float_value IS NOT NULL
-            OR parameter.value.double_value IS NOT NULL) AS populated,
-          COUNTIF(parameter.value.string_value IS NOT NULL) AS string_values,
-          COUNTIF(parameter.value.int_value IS NOT NULL) AS integer_values,
-          COUNTIF(parameter.value.float_value IS NOT NULL) AS float_values,
-          COUNTIF(parameter.value.double_value IS NOT NULL) AS double_values
-        FROM \`${project}.${dataset}.events_*\`, UNNEST(event_params) AS parameter
-        WHERE _TABLE_SUFFIX BETWEEN '${currentRange.from.replaceAll("-", "")}' AND '${currentRange.to.replaceAll("-", "")}'
-        GROUP BY event_name, parameter_key
-        ORDER BY occurrences DESC
-        LIMIT 2000
-      `,
-      location,
-      maximumBytesBilled: MAXIMUM_BYTES_BILLED,
-    });
-    const [parameterRows] = await parameterJob.getQueryResults();
-
-    const rawEvents = (eventRows as EventRow[]).map((row) => ({
-      periodKey: row.period_key,
-      name: String(row.event_name || "(not set)"),
-      events: numberValue(row.events),
-      users: numberValue(row.users),
-      sessions: numberValue(row.sessions),
-      daysActive: numberValue(row.days_active),
-      firstSeen: dateValue(row.first_seen),
-      lastSeen: dateValue(row.last_seen),
-    }));
-    const emptyMetric = (): BigQueryAuditEventMetric => ({ events: 0, users: 0, sessions: 0, daysActive: 0, firstSeen: null, lastSeen: null });
-    const byEvent = new Map<string, Record<"current" | "previous" | "yearAgo", BigQueryAuditEventMetric>>();
-    for (const row of rawEvents) {
-      const metrics = byEvent.get(row.name) || { current: emptyMetric(), previous: emptyMetric(), yearAgo: emptyMetric() };
-      metrics[row.periodKey] = { events: row.events, users: row.users, sessions: row.sessions, daysActive: row.daysActive, firstSeen: row.firstSeen, lastSeen: row.lastSeen };
-      byEvent.set(row.name, metrics);
-    }
-    const deltaPct = (current: number, comparison: number) => comparison > 0 ? Math.round(((current - comparison) / comparison) * 10_000) / 100 : null;
-    const events = [...byEvent.entries()].map(([name, metrics]): BigQueryAuditEvent => ({
-      name,
-      ...metrics,
-      deltaPreviousPct: deltaPct(metrics.current.events, metrics.previous.events),
-      deltaYearAgoPct: deltaPct(metrics.current.events, metrics.yearAgo.events),
-    })).sort((left, right) => right.current.events - left.current.events || left.name.localeCompare(right.name));
-    const parameters = (parameterRows as ParameterRow[]).map((row): BigQueryAuditParameter => {
+  const parameters = (rangeRows.get("current") || [])
+    .filter((row) => row.parameter_key !== EVENT_SENTINEL)
+    .map((row): BigQueryAuditParameter => {
       const occurrences = numberValue(row.occurrences);
       const populated = numberValue(row.populated);
       return {
@@ -381,67 +454,95 @@ export async function POST(request: Request) {
         populationPct: occurrences > 0 ? Math.round((populated / occurrences) * 10_000) / 100 : 0,
         valueType: valueType(row),
       };
-    });
-    const eventMetadata = await eventJob.getMetadata();
-    const parameterMetadata = await parameterJob.getMetadata();
-    const bytesProcessed = numberValue(eventMetadata[0]?.statistics?.query?.totalBytesProcessed)
-      + numberValue(parameterMetadata[0]?.statistics?.query?.totalBytesProcessed);
-    const totals = events.reduce((result, event) => ({
-      events: result.events + event.current.events,
-      users: Math.max(result.users, event.current.users),
-      sessions: Math.max(result.sessions, event.current.sessions),
-      eventTypes: result.eventTypes + (event.current.events > 0 ? 1 : 0),
+    })
+    .sort((left, right) => right.occurrences - left.occurrences);
+
+  const periodSummary = (range: AuditRange): BigQueryAuditPeriod => {
+    const rows = (rangeRows.get(range.key) || []).filter((row) => row.parameter_key === EVENT_SENTINEL);
+    return {
+      ...range,
+      events: rows.reduce((sum, row) => sum + numberValue(row.occurrences), 0),
+      users: Math.max(0, ...rows.map((row) => numberValue(row.users))),
+      sessions: Math.max(0, ...rows.map((row) => numberValue(row.sessions))),
+      eventTypes: rows.length,
+    };
+  };
+  const summaries = ranges.map(periodSummary);
+  const currentSummary = summaries[0];
+  return {
+    generatedAt: new Date().toISOString(),
+    projectId: cube.projectId,
+    datasetId: cube.datasetId,
+    datasetLocation: cube.datasetLocation,
+    countryFilter: COUNTRY,
+    tableCount: cube.tableCount,
+    dataFrom: cube.dataFrom,
+    dataTo: cube.dataTo,
+    periodKind,
+    selectedPeriod,
+    selectedYear,
+    periods: {
+      current: summaries[0],
+      previous: summaries[1],
+      yearAgo: summaries[2],
+    },
+    sampleFrom: ranges[0].from,
+    sampleTo: ranges[0].to,
+    sampledDays: Math.floor((new Date(`${ranges[0].to}T12:00:00Z`).getTime() - new Date(`${ranges[0].from}T12:00:00Z`).getTime()) / 86_400_000) + 1,
+    totals: {
+      events: currentSummary.events,
+      users: currentSummary.users,
+      sessions: currentSummary.sessions,
+      eventTypes: currentSummary.eventTypes,
       parameters: parameters.length,
-    }), { events: 0, users: 0, sessions: 0, eventTypes: 0, parameters: parameters.length });
-    const periodSummary = (range: AuditRange): BigQueryAuditPeriod => {
-      const rows = rawEvents.filter((row) => row.periodKey === range.key);
-      return {
-        ...range,
-        events: rows.reduce((sum, row) => sum + row.events, 0),
-        users: Math.max(0, ...rows.map((row) => row.users)),
-        sessions: Math.max(0, ...rows.map((row) => row.sessions)),
-        eventTypes: rows.length,
-      };
+    },
+    events,
+    parameters,
+    checks: auditChecks(events, parameters),
+    bytesProcessed: cube.bytesProcessed,
+    storage: {
+      source,
+      savedAt: cube.savedAt,
+      compressedBytes,
+    },
+  };
+}
+
+export async function POST(request: Request) {
+  if (!isDashboardRequest(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    const input = await request.json().catch(() => ({})) as {
+      periodKind?: "week" | "month";
+      period?: number;
+      buildSnapshot?: boolean;
     };
-    const periodSummaries = ranges.map(periodSummary);
-    const response: BigQueryAuditResponse = {
-      generatedAt: new Date().toISOString(),
-      projectId: project,
-      datasetId: dataset,
-      datasetLocation: location,
-      tableCount: numberValue(tableInfo?.table_count),
-      dataFrom,
-      dataTo,
-      periodKind,
-      selectedPeriod,
-      selectedYear,
-      periods: {
-        current: periodSummaries[0],
-        previous: periodSummaries[1],
-        yearAgo: periodSummaries[2],
-      },
-      sampleFrom: currentRange.from,
-      sampleTo: currentRange.to,
-      sampledDays: Math.floor((new Date(`${currentRange.to}T12:00:00Z`).getTime() - new Date(`${currentRange.from}T12:00:00Z`).getTime()) / 86_400_000) + 1,
-      totals,
-      events,
-      parameters,
-      checks: auditChecks(events, parameters),
-      bytesProcessed,
-      storage: {
-        source: "bigquery",
-        savedAt: new Date().toISOString(),
-        compressedBytes: 0,
-      },
-    };
-    return NextResponse.json(await saveAudit(response));
+    const today = currentKyivDate();
+    const selectedYear = Number(today.slice(0, 4));
+    const periodKind = input.periodKind === "month" ? "month" : "week";
+    const defaultPeriod = periodKind === "month"
+      ? Math.max(1, Number(today.slice(5, 7)) - 1)
+      : Math.max(1, isoWeekNumber(today) - 1);
+    const selectedPeriod = Math.round(Number(input.period || defaultPeriod));
+    let stored = await readAuditCube();
+    let source: "bigquery" | "saved" = "saved";
+    if (input.buildSnapshot === true) {
+      stored = await buildAuditCube();
+      source = "bigquery";
+    }
+    if (!stored) {
+      return NextResponse.json({
+        error: "Локальний знімок України ще не створено. Створіть його один раз — звичайне відкриття не запускає BigQuery.",
+        code: "snapshot_missing",
+      }, { status: 409 });
+    }
+    return NextResponse.json(renderAudit(stored, periodKind, selectedPeriod, selectedYear, source));
   } catch (error) {
     const message = error instanceof Error ? error.message : "BigQuery audit failed";
     const credentialsMissing = /credential|authentication|Could not load/i.test(message);
     return NextResponse.json({
-      error: credentialsMissing
-        ? "BigQuery credentials не налаштовані на цьому сервері"
-        : message,
+      error: credentialsMissing ? "BigQuery credentials не налаштовані на цьому сервері" : message,
       code: credentialsMissing ? "credentials_missing" : "audit_failed",
     }, { status: credentialsMissing ? 503 : 500 });
   }

@@ -48,6 +48,7 @@ export type BigQueryAuditResponse = {
   projectId: string;
   datasetId: string;
   datasetLocation: string | null;
+  countryFilter: "Ukraine";
   tableCount: number;
   dataFrom: string | null;
   dataTo: string | null;

@@ -39,6 +39,7 @@ export function BigQueryAuditDashboard() {
   const [data, setData] = useState<BigQueryAuditResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [snapshotMissing, setSnapshotMissing] = useState(false);
   const [eventFilter, setEventFilter] = useState("");
   const [parameterFilter, setParameterFilter] = useState("");
 
@@ -54,17 +55,21 @@ export function BigQueryAuditDashboard() {
       : data?.parameters || [];
   }, [data, parameterFilter]);
 
-  async function runAudit(refresh = false) {
+  async function runAudit(buildSnapshot = false) {
     setLoading(true);
     setError(null);
+    setSnapshotMissing(false);
     try {
       const response = await fetch("/api/bigquery/audit", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ periodKind, period, refresh }),
+        body: JSON.stringify({ periodKind, period, buildSnapshot }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Не вдалося виконати аудит");
+      if (!response.ok) {
+        if (payload.code === "snapshot_missing") setSnapshotMissing(true);
+        throw new Error(payload.error || "Не вдалося виконати аудит");
+      }
       setData(payload as BigQueryAuditResponse);
     } catch (auditError) {
       setError(auditError instanceof Error ? auditError.message : "Не вдалося виконати аудит");
@@ -88,7 +93,7 @@ export function BigQueryAuditDashboard() {
               <select value={periodKind} onChange={(event) => {
                 const nextKind = event.target.value as "week" | "month";
                 setPeriodKind(nextKind);
-                setPeriod(nextKind === "week" ? Math.max(1, currentWeek - 1) : currentMonth);
+                setPeriod(nextKind === "week" ? Math.max(1, currentWeek - 1) : Math.max(1, currentMonth - 1));
                 setData(null);
               }} className="mt-1 block h-10 rounded-lg border bg-white px-3" style={{ borderColor: "var(--border2)" }}>
                 <option value="week">Тиждень</option>
@@ -99,22 +104,28 @@ export function BigQueryAuditDashboard() {
               {periodKind === "week" ? `Номер тижня · ${currentYear}` : `Місяць · ${currentYear}`}
               <select value={period} onChange={(event) => { setPeriod(Number(event.target.value)); setData(null); }} className="mt-1 block h-10 min-w-36 rounded-lg border bg-white px-3" style={{ borderColor: "var(--border2)" }}>
                 {periodKind === "week"
-                  ? Array.from({ length: currentWeek }, (_, index) => index + 1).reverse().map((week) => <option key={week} value={week}>Тиждень {week}</option>)
-                  : Array.from({ length: currentMonth }, (_, index) => index + 1).reverse().map((month) => <option key={month} value={month}>{new Intl.DateTimeFormat("uk-UA", { month: "long" }).format(new Date(2024, month - 1, 1))}</option>)}
+                  ? Array.from({ length: Math.max(1, currentWeek - 1) }, (_, index) => index + 1).reverse().map((week) => <option key={week} value={week}>Тиждень {week}</option>)
+                  : Array.from({ length: Math.max(1, currentMonth - 1) }, (_, index) => index + 1).reverse().map((month) => <option key={month} value={month}>{new Intl.DateTimeFormat("uk-UA", { month: "long" }).format(new Date(2024, month - 1, 1))}</option>)}
               </select>
             </label>
             <button type="button" onClick={() => void runAudit(false)} disabled={loading} className="h-10 rounded-lg bg-[#118dff] px-5 text-sm font-black text-white disabled:opacity-50">
               {loading ? "Завантажуємо…" : "Відкрити аудит"}
             </button>
-            {data && <button type="button" onClick={() => void runAudit(true)} disabled={loading} className="h-10 rounded-lg border bg-white px-4 text-xs font-black text-[#0067b8] disabled:opacity-50" style={{ borderColor: "#118dff" }}>Оновити з BigQuery</button>}
           </div>
         </div>
         <div className="mt-4 rounded-xl border border-[#d8dde3] bg-[#f7f9fb] p-3 text-xs text-[#45515d]">
-          Збережений аудит відкривається без нового BigQuery-запиту · перерахунок запускається лише кнопкою «Оновити з BigQuery» · ліміт запиту 25 GB
+          Усі періоди читаються з єдиного локального знімка · країна: Україна · перемикання тижнів і місяців не запускає BigQuery
         </div>
         {error && (
           <div className="mt-4 rounded-xl border border-[#f3b8bd] bg-[#fde7e9] p-4 text-sm text-[#a4262c]">
-            <strong>Аудит не запущено.</strong> {error}. Налаштуйте <code>GOOGLE_APPLICATION_CREDENTIALS</code> або Application Default Credentials на сервері.
+            <strong>Аудит не відкрито.</strong> {error}
+            {snapshotMissing && (
+              <div className="mt-3">
+                <button type="button" onClick={() => void runAudit(true)} disabled={loading} className="rounded-lg bg-[#a4262c] px-4 py-2 text-xs font-black text-white disabled:opacity-50">
+                  Створити єдиний знімок України (одноразово сканує BigQuery, ліміт 50 GB)
+                </button>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -122,8 +133,8 @@ export function BigQueryAuditDashboard() {
       {!data && !error && (
         <section className="mt-4 rounded-2xl border bg-white p-8 text-center" style={{ borderColor: "var(--border)" }}>
           <div className="text-4xl">⌕</div>
-          <h2 className="mt-3 text-lg font-black text-[#27313c]">Готово до першої інвентаризації</h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-[#68737e]">Після запуску побачимо реальний діапазон GA4, список подій, параметри та проблеми трекінгу зі сторінок вашого Looker Studio.</p>
+          <h2 className="mt-3 text-lg font-black text-[#27313c]">Готово до аналізу знімка</h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-[#68737e]">Відкриття та перемикання періодів працюють з локальним файлом і не сканують BigQuery.</p>
         </section>
       )}
 
@@ -157,7 +168,7 @@ export function BigQueryAuditDashboard() {
 
           <section className="mt-4 rounded-2xl border bg-white p-4 sm:p-5" style={{ borderColor: "var(--border)" }}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div><h2 className="text-lg font-black text-[#27313c]">Швидка діагностика</h2><p className="text-xs text-[#68737e]">Обраний період {data.sampleFrom} — {data.sampleTo} · {data.projectId}.{data.datasetId}</p></div>
+              <div><h2 className="text-lg font-black text-[#27313c]">Швидка діагностика</h2><p className="text-xs text-[#68737e]">Україна · обраний період {data.sampleFrom} — {data.sampleTo} · {data.projectId}.{data.datasetId}</p></div>
               <div className="text-right text-xs text-[#7f8993]"><div className="font-bold" style={{ color: data.storage.source === "saved" ? "#107c10" : "#0067b8" }}>{data.storage.source === "saved" ? "Збережений звіт" : "Щойно отримано з BigQuery"} · {formatBytes(data.storage.compressedBytes)}</div><div>Оновлено {new Date(data.storage.savedAt).toLocaleString("uk-UA")}</div></div>
             </div>
             <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
