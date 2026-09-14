@@ -208,7 +208,20 @@ export async function buildCpoCube(): Promise<{ cube: CpoAnalyticsCube; compress
   if (existing) return existing;
   const { project, dataset, client, location, range, options } = await context();
   const [job] = await client.createQueryJob(options);
-  const [queryRows] = await job.getQueryResults();
+  // Fetch in bounded pages. The cube can contain many distinct landing pages
+  // and cities; relying on the client's automatic pagination may keep the
+  // request open indefinitely while materialising all rows at once.
+  const queryRows: QueryRow[] = [];
+  let pageToken: string | undefined;
+  do {
+    const [page, nextQuery] = await job.getQueryResults({
+      autoPaginate: false,
+      maxResults: 10000,
+      ...(pageToken ? { pageToken } : {}),
+    });
+    queryRows.push(...(page as QueryRow[]));
+    pageToken = nextQuery?.pageToken;
+  } while (pageToken);
   const [jobMetadata] = await job.getMetadata();
   const rows = (queryRows as QueryRow[]).map((row): CpoCubeRow => ({
     periodKind: row.period_kind,
