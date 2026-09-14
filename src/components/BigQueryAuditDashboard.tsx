@@ -146,7 +146,7 @@ export function BigQueryAuditDashboard() {
               ["Подій у вибірці", formatNumber(data.totals.events)],
               ["Типів подій", formatNumber(data.totals.eventTypes)],
               ["Пар event + параметр", formatNumber(data.totals.parameters)],
-              ["Оброблено", formatBytes(data.bytesProcessed)],
+              ["Одноразово оброблено", formatBytes(data.bytesProcessed)],
             ].map(([label, value]) => (
               <section key={label} className="rounded-2xl border bg-white p-4" style={{ borderColor: "var(--border)" }}>
                 <div className="text-[10px] font-black uppercase tracking-[0.1em] text-[#7f8993]">{label}</div>
