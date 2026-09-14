@@ -256,7 +256,7 @@ function cubeSql(project: string, dataset: string): string {
       WHERE _TABLE_SUFFIX BETWEEN @fromSuffix AND @toSuffix
         AND geo.country = @country
     ),
-    periodized AS (
+    expanded AS (
       SELECT
         dimensions.period_kind,
         dimensions.period_year,
@@ -266,58 +266,45 @@ function cubeSql(project: string, dataset: string): string {
         user_pseudo_id,
         event_timestamp,
         session_id,
-        event_params
+        detail.*
       FROM base
       CROSS JOIN UNNEST([
         STRUCT('week' AS period_kind, EXTRACT(ISOYEAR FROM event_day) AS period_year, EXTRACT(ISOWEEK FROM event_day) AS period_number),
         STRUCT('month' AS period_kind, EXTRACT(YEAR FROM event_day) AS period_year, EXTRACT(MONTH FROM event_day) AS period_number)
       ]) AS dimensions
-    ),
-    event_stats AS (
-      SELECT
-        period_kind,
-        period_year,
-        period_number,
-        event_name,
-        '${EVENT_SENTINEL}' AS parameter_key,
-        COUNT(*) AS occurrences,
-        COUNT(*) AS populated,
-        0 AS string_values,
-        0 AS integer_values,
-        0 AS float_values,
-        0 AS double_values,
-        APPROX_COUNT_DISTINCT(user_pseudo_id) AS users,
-        APPROX_COUNT_DISTINCT(CONCAT(user_pseudo_id, '/', COALESCE(session_id, CAST(event_timestamp AS STRING)))) AS sessions,
-        COUNT(DISTINCT event_day) AS days_active,
-        FORMAT_DATE('%Y-%m-%d', MIN(event_day)) AS first_seen,
-        FORMAT_DATE('%Y-%m-%d', MAX(event_day)) AS last_seen
-      FROM periodized
-      GROUP BY period_kind, period_year, period_number, event_name
-    ),
-    parameter_stats AS (
-      SELECT
-        period_kind,
-        period_year,
-        period_number,
-        event_name,
-        parameter.key AS parameter_key,
-        COUNT(*) AS occurrences,
-        COUNTIF(parameter.value.string_value IS NOT NULL OR parameter.value.int_value IS NOT NULL OR parameter.value.float_value IS NOT NULL OR parameter.value.double_value IS NOT NULL) AS populated,
-        COUNTIF(parameter.value.string_value IS NOT NULL) AS string_values,
-        COUNTIF(parameter.value.int_value IS NOT NULL) AS integer_values,
-        COUNTIF(parameter.value.float_value IS NOT NULL) AS float_values,
-        COUNTIF(parameter.value.double_value IS NOT NULL) AS double_values,
-        0 AS users,
-        0 AS sessions,
-        COUNT(DISTINCT event_day) AS days_active,
-        FORMAT_DATE('%Y-%m-%d', MIN(event_day)) AS first_seen,
-        FORMAT_DATE('%Y-%m-%d', MAX(event_day)) AS last_seen
-      FROM periodized, UNNEST(event_params) AS parameter
-      GROUP BY period_kind, period_year, period_number, event_name, parameter_key
+      CROSS JOIN UNNEST(ARRAY_CONCAT(
+        [STRUCT('${EVENT_SENTINEL}' AS parameter_key, 1 AS populated, 0 AS string_values, 0 AS integer_values, 0 AS float_values, 0 AS double_values)],
+        ARRAY(
+          SELECT AS STRUCT
+            parameter.key AS parameter_key,
+            IF(parameter.value.string_value IS NOT NULL OR parameter.value.int_value IS NOT NULL OR parameter.value.float_value IS NOT NULL OR parameter.value.double_value IS NOT NULL, 1, 0) AS populated,
+            IF(parameter.value.string_value IS NOT NULL, 1, 0) AS string_values,
+            IF(parameter.value.int_value IS NOT NULL, 1, 0) AS integer_values,
+            IF(parameter.value.float_value IS NOT NULL, 1, 0) AS float_values,
+            IF(parameter.value.double_value IS NOT NULL, 1, 0) AS double_values
+          FROM UNNEST(event_params) AS parameter
+        )
+      )) AS detail
     )
-    SELECT * FROM event_stats
-    UNION ALL
-    SELECT * FROM parameter_stats
+    SELECT
+      period_kind,
+      period_year,
+      period_number,
+      event_name,
+      parameter_key,
+      COUNT(*) AS occurrences,
+      SUM(populated) AS populated,
+      SUM(string_values) AS string_values,
+      SUM(integer_values) AS integer_values,
+      SUM(float_values) AS float_values,
+      SUM(double_values) AS double_values,
+      APPROX_COUNT_DISTINCT(IF(parameter_key = '${EVENT_SENTINEL}', user_pseudo_id, NULL)) AS users,
+      APPROX_COUNT_DISTINCT(IF(parameter_key = '${EVENT_SENTINEL}', CONCAT(user_pseudo_id, '/', COALESCE(session_id, CAST(event_timestamp AS STRING))), NULL)) AS sessions,
+      COUNT(DISTINCT event_day) AS days_active,
+      FORMAT_DATE('%Y-%m-%d', MIN(event_day)) AS first_seen,
+      FORMAT_DATE('%Y-%m-%d', MAX(event_day)) AS last_seen
+    FROM expanded
+    GROUP BY period_kind, period_year, period_number, event_name, parameter_key
     ORDER BY period_kind, period_year, period_number, occurrences DESC
   `;
 }
