@@ -514,7 +514,7 @@ export async function POST(request: Request) {
     const selectedPeriod = Math.round(Number(input.period || defaultPeriod));
     let stored = await readAuditCube();
     let source: "bigquery" | "saved" = "saved";
-    if (input.buildSnapshot === true) {
+    if (input.buildSnapshot === true && !stored) {
       stored = await buildAuditCube();
       source = "bigquery";
     }
