@@ -58,12 +58,12 @@ const STAGE_FIELD: Record<CpoFunnelStage, keyof CpoCubeRow> = {
 };
 
 const TRANSITIONS: Array<{ from: CpoFunnelStage; to: CpoFunnelStage; label: string; core: boolean }> = [
-  { from: "sessions", to: "view_item", label: "Session → PDP", core: false },
-  { from: "view_item", to: "add_to_cart", label: "PDP → Cart", core: true },
-  { from: "add_to_cart", to: "begin_checkout", label: "Cart → Checkout", core: true },
-  { from: "begin_checkout", to: "purchase", label: "Checkout → Purchase", core: true },
-  { from: "sessions", to: "add_to_cart", label: "Session → Cart", core: false },
-  { from: "sessions", to: "purchase", label: "Session → Purchase", core: false },
+  { from: "sessions", to: "view_item", label: "Сеанс → сторінка товару", core: false },
+  { from: "view_item", to: "add_to_cart", label: "Сторінка товару → кошик", core: true },
+  { from: "add_to_cart", to: "begin_checkout", label: "Кошик → оформлення", core: true },
+  { from: "begin_checkout", to: "purchase", label: "Оформлення → покупка", core: true },
+  { from: "sessions", to: "add_to_cart", label: "Сеанс → кошик", core: false },
+  { from: "sessions", to: "purchase", label: "Сеанс → покупка", core: false },
 ];
 
 function finite(value: number): number {
@@ -186,14 +186,14 @@ function executiveMetrics(rows: OverallRows): MetricResult[] {
   const aov = (row: CpoCubeRow) => row.orders > 0 ? row.revenue / row.orders : 0;
   const rate = (row: CpoCubeRow, numerator: CpoFunnelStage, denominator: CpoFunnelStage) => pct(stageValue(row, numerator), stageValue(row, denominator)) || 0;
   return [
-    makeMetric({ key: "revenue", label: "Revenue", format: "currency", current: rows.current.revenue, previous: rows.previous.revenue, yearAgo: rows.yearAgo.revenue, volume: rows.current.orders, minimumVolume: CPO_THRESHOLDS.minBaseConversions }),
-    makeMetric({ key: "orders", label: "Orders", format: "number", current: rows.current.orders, previous: rows.previous.orders, yearAgo: rows.yearAgo.orders, volume: rows.current.orders, minimumVolume: CPO_THRESHOLDS.minBaseConversions }),
-    makeMetric({ key: "sessions", label: "Sessions", format: "number", current: rows.current.sessions, previous: rows.previous.sessions, yearAgo: rows.yearAgo.sessions, volume: rows.current.sessions }),
-    makeMetric({ key: "conversion_rate", label: "Conversion Rate", format: "percent", current: cr(rows.current), previous: cr(rows.previous), yearAgo: cr(rows.yearAgo), volume: rows.current.sessions }),
-    makeMetric({ key: "aov", label: "Average Order Value", format: "currency", current: aov(rows.current), previous: aov(rows.previous), yearAgo: aov(rows.yearAgo), volume: rows.current.orders, minimumVolume: CPO_THRESHOLDS.minBaseConversions }),
-    makeMetric({ key: "add_to_cart_rate", label: "PDP → Cart Rate", format: "percent", current: rate(rows.current, "add_to_cart", "view_item"), previous: rate(rows.previous, "add_to_cart", "view_item"), yearAgo: rate(rows.yearAgo, "add_to_cart", "view_item"), volume: rows.current.viewItemSessions }),
-    makeMetric({ key: "checkout_rate", label: "Cart → Checkout Rate", format: "percent", current: rate(rows.current, "begin_checkout", "add_to_cart"), previous: rate(rows.previous, "begin_checkout", "add_to_cart"), yearAgo: rate(rows.yearAgo, "begin_checkout", "add_to_cart"), volume: rows.current.addToCartSessions }),
-    makeMetric({ key: "purchase_rate", label: "Checkout → Purchase Rate", format: "percent", current: rate(rows.current, "purchase", "begin_checkout"), previous: rate(rows.previous, "purchase", "begin_checkout"), yearAgo: rate(rows.yearAgo, "purchase", "begin_checkout"), volume: rows.current.beginCheckoutSessions }),
+    makeMetric({ key: "revenue", label: "Дохід", format: "currency", current: rows.current.revenue, previous: rows.previous.revenue, yearAgo: rows.yearAgo.revenue, volume: rows.current.orders, minimumVolume: CPO_THRESHOLDS.minBaseConversions }),
+    makeMetric({ key: "orders", label: "Замовлення", format: "number", current: rows.current.orders, previous: rows.previous.orders, yearAgo: rows.yearAgo.orders, volume: rows.current.orders, minimumVolume: CPO_THRESHOLDS.minBaseConversions }),
+    makeMetric({ key: "sessions", label: "Сеанси", format: "number", current: rows.current.sessions, previous: rows.previous.sessions, yearAgo: rows.yearAgo.sessions, volume: rows.current.sessions }),
+    makeMetric({ key: "conversion_rate", label: "Коефіцієнт конверсії", format: "percent", current: cr(rows.current), previous: cr(rows.previous), yearAgo: cr(rows.yearAgo), volume: rows.current.sessions }),
+    makeMetric({ key: "aov", label: "Середній чек", format: "currency", current: aov(rows.current), previous: aov(rows.previous), yearAgo: aov(rows.yearAgo), volume: rows.current.orders, minimumVolume: CPO_THRESHOLDS.minBaseConversions }),
+    makeMetric({ key: "add_to_cart_rate", label: "Сторінка товару → кошик", format: "percent", current: rate(rows.current, "add_to_cart", "view_item"), previous: rate(rows.previous, "add_to_cart", "view_item"), yearAgo: rate(rows.yearAgo, "add_to_cart", "view_item"), volume: rows.current.viewItemSessions }),
+    makeMetric({ key: "checkout_rate", label: "Кошик → оформлення", format: "percent", current: rate(rows.current, "begin_checkout", "add_to_cart"), previous: rate(rows.previous, "begin_checkout", "add_to_cart"), yearAgo: rate(rows.yearAgo, "begin_checkout", "add_to_cart"), volume: rows.current.addToCartSessions }),
+    makeMetric({ key: "purchase_rate", label: "Оформлення → покупка", format: "percent", current: rate(rows.current, "purchase", "begin_checkout"), previous: rate(rows.previous, "purchase", "begin_checkout"), yearAgo: rate(rows.yearAgo, "purchase", "begin_checkout"), volume: rows.current.beginCheckoutSessions }),
   ];
 }
 
@@ -235,9 +235,9 @@ function businessDecomposition(rows: OverallRows): BusinessContribution[] {
   const contributions = shapleyRevenueContributions(rows.previous, rows.current);
   const revenueChange = rows.current.revenue - rows.previous.revenue;
   const values = {
-    traffic: { label: "Traffic", current: rows.current.sessions, previous: rows.previous.sessions },
-    conversion: { label: "Conversion Rate", current: pct(rows.current.orders, rows.current.sessions) || 0, previous: pct(rows.previous.orders, rows.previous.sessions) || 0 },
-    aov: { label: "Average Order Value", current: rows.current.orders ? rows.current.revenue / rows.current.orders : 0, previous: rows.previous.orders ? rows.previous.revenue / rows.previous.orders : 0 },
+    traffic: { label: "Трафік", current: rows.current.sessions, previous: rows.previous.sessions },
+    conversion: { label: "Коефіцієнт конверсії", current: pct(rows.current.orders, rows.current.sessions) || 0, previous: pct(rows.previous.orders, rows.previous.sessions) || 0 },
+    aov: { label: "Середній чек", current: rows.current.orders ? rows.current.revenue / rows.current.orders : 0, previous: rows.previous.orders ? rows.previous.revenue / rows.previous.orders : 0 },
   };
   const primary = (Object.keys(contributions) as Array<keyof typeof contributions>)
     .sort((left, right) => contributions[left] - contributions[right])[0];
@@ -384,16 +384,16 @@ function segmentContributions(periodRows: PeriodRows, transition: FunnelTransiti
 }
 
 const RECOMMENDATIONS: Record<SignalCategory, string[]> = {
-  TRAFFIC: ["Перевірити source / medium", "Порівняти кампанії", "Перевірити landing pages та зміни бюджетів"],
+  TRAFFIC: ["Перевірити джерело та канал трафіку", "Порівняти кампанії", "Перевірити цільові сторінки та зміни бюджетів"],
   MARKETING: ["Перевірити кампанії та витрати", "Порівняти якість трафіку", "Перевірити UTM-розмітку"],
-  UX: ["Перевірити сторінку та основні CTA", "Перевірити mobile/desktop", "Переглянути зміни інтерфейсу за період"],
+  UX: ["Перевірити сторінку та основні заклики до дії", "Порівняти мобільні й настільні пристрої", "Переглянути зміни інтерфейсу за період"],
   CONTENT: ["Перевірити контент сторінки", "Перевірити картки товарів", "Порівняти повноту атрибутів"],
-  COMMERCIAL: ["Перевірити ціни", "Перевірити залишки та availability", "Перевірити промо та знижки"],
-  TECH: ["Перевірити релізи та помилки frontend", "Порівняти browser / OS", "Перевірити швидкість і доступність checkout"],
-  PAYMENT: ["Перевірити payment_error events", "Порівняти способи оплати", "Перевірити callback та інтеграційні логи"],
-  DELIVERY: ["Перевірити способи доставки", "Перевірити географічні обмеження", "Перевірити delivery API"],
-  SEARCH: ["Перевірити search usage", "Перевірити zero-results", "Порівняти Search → PDP / Cart"],
-  UNKNOWN: ["Перевірити суміжні метрики", "Переглянути сегменти з найбільшим contribution", "Зіставити з релізами та інцидентами"],
+  COMMERCIAL: ["Перевірити ціни", "Перевірити залишки та наявність", "Перевірити акції та знижки"],
+  TECH: ["Перевірити релізи та помилки інтерфейсу", "Порівняти браузери й операційні системи", "Перевірити швидкість і доступність оформлення"],
+  PAYMENT: ["Перевірити події помилок оплати", "Порівняти способи оплати", "Перевірити зворотні виклики та журнали інтеграцій"],
+  DELIVERY: ["Перевірити способи доставки", "Перевірити географічні обмеження", "Перевірити API доставки"],
+  SEARCH: ["Перевірити використання пошуку", "Перевірити запити без результатів", "Порівняти переходи з пошуку на сторінку товару та до кошика"],
+  UNKNOWN: ["Перевірити суміжні показники", "Переглянути сегменти з найбільшим внеском", "Зіставити з релізами та інцидентами"],
 };
 
 function segmentCategory(dimension: Exclude<CpoDimension, "overall">): SignalCategory {
@@ -446,7 +446,7 @@ function signalFromSegment(segment: SegmentContribution, transition: FunnelTrans
     contributionPct: segment.shareOfTotalLossPct,
     detectedSince: null,
     resolvedAt: null,
-    explanation: `${segment.dimensionValue} пояснює ${round(segment.shareOfTotalLossPct, 0)}% оціненої втрати у розрізі ${segment.dimension}. Конверсія знизилась на ${round(Math.abs(segment.deltaPercent || 0))}%.`,
+    explanation: `${segment.dimensionValue} пояснює ${round(segment.shareOfTotalLossPct, 0)}% оціненої втрати у цьому сегменті. Конверсія знизилась на ${round(Math.abs(segment.deltaPercent || 0))}%.`,
     recommendedChecks: RECOMMENDATIONS[category],
   };
 }
@@ -468,7 +468,7 @@ function businessSignal(metrics: MetricResult[], decomposition: BusinessContribu
   return {
     id: "business:revenue-orders",
     metric: "revenue_orders",
-    title: "Revenue / Orders потребують уваги",
+    title: "Дохід і замовлення потребують уваги",
     currentValue: revenue.current,
     previousValue: revenue.previous || 0,
     deltaPercent: revenue.deltaPercent || 0,
@@ -480,7 +480,7 @@ function businessSignal(metrics: MetricResult[], decomposition: BusinessContribu
     category,
     detectedSince: null,
     resolvedAt: null,
-    explanation: `Revenue змінився на ${round(revenue.deltaPercent || 0)}%, orders — на ${round(orders.deltaPercent || 0)}%. Головний математичний драйвер: ${driver?.label || "не визначено"} (${round(driver?.revenueContribution || 0, 0)} грн contribution).`,
+    explanation: `Дохід змінився на ${round(revenue.deltaPercent || 0)}%, замовлення — на ${round(orders.deltaPercent || 0)}%. Головний математичний чинник: ${driver?.label || "не визначено"} (внесок ${round(driver?.revenueContribution || 0, 0)} грн).`,
     recommendedChecks: RECOMMENDATIONS[category],
   };
 }
@@ -511,7 +511,7 @@ function diagnosticTree(
       signalId: signalByMetric.get(primaryFunnel.key),
       children: (Object.values(segments).flat().sort((a, b) => b.impactScore - a.impactScore).slice(0, CPO_THRESHOLDS.maxSignalsPerLevel)).map((segment) => ({
         id: `segment:${segment.dimension}:${segment.dimensionValue}`,
-        label: `${segment.dimension}: ${segment.dimensionValue}`,
+        label: segment.dimensionValue,
         kind: "segment" as const,
         deltaPercent: segment.deltaPercent,
         impact: -segment.estimatedRevenueLoss,
@@ -523,7 +523,7 @@ function diagnosticTree(
   }));
   return [{
     id: "revenue",
-    label: "Revenue",
+    label: "Дохід",
     kind: "business",
     deltaPercent: revenue?.deltaPercent || 0,
     impact: revenue?.delta || 0,
@@ -540,10 +540,10 @@ function summaryText(metrics: MetricResult[], decomposition: BusinessContributio
   const segment = signals.find((signal) => signal.dimension);
   if (!signals.length) return "Значущих негативних сигналів із достатнім обсягом даних не знайдено.";
   return [
-    `Revenue: ${round(revenue?.deltaPercent || 0)}%, Orders: ${round(orders?.deltaPercent || 0)}%.`,
-    driver ? `Основний бізнес-драйвер — ${driver.label}: ${round(driver.revenueContribution, 0)} грн contribution.` : "Однозначний бізнес-драйвер не визначено.",
+    `Дохід: ${round(revenue?.deltaPercent || 0)}%, замовлення: ${round(orders?.deltaPercent || 0)}%.`,
+    driver ? `Основний бізнес-чинник — ${driver.label}: внесок ${round(driver.revenueContribution, 0)} грн.` : "Однозначний бізнес-чинник не визначено.",
     funnel ? `Найбільший негативний вплив у воронці — ${funnel.label}: ${round(funnel.deltaPercent || 0)}%.` : "Значущої проблеми у воронці не знайдено.",
-    segment ? `Найсильніший сегментний сигнал — ${segment.dimensionValue}; contribution ${round(segment.contributionPct || 0, 0)}%.` : "Сегмент із достатньою вибіркою не виділено.",
+    segment ? `Найсильніший сегментний сигнал — ${segment.dimensionValue}; внесок ${round(segment.contributionPct || 0, 0)}%.` : "Сегмент із достатньою вибіркою не виділено.",
   ].join(" ");
 }
 
@@ -555,13 +555,13 @@ export function buildCpoDiagnostic(input: {
   selectedYear: number;
 }): CpoDiagnosticResult {
   const ranges = cpoPeriodRanges(input.periodKind, input.selectedPeriod, input.selectedYear);
-  if (ranges[0].to > input.cube.dataTo) throw new Error(`CPO snapshot містить завершені дані лише до ${input.cube.dataTo}`);
+  if (ranges[0].to > input.cube.dataTo) throw new Error(`Знімок CPO містить завершені дані лише до ${input.cube.dataTo}`);
   const periodRows = Object.fromEntries(ranges.map((range) => [
     range.key,
     input.cube.rows.filter((row) => row.periodKind === input.periodKind && row.periodYear === range.year && row.periodNumber === range.number),
   ])) as PeriodRows;
   const totals = overall(periodRows);
-  if (!totals.current.sessions) throw new Error("У CPO snapshot немає даних за обраний період");
+  if (!totals.current.sessions) throw new Error("У знімку CPO немає даних за обраний період");
   const metrics = executiveMetrics(totals);
   const decomposition = businessDecomposition(totals);
   const funnel = funnelTransitions(totals);
@@ -600,9 +600,9 @@ export function buildCpoDiagnostic(input: {
     requiresAttention: topSignals.slice(0, 3),
     summary: summaryText(metrics, decomposition, primaryFunnel, topSignals),
     limitations: [
-      "Estimated lost orders і revenue є аналітичною оцінкою, а не бухгалтерськими даними.",
-      "MVP аналізує dimensions окремо; багаторівневі перетини сегментів заплановані для Phase 2.",
-      "detectedSince і resolvedAt будуть доступні після появи другого CPO data snapshot та daily time series.",
+      "Орієнтовна кількість втрачених замовлень і дохід є аналітичною оцінкою, а не бухгалтерськими даними.",
+      "Пілотна версія аналізує виміри окремо; багаторівневі перетини сегментів заплановані для другого етапу.",
+      "Дати виявлення та усунення проблем будуть доступні після появи другого знімка даних CPO та щоденного часового ряду.",
     ],
     storage: { source: "saved", cubeCompressedBytes: input.cubeCompressedBytes, diagnosticSnapshotPath: null },
   };

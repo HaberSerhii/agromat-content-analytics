@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "CPO Analytics Hub · Agromat",
+  title: "Центр CPO-аналітики · Agromat",
   robots: { index: false, follow: false },
 };
 
@@ -7,4 +7,3 @@ export const metadata = {
 export default function CpoAnalyticsPage() {
   return null;
 }
-

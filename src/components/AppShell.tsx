@@ -114,7 +114,7 @@ const CpoAnalyticsDashboard = dynamic(
   () => import("@/components/CpoAnalyticsDashboard").then((m) => m.CpoAnalyticsDashboard),
   {
     ssr: false,
-    loading: () => <div className="py-6 text-center text-xs" style={{ color: "var(--text-dim)" }}>Завантаження CPO Analytics Hub…</div>,
+    loading: () => <div className="py-6 text-center text-xs" style={{ color: "var(--text-dim)" }}>Завантаження центру CPO-аналітики…</div>,
   },
 );
 
