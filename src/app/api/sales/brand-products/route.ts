@@ -20,6 +20,7 @@ async function brandProductsResponse(brand: string, filter: SalesDateFilter) {
       statuses: Array.isArray(filter.statuses)
         ? [...filter.statuses].sort()
         : filter.statuses || "",
+      channel: filter.channel || "all",
     });
     const { value: json, status } = await getServerResult({
       namespace: "sales-brand-products-json-v3",
@@ -54,6 +55,7 @@ export async function GET(req: Request) {
       ? positionCodes.size ? [...positionCodes] : [-1]
       : url.searchParams.get("product_codes") || undefined,
     statuses: url.searchParams.getAll("status"),
+    channel: url.searchParams.get("channel") === "monomarket" ? "monomarket" : "all",
   });
 }
 
@@ -70,6 +72,7 @@ export async function POST(req: Request) {
       statuses: Array.isArray(body?.statuses) || typeof body?.statuses === "string"
         ? body.statuses
         : undefined,
+      channel: body?.channel === "monomarket" ? "monomarket" : "all",
     },
   );
 }

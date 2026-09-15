@@ -167,6 +167,30 @@ test("batched sales parsing preserves every row and gives the event loop a turn"
       { categoryProducts: false },
     ),
   );
+
+  const channelRows = sales.parseSalesRows(
+    "docs_ref,number,goods_codes,docs_sum,rows_sums,datecreation,fullyshipped_datetime,state,cart_number\n" +
+      "agromat,1,101,25,25,2026-05-01,2026-05-02,Повністю відвантажений,\n" +
+      "mono,2,102,40,40,2026-05-01,2026-05-02,Повністю відвантажений,5835183",
+    new Map(),
+    new Map(),
+  );
+  const allChannels = sales.buildDataset(
+    channelRows,
+    {},
+    { from: "2026-05-01", to: "2026-05-31", channel: "all" },
+    { categoryProducts: false },
+  );
+  const monomarket = sales.buildDataset(
+    channelRows,
+    {},
+    { from: "2026-05-01", to: "2026-05-31", channel: "monomarket" },
+    { categoryProducts: false },
+  );
+  assert.equal(allChannels.summary.totalDocs, 2);
+  assert.equal(monomarket.summary.totalDocs, 1);
+  assert.equal(monomarket.summary.shippedRevenue, 40);
+  assert.equal(monomarket.filter.channel, "monomarket");
 });
 
 test("cards GET/POST share cached JSON, mutations invalidate it, and basic overview skips GA4", async () => {

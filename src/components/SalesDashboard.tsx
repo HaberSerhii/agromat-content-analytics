@@ -21,6 +21,7 @@ type SalesRow = {
   margin: number | null;
   stockm: string;
   planGroup: string;
+  cartNumber: string;
 };
 
 type BucketSummary = {
@@ -80,6 +81,7 @@ type SalesDataset = {
     productCodes: number[];
     matchedProductCodes: number[];
     statuses: string[];
+    channel: SalesChannel;
   };
   rows: SalesRow[];
   summary: {
@@ -307,6 +309,7 @@ type SalesWebshopOrdersDataset = {
 
 type RankingMetric = "goods" | "revenue";
 type DocumentSegment = "Усі" | "Плитка" | "Сантехніка";
+type SalesChannel = "all" | "monomarket";
 
 type SalesDashboardView = "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
 type WebshopSyncFilter = "all" | "synced" | "unsynced";
@@ -1475,6 +1478,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [salesChannel, setSalesChannel] = useState<SalesChannel>("all");
   const [compareWithPreviousYear, setCompareWithPreviousYear] = useState(true);
   const [data, setData] = useState<SalesDataset | null>(null);
   const [comparisonData, setComparisonData] = useState<SalesDataset | null>(null);
@@ -1544,7 +1548,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     setCategoryProducts({});
     setBrandProducts({});
     setSelectedCancelReason(null);
-  }, [dateFrom, dateTo, selectedStatuses, refreshTick]);
+  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick]);
 
   useEffect(() => {
     setSelectedCancelReason(null);
@@ -1565,6 +1569,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     const params = new URLSearchParams();
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
+    params.set("channel", salesChannel);
     params.set("compact", "1");
     selectedStatuses.forEach((status) => params.append("status", status));
     const request = fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
@@ -1595,7 +1600,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, selectedStatuses, refreshTick]);
+  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick]);
 
   useEffect(() => {
     if (!compareWithPreviousYear || !dateFrom || !dateTo) {
@@ -1609,6 +1614,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       from: shiftIsoYear(dateFrom, -1),
       to: shiftIsoYear(dateTo, -1),
       compact: "1",
+      channel: salesChannel,
     });
     selectedStatuses.forEach((status) => params.append("status", status));
     setComparisonLoading(true);
@@ -1632,7 +1638,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, refreshTick]);
+  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick]);
 
   useEffect(() => {
     if (view !== "webshop") return;
@@ -1686,6 +1692,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     const params = new URLSearchParams({ category });
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
+    params.set("channel", salesChannel);
     selectedStatuses.forEach((status) => params.append("status", status));
     const request = fetch(`/api/sales/category-products?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
@@ -1710,7 +1717,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [categoryProducts, dateFrom, dateTo, expandedCategory, selectedStatuses]);
+  }, [categoryProducts, dateFrom, dateTo, expandedCategory, selectedStatuses, salesChannel]);
 
   useEffect(() => {
     const brand = expandedBrand;
@@ -1722,6 +1729,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     const params = new URLSearchParams({ brand });
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
+    params.set("channel", salesChannel);
     selectedStatuses.forEach((status) => params.append("status", status));
     const request = fetch(`/api/sales/brand-products?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
@@ -1746,7 +1754,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [brandProducts, dateFrom, dateTo, expandedBrand, selectedStatuses]);
+  }, [brandProducts, dateFrom, dateTo, expandedBrand, selectedStatuses, salesChannel]);
 
   useEffect(() => {
     if (view !== "web") return;
@@ -1851,13 +1859,6 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     setDateTo(range.to);
     setWebshopOrdersPage(1);
   };
-  const applyAllPeriod = () => {
-    liveCurrentMonthRef.current = false;
-    setDateFrom("");
-    setDateTo("");
-    setCompareWithPreviousYear(false);
-    setWebshopOrdersPage(1);
-  };
   const refreshNow = () => {
     if (liveCurrentMonthRef.current) {
       const range = currentMonthRange();
@@ -1876,6 +1877,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const resetStatuses = () => setSelectedStatuses([]);
 
   const activeView = SALES_VIEW_ITEMS.find((item) => item.id === view) || SALES_VIEW_ITEMS[0];
+  const supportsSalesChannel = view !== "webshop" && view !== "web";
   const selectedManagerData = selectedManager
     ? data.summary.managers.find((manager) => manager.seller === selectedManager)
     : null;
@@ -1975,6 +1977,30 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
 
             <section className="mb-5 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-end gap-2">
+                {supportsSalesChannel && <div className="min-w-[250px]">
+                  <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Канал продажів</span>
+                  <div className="flex h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5" role="group" aria-label="Канал продажів">
+                    {([
+                      ["all", "Усі продажі ІМ Агромат"],
+                      ["monomarket", "Мономаркет"],
+                    ] as const).map(([channel, label]) => (
+                      <button
+                        key={channel}
+                        type="button"
+                        aria-pressed={salesChannel === channel}
+                        onClick={() => setSalesChannel(channel)}
+                        className="rounded-md px-3 text-[10px] font-bold transition"
+                        style={{
+                          background: salesChannel === channel ? "#118dff" : "transparent",
+                          color: salesChannel === channel ? "#fff" : "#586572",
+                          boxShadow: salesChannel === channel ? "0 1px 2px rgba(17,141,255,.22)" : "none",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>}
                 <label className="min-w-[150px] flex-1 sm:max-w-[190px]">
                   <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата від</span>
                   <input type="date" value={dateFrom} onChange={(event) => { liveCurrentMonthRef.current = false; setDateFrom(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
@@ -1984,13 +2010,12 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <input type="date" value={dateTo} onChange={(event) => { liveCurrentMonthRef.current = false; setDateTo(event.target.value); setWebshopOrdersPage(1); }} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" />
                 </label>
                 <button type="button" onClick={applyCurrentMonth} className="h-9 rounded-lg border-0 bg-[#118dff] px-3 text-[10px] font-bold text-white">Поточний місяць</button>
+                <button type="button" onClick={applyPreviousMonth} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Минулий місяць</button>
                 <div className="flex items-center gap-1" aria-label="Перегляд за днями">
                   <button type="button" title="Попередній день" aria-label="Попередній день" onClick={() => selectDay(shiftDay(dayAnchor, -1))} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-sm font-bold text-[#586572]">←</button>
                   <button type="button" onClick={() => selectDay(today)} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Сьогодні</button>
                   <button type="button" title="Наступний день" aria-label="Наступний день" disabled={dayAnchor >= today} onClick={() => selectDay(shiftDay(dayAnchor, 1))} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-sm font-bold text-[#586572] disabled:cursor-not-allowed disabled:opacity-35">→</button>
                 </div>
-                <button type="button" onClick={applyPreviousMonth} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Минулий місяць</button>
-                <button type="button" onClick={applyAllPeriod} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Весь період</button>
                 {view !== "webshop" && <button
                   type="button"
                   aria-pressed={compareWithPreviousYear}
@@ -2002,7 +2027,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <span className="flex h-4 w-4 items-center justify-center rounded border text-[9px]" style={{ borderColor: compareWithPreviousYear ? "#118dff" : "#aeb7c0", background: compareWithPreviousYear ? "#118dff" : "#fff", color: "#fff" }}>{compareWithPreviousYear ? "✓" : ""}</span>
                   Порівняти з минулим роком
                 </button>}
-                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{data.filter.label}</b></div>
+                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{data.filter.label}{supportsSalesChannel ? ` · ${salesChannel === "monomarket" ? "Мономаркет" : "усі продажі ІМ Агромат"}` : ""}</b></div>
               </div>
             </section>
 

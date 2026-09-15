@@ -40,6 +40,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean, refresh 
       statuses: Array.isArray(filter.statuses)
         ? [...filter.statuses].sort()
         : filter.statuses || "",
+      channel: filter.channel || "all",
     });
     const { value: json, status } = await getServerResult({
       namespace: "sales-json-v10",
@@ -81,6 +82,7 @@ export async function GET(req: Request) {
       ? positionCodes.size ? [...positionCodes] : [-1]
       : url.searchParams.get("product_codes") || undefined,
     statuses: url.searchParams.getAll("status"),
+    channel: url.searchParams.get("channel") === "monomarket" ? "monomarket" : "all",
   }, compact, url.searchParams.get("prewarm") === "1" && hasServerBearer(req, "CRON_SECRET"));
 }
 
@@ -91,5 +93,6 @@ export async function POST(req: Request) {
     to: typeof body?.to === "string" ? body.to : undefined,
     productCodes: Array.isArray(body?.productCodes) || typeof body?.productCodes === "string" ? body.productCodes : undefined,
     statuses: Array.isArray(body?.statuses) || typeof body?.statuses === "string" ? body.statuses : undefined,
+    channel: body?.channel === "monomarket" ? "monomarket" : "all",
   }, body?.compact === true);
 }

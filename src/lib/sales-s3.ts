@@ -32,7 +32,10 @@ export type SalesRow = {
   margin: number | null;
   stockm: string;
   planGroup: string;
+  cartNumber: string;
 };
+
+export type SalesChannel = "all" | "monomarket";
 
 export type SalesBucketSummary = {
   label: string;
@@ -222,6 +225,7 @@ export type SalesDataset = {
     productCodes: number[];
     matchedProductCodes: number[];
     statuses: string[];
+    channel: SalesChannel;
   };
   rows: SalesRow[];
   summary: {
@@ -331,6 +335,7 @@ export type SalesDateFilter = {
   to?: string;
   productCodes?: string | number[];
   statuses?: string | string[];
+  channel?: SalesChannel;
 };
 
 export type SalesDatasetOptions = {
@@ -543,7 +548,12 @@ function getEffectiveFilter(filter: SalesDateFilter | undefined) {
   const to = rawFrom && rawTo && rawFrom > rawTo ? rawFrom : rawTo;
   const productCodes = parseProductCodes(filter?.productCodes);
   const statuses = parseStatuses(filter?.statuses);
-  return { from: from || null, to: to || null, productCodes, statuses };
+  const channel: SalesChannel = filter?.channel === "monomarket" ? "monomarket" : "all";
+  return { from: from || null, to: to || null, productCodes, statuses, channel };
+}
+
+function matchesSalesChannel(row: ParsedSalesRow, channel: SalesChannel) {
+  return channel !== "monomarket" || Boolean(row.cartNumber);
 }
 
 function isWithinFilter(date: string, filter: ReturnType<typeof getEffectiveFilter>) {
@@ -742,6 +752,7 @@ function toPublicRow(row: ParsedSalesRow): SalesRow {
     margin: row.margin,
     stockm: row.stockm,
     planGroup: row.planGroup,
+    cartNumber: row.cartNumber,
   };
 }
 
@@ -1016,6 +1027,7 @@ function* iterateSalesRows(
         categoryNames,
         goodsNamesList,
       ),
+      cartNumber: get(values, "cart_number").trim(),
       items: Array.from({ length: goodsCount }, (_, i) => ({
         code: goodsCodes[i] || "",
         name: goodsNamesList[i] || productMetaByCode.get(goodsCodes[i])?.name || "Без назви",
@@ -1140,6 +1152,7 @@ function buildDataset(
   let ownCost = 0;
 
   for (const sourceRow of rows) {
+    if (!matchesSalesChannel(sourceRow, filter.channel)) continue;
     const row = scopeSalesRowToProductCodes(sourceRow, productCodeSet);
     if (!row) continue;
     const goodsCodes = row.goodsCodeNumbers;
@@ -1502,6 +1515,7 @@ function buildDimensionProducts(
   const dimensionProducts = new Map<string, Map<string, MutableSalesProductSummary>>();
 
   for (const sourceRow of rows) {
+    if (!matchesSalesChannel(sourceRow, filter.channel)) continue;
     const row = scopeSalesRowToProductCodes(sourceRow, productCodeSet);
     if (!row) continue;
     if (!isDimensionOrderInPeriod(row, filter)) continue;
@@ -1554,7 +1568,7 @@ async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<Cache
   }
 
   const now = Date.now();
-  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-plan-v2`;
+  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-channel-v1`;
   if (state.cached && state.cached.signature === signature && now < state.cached.expiresAt) {
     state.nextSignatureCheckAt = Math.min(now + revalidateMs, state.cached.expiresAt);
     return { rows: state.cached.rows, source: state.cached.source };
