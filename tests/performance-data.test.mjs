@@ -135,7 +135,7 @@ test("batched sales parsing preserves every row and gives the event loop a turn"
     },
     append: {
       "@/lib/sales-s3":
-        "\nexport {parseSalesRows,parseSalesRowsBatched,buildDataset};",
+        "\nexport {parseSalesRows,parseSalesRowsBatched,buildDataset,buildSalesWebshopManagerLookup};",
     },
   });
   const sales = load("@/lib/sales-s3");
@@ -191,6 +191,19 @@ test("batched sales parsing preserves every row and gives the event loop a turn"
   assert.equal(monomarket.summary.totalDocs, 1);
   assert.equal(monomarket.summary.shippedRevenue, 40);
   assert.equal(monomarket.filter.channel, "monomarket");
+
+  const managerRows = sales.parseSalesRows(
+    "docs_ref,number,webshop_id,seller,datecreation,state\n" +
+      "first,1,38101,,2026-05-01,Сформовано\n" +
+      "second,2,38101,Менеджер ERP,2026-05-01,Сформовано\n" +
+      "third,3,38102,,2026-05-01,Сформовано",
+    new Map(),
+    new Map(),
+  );
+  const managerLookup = sales.buildSalesWebshopManagerLookup(managerRows);
+  assert.equal(managerLookup.get("38101"), "Менеджер ERP");
+  assert.equal(managerLookup.get("38102"), "");
+  assert.equal(managerLookup.has("99999"), false);
 });
 
 test("cards GET/POST share cached JSON, mutations invalidate it, and basic overview skips GA4", async () => {

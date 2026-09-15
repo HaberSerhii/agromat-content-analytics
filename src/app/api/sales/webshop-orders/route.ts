@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerResult } from "@/lib/server-result-cache";
-import { readSalesWebshopReturnLookup, type SalesWebshopReturnInfo } from "@/lib/sales-s3";
+import {
+  readSalesWebshopManagerLookup,
+  readSalesWebshopReturnLookup,
+  type SalesWebshopReturnInfo,
+} from "@/lib/sales-s3";
 import { webshopFinalStatus } from "@/lib/sales-webshop-status";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import { orderInDateRange, ordersApiEndDate } from "@/lib/orders-date-range";
@@ -69,6 +73,7 @@ type ApiOrder = {
   } | null;
   analytics_status?: string;
   return_info?: SalesWebshopReturnInfo | null;
+  erp_manager?: string | null;
 };
 
 type ApiResponse = {
@@ -154,12 +159,15 @@ function fulfillmentStatus(order: ApiOrder) {
 function enrichOrder(
   order: ApiOrder,
   returnLookup: ReadonlyMap<string, SalesWebshopReturnInfo>,
+  managerLookup: ReadonlyMap<string, string>,
   returnedWebshopIds: ReadonlySet<string>,
 ): ApiOrder {
+  const webshopId = String(order.id);
   return {
     ...order,
     analytics_status: webshopFinalStatus(order, returnedWebshopIds),
-    return_info: returnLookup.get(String(order.id)) || null,
+    return_info: returnLookup.get(webshopId) || null,
+    erp_manager: managerLookup.get(webshopId) || null,
   };
 }
 
@@ -276,9 +284,12 @@ export async function GET(req: Request) {
         load: () => fetchOrders(params),
       });
       const rawOrder = detailResult.value.data.find((item) => String(item.id) === orderId);
-      const returnLookup = await readSalesWebshopReturnLookup();
+      const [returnLookup, managerLookup] = await Promise.all([
+        readSalesWebshopReturnLookup(),
+        readSalesWebshopManagerLookup(),
+      ]);
       const returnedWebshopIds = new Set(returnLookup.keys());
-      const order = rawOrder ? enrichOrder(rawOrder, returnLookup, returnedWebshopIds) : null;
+      const order = rawOrder ? enrichOrder(rawOrder, returnLookup, managerLookup, returnedWebshopIds) : null;
       if (!order) return NextResponse.json({ error: "Замовлення не знайдено" }, { status: 404 });
       return NextResponse.json({ data: order }, {
         headers: { "Cache-Control": "private, no-store", "X-Agromat-Cache": detailResult.status },
@@ -301,9 +312,12 @@ export async function GET(req: Request) {
       maxEntries: 16,
       load: () => fetchCompleteOrders(dateFrom, dateTo, synced),
     });
-    const returnLookup = await readSalesWebshopReturnLookup();
+    const [returnLookup, managerLookup] = await Promise.all([
+      readSalesWebshopReturnLookup(),
+      readSalesWebshopManagerLookup(),
+    ]);
     const returnedWebshopIds = new Set(returnLookup.keys());
-    const enrichedAllOrders = ordersResult.value.map((order) => enrichOrder(order, returnLookup, returnedWebshopIds));
+    const enrichedAllOrders = ordersResult.value.map((order) => enrichOrder(order, returnLookup, managerLookup, returnedWebshopIds));
     const positionedPromotionCodes = promotionPricePosition === "all"
       ? null
       : await readPromotionalPricePositionCodes(promotionPricePosition, dateFrom, dateTo);

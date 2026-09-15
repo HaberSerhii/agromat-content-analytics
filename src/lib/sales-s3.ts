@@ -1702,6 +1702,23 @@ export async function readSalesWebshopReturnLookup(): Promise<Map<string, SalesW
   return returns;
 }
 
+function buildSalesWebshopManagerLookup(rows: ParsedSalesRow[]): Map<string, string> {
+  const managers = new Map<string, string>();
+  for (const row of rows) {
+    if (!row.webshopId) continue;
+    const seller = row.seller.trim();
+    // Prefer a populated seller if duplicate rows for the same webshop order
+    // arrive while the ERP document is still being completed.
+    if (seller || !managers.has(row.webshopId)) managers.set(row.webshopId, seller);
+  }
+  return managers;
+}
+
+export async function readSalesWebshopManagerLookup(): Promise<Map<string, string>> {
+  const { rows } = await readCachedSalesRows();
+  return buildSalesWebshopManagerLookup(rows);
+}
+
 export async function readSalesCategoryProducts(
   category: string,
   filter?: SalesDateFilter,
