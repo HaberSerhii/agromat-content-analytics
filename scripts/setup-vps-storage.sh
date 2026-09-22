@@ -140,6 +140,7 @@ echo "$CONTENT_REVIEW_CRON_LINE" >> "$TMP_CRON"
 echo "$PRICE_POSITION_SNAPSHOT_CRON_LINE" >> "$TMP_CRON"
 crontab "$TMP_CRON"
 rm -f "$TMP_CRON"
+APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/install-cpo-refresh-cron.sh"
 
 echo "==> Redis ping"
 redis-cli -h 127.0.0.1 ping

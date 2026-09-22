@@ -192,6 +192,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   echo "$CONTENT_REVIEW_CRON_LINE" >> "$TMP_CRON"
   crontab "$TMP_CRON"
   rm -f "$TMP_CRON"
+  APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/install-cpo-refresh-cron.sh"
   echo "  cron: $AGROMAT_PRICE_CRON_LINE"
   echo "  tile cron: $SIMPLE_PRICE_CRON_LINE"
   echo "  dashboard prewarm cron: $DASHBOARD_PREWARM_CRON_LINE"

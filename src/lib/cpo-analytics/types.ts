@@ -50,6 +50,12 @@ export type CpoPeriodAvailability = {
   dataFrom: string;
   dataTo: string;
   periods: Record<CpoPeriodKind, CpoPeriodRange[]>;
+  refresh?: {
+    state: "running" | "waiting_for_source" | "updated" | "up_to_date" | "error";
+    checkedAt: string;
+    targetDataTo: string;
+    finalized?: boolean;
+  } | null;
 };
 
 export type MetricStatus = "good" | "neutral" | "warning" | "high" | "critical" | "insufficient_data";

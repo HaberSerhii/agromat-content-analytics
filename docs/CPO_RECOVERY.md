@@ -1,5 +1,8 @@
 # CPO saved-result recovery
 
+For ongoing weekly updates after the initial import, see [CPO_AUTO_REFRESH.md](CPO_AUTO_REFRESH.md).
+This document covers recovery of an existing frozen query result only.
+
 The dashboard API is read-only with respect to BigQuery. `build` and `estimate`
 are rejected. No query is submitted when a snapshot is absent.
 

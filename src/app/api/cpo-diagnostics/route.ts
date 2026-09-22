@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   try {
     const input = await request.json().catch(() => ({})) as Input;
     if (input.action === "estimate" || input.action === "build") {
-      return NextResponse.json({ code: "offline_import_required", error: "Імпорт виконується окремо з наявного результату BigQuery. Повторне сканування через панель вимкнено." }, { status: 409 });
+      return NextResponse.json({ code: "offline_import_required", error: "Дані оновлюються автоматично у фоновому режимі. Повторне сканування через панель вимкнено." }, { status: 409 });
     }
     const periodKind: CpoPeriodKind = input.periodKind === "month" ? "month" : "week";
     const availability = await readCpoAvailability();

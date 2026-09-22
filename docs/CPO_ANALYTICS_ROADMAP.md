@@ -7,13 +7,15 @@ The existing BigQuery audit snapshot is intentionally frozen and contains event-
 The CPO module is isolated from current imports:
 
 ```text
-GA4 BigQuery (explicit one-time build only)
+GA4 BigQuery (initial import + scheduled incremental refresh)
   → Ukraine session-level aggregate cube
   → deterministic metric/funnel/contribution/scoring services
   → immutable diagnostic snapshots per cube version and period
   → /api/cpo-diagnostics
   → /cpo-analytics
 ```
+
+Automatic weekly snapshot refresh is implemented; see [CPO_AUTO_REFRESH.md](CPO_AUTO_REFRESH.md) for readiness checks, late-event corrections and recovery.
 
 Normal dashboard reads never call BigQuery. The cube stores aggregates only, not raw user identifiers.
 

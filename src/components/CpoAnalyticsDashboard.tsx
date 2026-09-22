@@ -195,6 +195,15 @@ export function CpoAnalyticsDashboard() {
           </div>
         </div>
         <div className="mt-4 rounded-xl border bg-[#f7f9fb] p-3 text-xs text-[#45515d]" style={{ borderColor: "var(--border2)" }}>Країна: Україна · поточний період проти попереднього та аналогічного періоду торік · відкриття не запускає BigQuery{availability && <span className="mt-1 block font-bold">Дані у знімку до {availability.dataTo} · доступні лише завершені періоди в межах знімка</span>}</div>
+        {availability?.refresh && <div className="mt-2 text-xs text-[#68737e]" role="status">
+          {availability.refresh.state === "waiting_for_source"
+            ? `Очікуємо повне вивантаження GA4 за тиждень до ${availability.refresh.targetDataTo}. Перевірка повторюється щогодини.`
+            : availability.refresh.state === "error"
+              ? "Автооновлення не завершено. Показуємо останній успішний знімок; повторна спроба — протягом години."
+              : availability.refresh.state === "running"
+                ? "Оновлюємо дані у фоновому режимі. Поки доступний попередній успішний знімок."
+                : `Автооновлення увімкнено · знімок оновлено ${new Date(availability.savedAt).toLocaleString("uk-UA", { timeZone: "Europe/Kyiv" })}${availability.refresh.finalized ? "" : " · дані ще можуть уточнюватися через пізні події GA4"}`}
+        </div>}
         {error && <div className="mt-4 rounded-xl border border-[#f3b8bd] bg-[#fde7e9] p-4 text-sm text-[#a4262c]"><strong>Діагностика недоступна.</strong> {error}{!availability && <button type="button" disabled={loadingAvailability} onClick={() => setAvailabilityAttempt((attempt) => attempt + 1)} className="ml-3 underline disabled:opacity-50">Повторити</button>}</div>}
       </section>
 

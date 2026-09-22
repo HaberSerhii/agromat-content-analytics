@@ -32,7 +32,13 @@ export async function readCpoAvailability(): Promise<CpoPeriodAvailability | nul
   try {
     const manifest = JSON.parse(await fs.readFile(path.join(root(), "partition-manifest.json"), "utf8")) as Omit<CpoAnalyticsCube, "rows"> & { partitions: Record<string, string[]> };
     if (manifest.version !== 1 || manifest.countryFilter !== "Ukraine") return null;
-    return availableCpoPeriods(manifest, Object.keys(manifest.partitions).filter((key) => manifest.partitions[key].length > 0));
+    const availability = availableCpoPeriods(manifest, Object.keys(manifest.partitions).filter((key) => manifest.partitions[key].length > 0));
+    try {
+      const refresh = JSON.parse(await fs.readFile(path.join(root(), "refresh-status.json"), "utf8")) as NonNullable<CpoPeriodAvailability["refresh"]>;
+      // Expose operational state, never raw provider errors or job details.
+      availability.refresh = { state: refresh.state, checkedAt: refresh.checkedAt, targetDataTo: refresh.targetDataTo, finalized: refresh.finalized };
+    } catch { availability.refresh = null; }
+    return availability;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
