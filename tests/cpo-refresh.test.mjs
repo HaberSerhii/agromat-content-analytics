@@ -70,6 +70,7 @@ async function fixture(t, manifest = seed()) {
   const job = {
     getMetadata: async () => { if (!state.submitted) throw Object.assign(new Error('not found'), { code: 404 }); return [metadata()]; },
     getQueryResults: async ({ pageToken }) => {
+      if (state.incomplete === 'sdk-timeout') throw new Error('The query did not complete before 10000ms');
       if (state.incomplete) return [[], {}, { jobComplete: false }];
       const index = Number(pageToken || 0);
       if (state.failPage === index) throw new Error('simulated network failure');
@@ -141,6 +142,16 @@ test('interrupted pagination retains old manifest and resumes the same job witho
 test('incomplete BigQuery job is retained and polled without publication or a second query', async t => {
   const f = await fixture(t);
   f.state.incomplete = true;
+  assert.equal((await f.run()).state, 'running');
+  assert.deepEqual(await f.manifest(), seed());
+  f.state.incomplete = false;
+  assert.equal((await f.run()).state, 'updated');
+  assert.equal(f.state.queries.length, 1);
+});
+
+test('BigQuery SDK polling timeout resumes the running job instead of reporting an import failure', async t => {
+  const f = await fixture(t);
+  f.state.incomplete = 'sdk-timeout';
   assert.equal((await f.run()).state, 'running');
   assert.deepEqual(await f.manifest(), seed());
   f.state.incomplete = false;

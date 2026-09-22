@@ -157,7 +157,16 @@ export async function refreshOnce({ root, client, today = kyivDate(), maximumByt
   const allowed = new Set(plan.periods.map(period => period.key));
   try {
     while (!pending.complete) {
-      const [rows, next, response] = await job.getQueryResults({ autoPaginate: false, maxResults: 5000, timeoutMs: 10000, ...(pending.pageToken ? { pageToken: pending.pageToken } : {}) });
+      let result;
+      try {
+        result = await job.getQueryResults({ autoPaginate: false, maxResults: 5000, timeoutMs: 10000, ...(pending.pageToken ? { pageToken: pending.pageToken } : {}) });
+      } catch (error) {
+        // The Node SDK throws on a normal polling timeout, even though the
+        // server-side job is still running successfully. Keep its checkpoint.
+        if (/^The query did not complete before \d+ms$/.test(error.message)) return status('running', { jobId: pending.jobId });
+        throw error;
+      }
+      const [rows, next, response] = result;
       if (!response?.jobComplete) return status('running', { jobId: pending.jobId });
       const groups = new Map();
       for (const row of rows) {
