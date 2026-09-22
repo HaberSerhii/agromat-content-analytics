@@ -2,8 +2,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
-import type { CpoAnalyticsCube, CpoDiagnosticResult, CpoPeriodKind } from "./types";
-import { cpoPeriodRanges } from "@/lib/cpo-analytics/periods";
+import type { CpoAnalyticsCube, CpoDiagnosticResult, CpoPeriodAvailability, CpoPeriodKind } from "./types";
+import { availableCpoPeriods, cpoPeriodRanges } from "@/lib/cpo-analytics/periods";
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -24,6 +24,23 @@ export async function cpoImportProgress(): Promise<number | null> {
     const state = JSON.parse(await fs.readFile(path.join(root(), 'recovery-progress.json'), 'utf8'));
     return typeof state.rows === 'number' ? state.rows : null;
   } catch { return null; }
+}
+
+// Read only the manifest for partitioned snapshots; opening the selector must
+// not decompress all the period chunks or submit a BigQuery job.
+export async function readCpoAvailability(): Promise<CpoPeriodAvailability | null> {
+  try {
+    const manifest = JSON.parse(await fs.readFile(path.join(root(), "partition-manifest.json"), "utf8")) as Omit<CpoAnalyticsCube, "rows"> & { partitions: Record<string, string[]> };
+    if (manifest.version !== 1 || manifest.countryFilter !== "Ukraine") return null;
+    return availableCpoPeriods(manifest, Object.keys(manifest.partitions).filter((key) => manifest.partitions[key].length > 0));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const stored = await readCpoCube();
+  if (!stored) return null;
+  const keys = stored.cube.rows.filter((row) => row.dimension === "overall" && row.sessions > 0)
+    .map((row) => `${row.periodKind}-${row.periodYear}-${row.periodNumber}`);
+  return availableCpoPeriods(stored.cube, keys);
 }
 
 async function atomicGzipWrite(file: string, value: unknown): Promise<number> {

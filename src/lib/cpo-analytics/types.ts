@@ -45,6 +45,13 @@ export type CpoPeriodRange = {
   number: number;
 };
 
+export type CpoPeriodAvailability = {
+  savedAt: string;
+  dataFrom: string;
+  dataTo: string;
+  periods: Record<CpoPeriodKind, CpoPeriodRange[]>;
+};
+
 export type MetricStatus = "good" | "neutral" | "warning" | "high" | "critical" | "insufficient_data";
 
 export type MetricResult = {
@@ -179,4 +186,3 @@ export type CpoDiagnosticResult = {
     diagnosticSnapshotPath: string | null;
   };
 };
-

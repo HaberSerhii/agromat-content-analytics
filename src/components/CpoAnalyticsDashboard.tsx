@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   AnalyticsSignal,
   CpoDiagnosticResult,
+  CpoPeriodAvailability,
   DiagnosticNode,
   MetricResult,
   MetricStatus,
@@ -109,33 +110,52 @@ function SegmentTable({ title, rows }: { title: string; rows: SegmentContributio
 }
 
 export function CpoAnalyticsDashboard() {
-  const now = new Date();
-  const currentYear = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Kyiv", year: "numeric" }).format(now));
-  const currentMonth = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Kyiv", month: "2-digit" }).format(now));
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Kyiv", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  const isoWeek = (value: string) => {
-    const date = new Date(`${value}T12:00:00Z`);
-    const day = date.getUTCDay() || 7;
-    date.setUTCDate(date.getUTCDate() + 4 - day);
-    const start = new Date(Date.UTC(date.getUTCFullYear(), 0, 1, 12));
-    return Math.ceil((((date.getTime() - start.getTime()) / 86_400_000) + 1) / 7);
-  };
-  const currentWeek = isoWeek(today);
   const [periodKind, setPeriodKind] = useState<"week" | "month">("week");
-  const [period, setPeriod] = useState(Math.max(1, currentWeek - 1));
+  const [period, setPeriod] = useState("");
+  const [availability, setAvailability] = useState<CpoPeriodAvailability | null>(null);
+  const [loadingAvailability, setLoadingAvailability] = useState(true);
+  const [availabilityAttempt, setAvailabilityAttempt] = useState(0);
   const [data, setData] = useState<CpoDiagnosticResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    async function readAvailability() {
+      setLoadingAvailability(true);
+      setError(null);
+      try {
+        const response = await fetch("/api/cpo-diagnostics", { cache: "no-store", signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не вдалося прочитати доступні періоди");
+        if (controller.signal.aborted) return;
+        const available = payload as CpoPeriodAvailability;
+        setAvailability(available);
+        const latest = available.periods.week[0];
+        setPeriod(latest ? `${latest.year}:${latest.number}` : "");
+      } catch (requestError) {
+        if (!controller.signal.aborted) setError(requestError instanceof Error ? requestError.message : "Не вдалося прочитати доступні періоди");
+      } finally {
+        if (!controller.signal.aborted) setLoadingAvailability(false);
+      }
+    }
+    void readAvailability();
+    return () => controller.abort();
+  }, [availabilityAttempt]);
+
+  const availablePeriods = availability?.periods[periodKind] ?? [];
+  const selectedPeriod = availablePeriods.find((range) => `${range.year}:${range.number}` === period);
   const selectedSignal = useMemo(() => data?.topSignals.find((signal) => signal.id === selectedSignalId) || null, [data, selectedSignalId]);
 
   async function load() {
+    if (!selectedPeriod) return;
     setLoading(true);
+    setData(null);
     setError(null);
     setSelectedSignalId(null);
     try {
-      const response = await fetch("/api/cpo-diagnostics", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ periodKind, period, action: "read" }) });
+      const response = await fetch("/api/cpo-diagnostics", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ periodKind, period: selectedPeriod.number, year: selectedPeriod.year, action: "read" }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Не вдалося виконати діагностику");
       setData(payload as CpoDiagnosticResult);
@@ -158,16 +178,27 @@ export function CpoAnalyticsDashboard() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div><div className="inline-flex rounded-full bg-[#e8f3ff] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#0067b8]">Діагностичний модуль CPO · пілотна версія</div><h1 className="mt-2 text-2xl font-black text-[#27313c]">Центр CPO-аналітики</h1><p className="mt-1 max-w-3xl text-sm text-[#68737e]">Дохід → бізнес-чинник → етап воронки → сегмент із найбільшим внеском. Усі розрахунки виконуються кодом із локального знімка даних.</p></div>
           <div className="flex flex-wrap items-end gap-2">
-            <label className="text-xs font-bold text-[#45515d]">Період<select value={periodKind} onChange={(event) => { const kind = event.target.value as "week" | "month"; setPeriodKind(kind); setPeriod(kind === "week" ? Math.max(1, currentWeek - 1) : Math.max(1, currentMonth - 1)); setData(null); }} className="mt-1 block h-10 rounded-lg border bg-white px-3" style={{ borderColor: "var(--border2)" }}><option value="week">Тиждень</option><option value="month">Місяць</option></select></label>
-            <label className="text-xs font-bold text-[#45515d]">{periodKind === "week" ? `Тиждень · ${currentYear}` : `Місяць · ${currentYear}`}<select value={period} onChange={(event) => { setPeriod(Number(event.target.value)); setData(null); }} className="mt-1 block h-10 min-w-36 rounded-lg border bg-white px-3" style={{ borderColor: "var(--border2)" }}>{periodKind === "week" ? Array.from({ length: Math.max(1, currentWeek - 1) }, (_, index) => index + 1).reverse().map((week) => <option key={week} value={week}>Тиждень {week}</option>) : Array.from({ length: Math.max(1, currentMonth - 1) }, (_, index) => index + 1).reverse().map((month) => <option key={month} value={month}>{new Intl.DateTimeFormat("uk-UA", { month: "long" }).format(new Date(2024, month - 1, 1))}</option>)}</select></label>
-            <button type="button" onClick={() => void load()} disabled={loading} className="h-10 rounded-lg bg-[#118dff] px-5 text-sm font-black text-white disabled:opacity-50">{loading ? "Аналізуємо…" : "Запустити діагностику"}</button>
+            <label className="text-xs font-bold text-[#45515d]">Період<select value={periodKind} disabled={loading || loadingAvailability || !availability} onChange={(event) => {
+              const kind = event.target.value as "week" | "month";
+              const latest = availability?.periods[kind][0];
+              setPeriodKind(kind);
+              setPeriod(latest ? `${latest.year}:${latest.number}` : "");
+              setData(null);
+              setError(null);
+              setSelectedSignalId(null);
+            }} className="mt-1 block h-10 rounded-lg border bg-white px-3" style={{ borderColor: "var(--border2)" }}><option value="week">Тиждень</option><option value="month">Місяць</option></select></label>
+            <label className="text-xs font-bold text-[#45515d]">Доступний період<select value={period} disabled={loading || loadingAvailability || !availablePeriods.length} onChange={(event) => { setPeriod(event.target.value); setData(null); setError(null); setSelectedSignalId(null); }} className="mt-1 block h-10 min-w-36 rounded-lg border bg-white px-3" style={{ borderColor: "var(--border2)" }}>
+              {!availablePeriods.length && <option value="">{loadingAvailability ? "Завантажуємо…" : "Немає доступних періодів"}</option>}
+              {availablePeriods.map((range) => <option key={`${range.year}:${range.number}`} value={`${range.year}:${range.number}`}>{range.label}</option>)}
+            </select></label>
+            <button type="button" onClick={() => void load()} disabled={loading || loadingAvailability || !selectedPeriod} className="h-10 rounded-lg bg-[#118dff] px-5 text-sm font-black text-white disabled:opacity-50">{loading ? "Аналізуємо…" : "Запустити діагностику"}</button>
           </div>
         </div>
-        <div className="mt-4 rounded-xl border bg-[#f7f9fb] p-3 text-xs text-[#45515d]" style={{ borderColor: "var(--border2)" }}>Країна: Україна · поточний період проти попереднього та аналогічного періоду торік · відкриття не запускає BigQuery</div>
-        {error && <div className="mt-4 rounded-xl border border-[#f3b8bd] bg-[#fde7e9] p-4 text-sm text-[#a4262c]"><strong>Діагностика недоступна.</strong> {error}</div>}
+        <div className="mt-4 rounded-xl border bg-[#f7f9fb] p-3 text-xs text-[#45515d]" style={{ borderColor: "var(--border2)" }}>Країна: Україна · поточний період проти попереднього та аналогічного періоду торік · відкриття не запускає BigQuery{availability && <span className="mt-1 block font-bold">Дані у знімку до {availability.dataTo} · доступні лише завершені періоди в межах знімка</span>}</div>
+        {error && <div className="mt-4 rounded-xl border border-[#f3b8bd] bg-[#fde7e9] p-4 text-sm text-[#a4262c]"><strong>Діагностика недоступна.</strong> {error}{!availability && <button type="button" disabled={loadingAvailability} onClick={() => setAvailabilityAttempt((attempt) => attempt + 1)} className="ml-3 underline disabled:opacity-50">Повторити</button>}</div>}
       </section>
 
-      {!data && !error && <section className="mt-4 rounded-2xl border bg-white p-10 text-center" style={{ borderColor: "var(--border)" }}><div className="text-4xl">⌁</div><h2 className="mt-3 text-lg font-black text-[#27313c]">Готово до автоматичної діагностики</h2><p className="mx-auto mt-2 max-w-xl text-sm text-[#68737e]">Оберіть завершений період. Модуль сам визначить бізнес-чинник, проблемний етап воронки й сегменти з найбільшим впливом.</p></section>}
+      {!data && !error && <section className="mt-4 rounded-2xl border bg-white p-10 text-center" style={{ borderColor: "var(--border)" }}><div className="text-4xl">⌁</div><h2 className="mt-3 text-lg font-black text-[#27313c]">{loadingAvailability ? "Перевіряємо доступні періоди…" : selectedPeriod ? "Готово до автоматичної діагностики" : "Немає завершених періодів у знімку"}</h2><p className="mx-auto mt-2 max-w-xl text-sm text-[#68737e]">{selectedPeriod ? "Оберіть завершений період. Модуль сам визначить бізнес-чинник, проблемний етап воронки й сегменти з найбільшим впливом." : "Для діагностики потрібен повний тиждень або місяць у збережених даних."}</p></section>}
 
       {data && <>
         <section className="mt-4 rounded-2xl border bg-white p-4 sm:p-5" style={{ borderColor: "var(--border)" }}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-[10px] font-black uppercase tracking-[0.12em] text-[#7f8993]">Підсумок для керівництва · {data.periods.current.label}</div><h2 className="mt-1 text-xl font-black text-[#27313c]">Стан: <span className="uppercase">{SEVERITY_LABEL[data.overallStatus]}</span></h2><p className="mt-2 max-w-4xl text-sm leading-6 text-[#45515d]">{data.summary}</p></div><div className="text-right text-xs text-[#7f8993]">Знімок даних: {new Date(data.sourceCubeSavedAt).toLocaleString("uk-UA")}<br />Україна</div></div></section>

@@ -1,4 +1,4 @@
-import type { CpoPeriodKind, CpoPeriodRange } from "./types";
+import type { CpoPeriodAvailability, CpoPeriodKind, CpoPeriodRange } from "./types";
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -78,3 +78,24 @@ export function currentKyivIdentity(): { date: string; year: number; week: numbe
   return { date, year: Number(parts.year), week: week.week, month: Number(parts.month) };
 }
 
+export function availableCpoPeriods(
+  metadata: { savedAt: string; dataFrom: string; dataTo: string },
+  periodKeys: string[],
+  today = currentKyivIdentity().date,
+): CpoPeriodAvailability {
+  const periods: CpoPeriodAvailability["periods"] = { week: [], month: [] };
+  for (const key of new Set(periodKeys)) {
+    const match = /^(week|month)-(\d{4})-(\d{1,2})$/.exec(key);
+    if (!match) continue;
+    const kind = match[1] as CpoPeriodKind;
+    const year = Number(match[2]);
+    const number = Number(match[3]);
+    if (number < 1 || number > (kind === "week" ? weeksInYear(year) : 12)) continue;
+    const range = cpoPeriodRanges(kind, number, year)[0];
+    if (range.from >= metadata.dataFrom && range.to <= metadata.dataTo && range.to < today) {
+      periods[kind].push(range);
+    }
+  }
+  for (const kind of ["week", "month"] as const) periods[kind].sort((a, b) => b.from.localeCompare(a.from));
+  return { savedAt: metadata.savedAt, dataFrom: metadata.dataFrom, dataTo: metadata.dataTo, periods };
+}
