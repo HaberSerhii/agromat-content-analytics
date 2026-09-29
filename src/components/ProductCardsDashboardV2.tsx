@@ -15,8 +15,12 @@ import { SearchAnalyticsPanel } from "@/components/SearchAnalyticsPanel";
 import { SearchControlPanel } from "@/components/SearchControlPanel";
 import { ProductChangeHistoryModal } from "@/components/ProductChangeHistoryModal";
 
+import type { OverviewSelection, OverviewScope } from "@/lib/product-overview-drilldown";
+
 type FacetRow = { key: string; name: string; count: number };
 type ProductRow = {
+  overviewContribution?: number;
+  overviewHistorical?: boolean;
   id: number;
   code: number;
   goodsRef: number;
@@ -104,6 +108,17 @@ type SegmentMetric = {
   deltaSanitary: number;
 };
 type DashboardResponse = {
+  overviewDrilldown: (OverviewSelection & {
+    currentCount: number;
+    added: number;
+    removed: number;
+    delta: number;
+    currentFrom: string;
+    currentTo: string;
+    previousFrom: string | null;
+    previousTo: string | null;
+    available: boolean;
+  }) | null;
   currentDate: string;
   monthFrom: string;
   comparisonDate: string | null;
@@ -531,7 +546,11 @@ function Delta({ value, suffix = "" }: { value: number; suffix?: string }) {
 function MetricCard({
   meta,
   data,
+  selection,
+  onSelect,
 }: {
+  selection: OverviewSelection | null;
+  onSelect: (selection: OverviewSelection) => void;
   meta: (typeof METRIC_META)[number];
   data: DashboardResponse | null;
 }) {
@@ -576,28 +595,40 @@ function MetricCard({
         </span>
       </div>
       <div className="grid grid-cols-2 divide-x divide-[#e6e9ec]">
-        <div className="pr-3">
-          <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#9aa4ae]">
-            Плитка
-          </div>
-          <div className="mt-1.5 flex items-center gap-2">
-            <strong className="text-[22px] font-black leading-none tracking-tight text-[#252f3a]">
-              {tileValue}
-            </strong>
-            <Delta value={tileDelta} />
-          </div>
-        </div>
-        <div className="pl-3">
-          <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#9aa4ae]">
-            Сантехніка
-          </div>
-          <div className="mt-1.5 flex items-center gap-2">
-            <strong className="text-[22px] font-black leading-none tracking-tight text-[#252f3a]">
-              {sanitaryValue}
-            </strong>
-            <Delta value={sanitaryDelta} />
-          </div>
-        </div>
+        {([
+          { segment: "tile", label: "Плитка", value: tileValue, delta: tileDelta },
+          { segment: "sanitary", label: "Сантехніка", value: sanitaryValue, delta: sanitaryDelta },
+        ] as const).map(({ segment, label, value, delta }) => {
+          const active = selection?.metric === meta.key && selection.segment === segment;
+          const disabled = !data || (isCtr && (!data.metrics.ctr.available || value === "—"));
+          return (
+            <div key={segment} className={segment === "tile" ? "pr-3" : "pl-3"}>
+              <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#9aa4ae]">{label}</div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-pressed={active && selection?.scope === "current"}
+                  aria-label={`${meta.label} · ${label}: показати товари (${value})`}
+                  title="Показати товари, враховані в показнику"
+                  onClick={() => onSelect({ metric: meta.key, segment, scope: "current" })}
+                  className="rounded text-[22px] font-black leading-none tracking-tight text-[#252f3a] underline decoration-dotted decoration-[#b9c6d2] underline-offset-4 hover:text-[#118dff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] aria-pressed:text-[#118dff] disabled:cursor-default disabled:no-underline"
+                >{value}</button>
+                {delta !== 0 && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    aria-pressed={active && selection?.scope !== "current"}
+                    aria-label={`${meta.label} · ${label}: показати склад зміни ${delta > 0 ? "+" : ""}${delta}`}
+                    title="Показати товари, що дали плюс і мінус у зміні"
+                    onClick={() => onSelect({ metric: meta.key, segment, scope: "changes" })}
+                    className="rounded-full hover:ring-2 hover:ring-[#9cccf6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] aria-pressed:ring-2 aria-pressed:ring-[#118dff]"
+                  ><Delta value={delta} /></button>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
       {isCtr && (
         <div className="mt-3 border-t border-[#eef0f2] pt-2 text-[8px] text-[#8c959e]">
@@ -2017,6 +2048,8 @@ function NewProductsAnalysisPanel({
 
 export function ProductCardsDashboardV2() {
   const [view, setView] = useState<DashboardView>("overview");
+  const [overviewSelection, setOverviewSelection] = useState<OverviewSelection | null>(null);
+  const overviewCatalogRef = useRef<HTMLElement>(null);
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [allFacets, setAllFacets] = useState<
     DashboardResponse["facets"] | null
@@ -2103,6 +2136,7 @@ export function ProductCardsDashboardV2() {
   const interventionsLoadedRef = useRef(false);
   const newAssignmentsLoadedRef = useRef(false);
   const loadScopeKey = JSON.stringify([
+    overviewSelection,
     view,
     search,
     bulkIds,
@@ -2131,6 +2165,7 @@ export function ProductCardsDashboardV2() {
       try {
         const progressive = view === "overview" && !overviewAnalyticsLoadedRef.current;
         const requestBody = {
+            overviewSelection,
             view,
             page,
             limit: PAGE_SIZE,
@@ -2179,6 +2214,7 @@ export function ProductCardsDashboardV2() {
       }
     },
     [
+      overviewSelection,
       view,
       page,
       search,
@@ -2276,6 +2312,7 @@ export function ProductCardsDashboardV2() {
       void loadNewAssignments();
   }, [loadNewAssignments, resultMode, view]);
   const resetFilters = () => {
+    setOverviewSelection(null);
     setSearchDraft("");
     setSearch("");
     setBulkIds([]);
@@ -2297,7 +2334,17 @@ export function ProductCardsDashboardV2() {
     setView(next);
     resetFilters();
   };
+  const selectOverview = (selection: OverviewSelection) => {
+    resetFilters();
+    setStatusId("");
+    setOverviewSelection(selection);
+    setData((current) => current ? { ...current, rows: [], total: 0, overviewDrilldown: null } : current);
+    setLoading(true);
+    overviewCatalogRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    overviewCatalogRef.current?.focus({ preventScroll: true });
+  };
   const hasFilters = Boolean(
+    overviewSelection ||
     search ||
     bulkIds.length ||
     categoryId ||
@@ -3038,7 +3085,7 @@ export function ProductCardsDashboardV2() {
           <p className="mt-0.5 text-[10px] text-[#8a939c]">
             {view === "categories"
               ? `${formatNumber(data?.categoryAnalysis.length || 0)} категорій за вибраними умовами`
-              : `Показано ${formatNumber(data?.total || 0)} товарів за вибраними умовами`}
+              : loading ? "Завантаження товарів…" : `Показано ${formatNumber(data?.total || 0)} товарів за вибраними умовами`}
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -3073,6 +3120,50 @@ export function ProductCardsDashboardV2() {
           </button>
         </div>
       </div>
+      {view === "overview" && overviewSelection && (
+        <div className="mb-4 rounded-xl border border-[#bcd8f1] bg-[#edf6ff] p-3 text-[11px] text-[#355a7b]" role="status">
+          <p className="font-black">
+            {METRIC_META.find((item) => item.key === overviewSelection.metric)?.label}
+            {" · "}{overviewSelection.segment === "tile" ? "Плитка" : "Сантехніка"}
+          </p>
+          {loading ? <p className="mt-1">Завантаження вибраного списку…</p> : data?.overviewDrilldown && (() => {
+            const detail = data.overviewDrilldown;
+            const isCtr = detail.metric === "ctr";
+            const isInactive = detail.metric === "inactiveProducts";
+            const positiveLabel = isCtr ? "CTR зріс" : isInactive ? "Лише цього місяця" : "Додалися";
+            const negativeLabel = isCtr ? "CTR знизився" : isInactive ? "Лише минулого місяця" : "Вибули";
+            const choices: Array<{ scope: OverviewScope; label: string }> = [
+              { scope: "current", label: `У показнику: ${formatNumber(detail.currentCount)}` },
+              { scope: "changes", label: `Усі зміни: ${formatNumber(detail.added + detail.removed)}` },
+              { scope: "added", label: `${positiveLabel}: +${formatNumber(detail.added)}` },
+              { scope: "removed", label: `${negativeLabel}: −${formatNumber(detail.removed)}` },
+            ];
+            return <>
+              <p className="mt-1">
+                {isCtr || isInactive
+                  ? `${formatDate(detail.currentFrom)}–${formatDate(detail.currentTo)} порівняно з ${formatDate(detail.previousFrom)}–${formatDate(detail.previousTo)}.`
+                  : detail.previousTo ? `Порівняння зі станом на ${formatDate(detail.previousTo)}.` : "Попереднього знімка немає; зміни не визначені."}
+                {" "}Баланс: +{formatNumber(detail.added)} − {formatNumber(detail.removed)} = {detail.delta > 0 ? "+" : ""}{formatNumber(detail.delta)}.
+              </p>
+              <p className="mt-1">
+                {isCtr ? "Плюс — CTR зріс, мінус — знизився; щонайменше 20 показів у кожному періоді."
+                  : isInactive ? "Плюс — перехід у неактивний статус лише цього місяця, мінус — лише минулого. Товари з переходами в обох періодах не змінюють баланс."
+                  : "Плюс — товар увійшов до показника, мінус — вибув із нього. У таблиці показано поточні дані; відсутні товари — зі знімка."}
+              </p>
+              {!detail.available && <p className="mt-1 font-bold">Дані CTR недоступні. Спробуйте оновити сторінку.</p>}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {choices.map(({ scope, label }) => <button
+                  key={scope}
+                  type="button"
+                  aria-pressed={overviewSelection.scope === scope}
+                  onClick={() => selectOverview({ ...overviewSelection, scope })}
+                  className="rounded-lg border border-[#bcd8f1] bg-white px-2 py-1.5 font-bold aria-pressed:bg-[#118dff] aria-pressed:text-white"
+                >{label}</button>)}
+              </div>
+            </>;
+          })()}
+        </div>
+      )}
       {bulkActionError && view === "products" && (
         <div className="mb-3 rounded-lg border border-[#f1b7b7] bg-[#fff2f2] px-3 py-2 text-[9px] font-semibold text-[#bd3b3b]">
           {bulkActionError}
@@ -3321,7 +3412,7 @@ export function ProductCardsDashboardV2() {
             {view === "overview" && (
               <section className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
                 {METRIC_META.map((meta) => (
-                  <MetricCard key={meta.key} meta={meta} data={data} />
+                  <MetricCard key={meta.key} meta={meta} data={data} selection={overviewSelection} onSelect={selectOverview} />
                 ))}
               </section>
             )}
@@ -4665,7 +4756,7 @@ export function ProductCardsDashboardV2() {
                 {pager}
               </section>
             ) : (
-              <section className="grid min-w-0 grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
+              <section ref={overviewCatalogRef} tabIndex={-1} aria-label="Каталог товарів" aria-busy={loading} className="grid min-w-0 scroll-mt-4 grid-cols-1 gap-4 outline-none 2xl:grid-cols-[minmax(0,1fr)_300px]">
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                   {filterBar(false)}
                   <div className="overflow-x-auto">
@@ -4681,7 +4772,7 @@ export function ProductCardsDashboardV2() {
                         </tr>
                       </thead>
                       <tbody>
-                        {loading && !data && (
+                        {loading && (
                           <tr>
                             <td
                               colSpan={6}
@@ -4701,7 +4792,7 @@ export function ProductCardsDashboardV2() {
                             </td>
                           </tr>
                         )}
-                        {(data?.rows || []).map((row) => {
+                        {(!loading ? data?.rows || [] : []).map((row) => {
                           const tone = statusTone(row);
                           return (
                             <tr
@@ -4720,6 +4811,17 @@ export function ProductCardsDashboardV2() {
                                 <div className="mt-1 text-[9px] text-[#9aa2aa]">
                                   {row.categoryName}
                                 </div>
+                                {Boolean(row.overviewContribution) && (
+                                  <span className="mt-1 inline-flex items-center gap-1 text-[9px] text-[#68737e]">
+                                    <Delta value={row.overviewContribution!} />
+                                    {overviewSelection?.metric === "ctr"
+                                      ? row.overviewContribution! > 0 ? "CTR зріс" : "CTR знизився"
+                                      : overviewSelection?.metric === "inactiveProducts"
+                                        ? row.overviewContribution! > 0 ? "Лише цього місяця" : "Лише минулого місяця"
+                                        : row.overviewContribution! > 0 ? "Увійшов до показника" : "Вибув із показника"}
+                                  </span>
+                                )}
+                                {row.overviewHistorical && <p className="mt-1 text-[9px] text-[#93610b]">Дані зі знімка</p>}
                               </td>
                               <td className="max-w-40 px-3 py-3">
                                 <div

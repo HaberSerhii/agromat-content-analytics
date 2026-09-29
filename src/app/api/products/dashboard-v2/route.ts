@@ -1,3 +1,12 @@
+import {
+  buildOverviewCohorts,
+  normalizeOverviewSelection,
+  overviewMetric,
+  segmentOf,
+  selectOverviewRows,
+  type OverviewCohorts,
+  type OverviewSelection,
+} from "@/lib/product-overview-drilldown";
 import { getServerResult } from "@/lib/server-result-cache";
 import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
@@ -27,14 +36,8 @@ import {
 export const dynamic = "force-dynamic";
 
 type Segment = "tile" | "sanitary";
-type SegmentMetric = {
-  tile: number;
-  sanitary: number;
-  deltaTile: number;
-  deltaSanitary: number;
-};
-
 type DashboardFilters = {
+  overviewSelection?: OverviewSelection | null;
   includeAnalytics?: boolean;
   view?: "overview" | "new" | "categories" | "products";
   page?: number;
@@ -174,6 +177,7 @@ let productAnalysisCache: {
 } | null = null;
 
 type CtrSummary = {
+  cohorts: OverviewCohorts;
   available: boolean;
   benchmark: number | null;
   tile: number | null;
@@ -201,40 +205,6 @@ function monthRanges(today: string) {
   const previousFrom = `${previousYear}-${String(previousMonth).padStart(2, "0")}-01`;
   const previousTo = `${previousYear}-${String(previousMonth).padStart(2, "0")}-${String(Math.min(day, previousLastDay)).padStart(2, "0")}`;
   return { currentFrom, currentTo: today, previousFrom, previousTo };
-}
-
-function segmentOf(
-  product: Pick<ProductLite, "categoryName" | "categoryPath">,
-): Segment {
-  const category = `${product.categoryName} ${product.categoryPath}`;
-  return /плит|керам|кл[іи]нкер|моза|tile|gres/i.test(category)
-    ? "tile"
-    : "sanitary";
-}
-
-function countSegments(
-  products: ProductLite[],
-  predicate: (product: ProductLite) => boolean,
-) {
-  const result = { tile: 0, sanitary: 0 };
-  const countedIds = new Set<number>();
-  for (const product of products) {
-    if (countedIds.has(product.id) || !predicate(product)) continue;
-    countedIds.add(product.id);
-    result[segmentOf(product)]++;
-  }
-  return result;
-}
-
-function metric(
-  current: { tile: number; sanitary: number },
-  previous: { tile: number; sanitary: number },
-): SegmentMetric {
-  return {
-    ...current,
-    deltaTile: current.tile - previous.tile,
-    deltaSanitary: current.sanitary - previous.sanitary,
-  };
 }
 
 function isInactive(product: ProductLite) {
@@ -582,16 +552,17 @@ GROUP BY period, goods_ref
 async function readCtr(
   products: ProductLite[],
   today: string,
+  syncedAt: string | null,
 ): Promise<CtrSummary> {
   const ranges = monthRanges(today);
-  const key = Object.values(ranges).join(":");
+  const key = `${Object.values(ranges).join(":")}:${syncedAt || ""}:${products.length}`;
   if (ctrCache && ctrCache.key === key && ctrCache.expiresAt > Date.now())
     return ctrCache.value;
 
   try {
     const rows = await readThroughBigQueryCache<CtrRow[]>({
       namespace: "product-dashboard-ctr",
-      key: `v1:${today}:${productEventsTable()}:${key}`,
+      key: `v1:${today}:${productEventsTable()}:${Object.values(ranges).join(":")}`,
       load: async () => {
         const bigQuery = new BigQuery({
           projectId:
@@ -645,12 +616,14 @@ async function readCtr(
     let declinedTile = 0;
     let declinedSanitary = 0;
 
+    const cohorts = buildOverviewCohorts([], []);
     for (const [goodsRef, periods] of byRef) {
       const product = productByRef.get(goodsRef)!;
       const segment = segmentOf(product);
       const current = periods.current;
       const previous = periods.previous;
       if (current) {
+        cohorts[segment].current.push(product);
         totals[segment].impressions += current.impressions;
         totals[segment].clicks += current.clicks;
         totalImpressions += current.impressions;
@@ -666,6 +639,7 @@ async function readCtr(
       const currentCtr = current.clicks / current.impressions;
       const previousCtr = previous.clicks / previous.impressions;
       if (currentCtr > previousCtr) {
+        cohorts[segment].added.push(product);
         if (segment === "tile") {
           scoreTile++;
           improvedTile++;
@@ -674,6 +648,7 @@ async function readCtr(
           improvedSanitary++;
         }
       } else if (currentCtr < previousCtr) {
+        cohorts[segment].removed.push(product);
         if (segment === "tile") {
           scoreTile--;
           declinedTile++;
@@ -689,6 +664,7 @@ async function readCtr(
         ? (totals[segment].clicks / totals[segment].impressions) * 100
         : null;
     const value: CtrSummary = {
+      cohorts,
       available: totalImpressions > 0,
       benchmark:
         totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : null,
@@ -705,6 +681,7 @@ async function readCtr(
     return value;
   } catch (error) {
     const value: CtrSummary = {
+      cohorts: buildOverviewCohorts([], []),
       available: false,
       benchmark: null,
       tile: null,
@@ -729,6 +706,8 @@ async function readCtr(
 function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
   const exportAll = input.exportAll === true;
   return {
+    overviewSelection: input.view == null || input.view === "overview"
+      ? normalizeOverviewSelection(input.overviewSelection) : null,
     view:
       input.view === "new" ||
       input.view === "categories" ||
@@ -853,9 +832,10 @@ async function buildDashboard(input: DashboardFilters) {
     exactMonthBaselineDate !== comparisonDate
       ? readDailySnapshot(exactMonthBaselineDate)
       : Promise.resolve(null),
-    filters.view === "overview" && filters.includeAnalytics
-      ? readCtr(products, today)
+    filters.view === "overview" && (filters.includeAnalytics || filters.overviewSelection?.metric === "ctr")
+      ? readCtr(products, today, syncedAt)
       : Promise.resolve<CtrSummary>({
+          cohorts: buildOverviewCohorts([], []),
           available: false,
           benchmark: null,
           tile: null,
@@ -885,11 +865,10 @@ async function buildDashboard(input: DashboardFilters) {
   const monthBaselineById = new Map(
     monthBaselineProducts.map((product) => [product.id, product]),
   );
-  const emptySegment = { tile: 0, sanitary: 0 };
+  const emptyProducts: ProductLite[] = [];
   const isOverview = filters.view === "overview";
   const currentNew = isOverview
-    ? countSegments(
-        products,
+    ? products.filter(
         (product) =>
           !product.deleted &&
           product.statusId === 5 &&
@@ -900,10 +879,9 @@ async function buildDashboard(input: DashboardFilters) {
             ranges.currentTo,
           ),
       )
-    : emptySegment;
+    : emptyProducts;
   const previousNew = isOverview
-    ? countSegments(
-        previousProducts,
+    ? previousProducts.filter(
         (product) =>
           !product.deleted &&
           product.statusId === 5 &&
@@ -914,9 +892,9 @@ async function buildDashboard(input: DashboardFilters) {
             comparisonDate || ranges.currentTo,
           ),
       )
-    : emptySegment;
+    : emptyProducts;
   const currentInactive = isOverview
-    ? countSegments(products, (product) => {
+    ? products.filter((product) => {
         if (
           transitionedToInactiveInRange(
             product,
@@ -934,28 +912,50 @@ async function buildDashboard(input: DashboardFilters) {
           baseline && !isInactive(baseline) && isInactive(product),
         );
       })
-    : emptySegment;
+    : emptyProducts;
   const previousInactive = isOverview
-    ? countSegments(products, (product) =>
+    ? products.filter((product) =>
         transitionedToInactiveInRange(
           product,
           ranges.previousFrom,
           ranges.previousTo,
         ),
       )
-    : emptySegment;
+    : emptyProducts;
   const currentPromo = isOverview
-    ? countSegments(
-        products,
+    ? products.filter(
         (product) => !product.deleted && product.isOnSale,
       )
-    : emptySegment;
+    : emptyProducts;
   const previousPromo = isOverview
-    ? countSegments(
-        previousProducts,
+    ? previousProducts.filter(
         (product) => !product.deleted && product.isOnSale,
       )
-    : emptySegment;
+    : emptyProducts;
+
+  const cohorts = {
+    newProducts: buildOverviewCohorts(currentNew, previousNew),
+    inactiveProducts: buildOverviewCohorts(currentInactive, previousInactive),
+    promoProducts: buildOverviewCohorts(currentPromo, previousPromo),
+    ctr: ctr.cohorts,
+  };
+  const selection = filters.overviewSelection;
+  const selectedCohort = selection ? cohorts[selection.metric][selection.segment] : null;
+  const catalogProducts = selection && selectedCohort
+    ? selectOverviewRows(selectedCohort, selection.scope, products) : products;
+  const comparesMonths = selection?.metric === "inactiveProducts" || selection?.metric === "ctr";
+  const overviewDrilldown = selection && selectedCohort ? {
+    ...selection,
+    currentCount: selectedCohort.current.length,
+    added: selectedCohort.added.length,
+    removed: selectedCohort.removed.length,
+    delta: selectedCohort.added.length - selectedCohort.removed.length,
+    currentFrom: ranges.currentFrom,
+    currentTo: today,
+    previousFrom: comparesMonths ? ranges.previousFrom : null,
+    previousTo: comparesMonths ? ranges.previousTo : comparisonDate,
+    available: selection.metric !== "ctr" || ctr.available,
+  } : null;
 
   const search = filters.search.toLocaleLowerCase("uk");
   const bulkIds = new Set(filters.bulkIds);
@@ -1050,7 +1050,7 @@ async function buildDashboard(input: DashboardFilters) {
         return false;
       return true;
     };
-  const filtered = products
+  const filtered = catalogProducts
     .filter((product) => matchesBaseFilters(product))
     .sort((left, right) => right.firstSeenAt.localeCompare(left.firstSeenAt));
 
@@ -1089,7 +1089,7 @@ async function buildDashboard(input: DashboardFilters) {
   const categoryMap = new Map<number, { name: string; count: number }>();
   const brandMap = new Map<number, { name: string; count: number }>();
   const statusMap = new Map<number, { name: string; count: number }>();
-  for (const product of products.filter((item) => matchesBaseFilters(item, "category"))) {
+  for (const product of catalogProducts.filter((item) => matchesBaseFilters(item, "category"))) {
     const category = categoryMap.get(product.categoryId) || {
       name: product.categoryName || product.categoryPath || "Без категорії",
       count: 0,
@@ -1097,7 +1097,7 @@ async function buildDashboard(input: DashboardFilters) {
     category.count++;
     categoryMap.set(product.categoryId, category);
   }
-  for (const product of products.filter((item) => matchesBaseFilters(item, "brand"))) {
+  for (const product of catalogProducts.filter((item) => matchesBaseFilters(item, "brand"))) {
     if (product.brandId != null) {
       const brand = brandMap.get(product.brandId) || {
         name: product.brand || "Без бренду",
@@ -1107,7 +1107,7 @@ async function buildDashboard(input: DashboardFilters) {
       brandMap.set(product.brandId, brand);
     }
   }
-  for (const product of products.filter((item) => matchesBaseFilters(item, "status"))) {
+  for (const product of catalogProducts.filter((item) => matchesBaseFilters(item, "status"))) {
     const statusId = product.deleted ? -1 : product.statusId;
     const status = statusMap.get(statusId) || {
       name: product.deleted ? "Архів" : product.statusName,
@@ -1116,7 +1116,7 @@ async function buildDashboard(input: DashboardFilters) {
     status.count++;
     statusMap.set(statusId, status);
   }
-  const processingFacetProducts = products.filter((item) =>
+  const processingFacetProducts = catalogProducts.filter((item) =>
     matchesBaseFilters(item, "processing"),
   );
   const processingFacets = [
@@ -1717,15 +1717,16 @@ async function buildDashboard(input: DashboardFilters) {
   const offset = (filters.page - 1) * filters.limit;
   const outputRows = filters.view === "products" ? productRows : filtered;
   return {
+    overviewDrilldown,
     currentDate: today,
     monthFrom: ranges.currentFrom,
     comparisonDate,
     syncedAt,
     syncState,
     metrics: {
-      newProducts: metric(currentNew, previousNew),
-      inactiveProducts: metric(currentInactive, previousInactive),
-      promoProducts: metric(currentPromo, previousPromo),
+      newProducts: overviewMetric(cohorts.newProducts),
+      inactiveProducts: overviewMetric(cohorts.inactiveProducts),
+      promoProducts: overviewMetric(cohorts.promoProducts),
       ctr: {
         tile: ctr.tile,
         sanitary: ctr.sanitary,
@@ -1795,6 +1796,11 @@ async function dashboardResponse(input: DashboardFilters) {
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   return dashboardResponse({
+      overviewSelection: normalizeOverviewSelection({
+        metric: params.get("overviewMetric"),
+        segment: params.get("overviewSegment"),
+        scope: params.get("overviewScope"),
+      }),
       includeAnalytics: params.get("analytics") !== "0",
       view: (params.get("view") || "overview") as DashboardFilters["view"],
       page: Number(params.get("page")) || 1,
