@@ -5,6 +5,7 @@ import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s
 import { getMonthlyManagerPlan, getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
 import { readAllLite } from "@/lib/products-store";
 import { isDeliverySalesItem, isDimensionOrderInPeriod } from "@/lib/sales-dimension-filter";
+import { getSalesPlanAmounts, isSalesPlanService } from "@/lib/sales-plan-items";
 import { fillOrderDateSeries, fillSalesDateSeries } from "@/lib/sales-date-series";
 import type {
   PromotionSalesDataset,
@@ -1262,7 +1263,6 @@ function buildDataset(
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
     if (isDimensionOrderInPeriod(row, filter) && !isExcludedAnalyticsOrder(row)) {
       for (const item of row.items) {
-        if (isDeliverySalesItem(item)) continue;
         addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
         addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
         if (categoryProductsMode === "all" || categoryProductsMode === item.category) {
@@ -1270,27 +1270,31 @@ function buildDataset(
         }
       }
     }
-    if (!isExcludedAnalyticsOrder(row)) {
+    const planAmounts = getSalesPlanAmounts(row);
+    const planRow = planAmounts ? { ...row, ...planAmounts } : null;
+    if (planRow && !isExcludedAnalyticsOrder(row)) {
       let managerMonthRevenue = managerPlanRevenueByMonth.get(shippedMonth);
       if (!managerMonthRevenue) {
         managerMonthRevenue = new Map<string, number>();
         managerPlanRevenueByMonth.set(shippedMonth, managerMonthRevenue);
       }
       const shippedSeller = managerLabel(row.seller);
-      managerMonthRevenue.set(shippedSeller, (managerMonthRevenue.get(shippedSeller) || 0) + netRevenue);
+      managerMonthRevenue.set(shippedSeller, (managerMonthRevenue.get(shippedSeller) || 0) + getNetRevenue(planRow));
     }
     for (const code of goodsCodes) {
       if (productCodeSet.has(code)) matchedProductCodes.add(code);
     }
 
-    addMonth(planMonths, shippedMonth, row);
-    addRevenue(planReturnedRevenueByMonth, shippedMonth, row.returnSum);
-    let planMonthSegments = planSegmentsByMonth.get(shippedMonth);
-    if (!planMonthSegments) {
-      planMonthSegments = new Map<string, MutableBucket>();
-      planSegmentsByMonth.set(shippedMonth, planMonthSegments);
+    if (planRow) {
+      addMonth(planMonths, shippedMonth, planRow);
+      addRevenue(planReturnedRevenueByMonth, shippedMonth, planRow.returnSum);
+      let planMonthSegments = planSegmentsByMonth.get(shippedMonth);
+      if (!planMonthSegments) {
+        planMonthSegments = new Map<string, MutableBucket>();
+        planSegmentsByMonth.set(shippedMonth, planMonthSegments);
+      }
+      addBucket(planMonthSegments, planRow.planGroup, planRow, getNetRevenue(planRow), planRow.goodsCount);
     }
-    addBucket(planMonthSegments, row.planGroup, row, netRevenue, row.goodsCount);
 
     if (!isWithinFilter(row.shippedDate, filter)) continue;
     if (statusSet.size > 0 && !statusSet.has(row.state || "Без статусу")) continue;
@@ -1335,7 +1339,6 @@ function buildDataset(
   }
 
   const monthList = [...months.values()].sort((a, b) => a.month.localeCompare(b.month));
-  const allMonthList = [...allMonths.values()].sort((a, b) => a.month.localeCompare(b.month));
   const segmentList = finishSegmentBuckets(segments);
   const brandList = finishBuckets(brands);
   const categoryList = finishBuckets(categories);
@@ -1361,12 +1364,9 @@ function buildDataset(
         .sort((a, b) => b.revenue - a.revenue)];
     }),
   );
-  const hasProductFilter = productCodeSet.size > 0;
-  const planMonthList = hasProductFilter
-    ? [...planMonths.values()].sort((a, b) => a.month.localeCompare(b.month))
-    : allMonthList;
-  const planReturnedRevenue = hasProductFilter ? planReturnedRevenueByMonth : allReturnedRevenueByMonth;
-  const planMonthSegments = finishBuckets((hasProductFilter ? planSegmentsByMonth : allSegmentsByMonth).get(planMonth) || new Map<string, MutableBucket>());
+  const planMonthList = [...planMonths.values()].sort((a, b) => a.month.localeCompare(b.month));
+  const planReturnedRevenue = planReturnedRevenueByMonth;
+  const planMonthSegments = finishBuckets(planSegmentsByMonth.get(planMonth) || new Map<string, MutableBucket>());
   const managerMonthRevenue = managerPlanRevenueByMonth.get(planMonth) || new Map<string, number>();
   const activeManagerNames = [...new Set([...managers.keys(), ...managerMonthRevenue.keys()])]
     .filter((seller) => (
@@ -1522,7 +1522,6 @@ function buildDimensionProducts(
     if (isExcludedAnalyticsOrder(row)) continue;
 
     for (const item of row.items) {
-      if (isDeliverySalesItem(item)) continue;
       const revenue = item.revenue || row.docsSum / row.goodsCount;
       const dimensionValue = item[dimension] || (dimension === "brand" ? "Без бренду" : "Без категорії");
       dimensionRevenue.set(dimensionValue, (dimensionRevenue.get(dimensionValue) || 0) + revenue);
@@ -2138,7 +2137,7 @@ export async function readPromotionSalesDataset(input: {
         product.docs = product.docRefs.size;
         products.set(productKey, product);
       }
-      if (createdDate.slice(0, 7) === planMonth && saleDate.slice(0, 7) === planMonth) {
+      if (!isSalesPlanService(item) && createdDate.slice(0, 7) === planMonth && saleDate.slice(0, 7) === planMonth) {
         planRevenue += itemRevenue;
         if (itemSegment === "Плитка" || itemSegment === "Сантехніка") {
           planSegmentRevenue.set(
