@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import OnlinePaymentsAnalysis, { OrderPaymentDetails, type OnlinePaymentsAnalysisData } from "@/components/OnlinePaymentsAnalysis";
 import type { OnlinePayment } from "@/lib/online-payments";
@@ -890,7 +890,7 @@ function SalesMetricCard({
 }: {
   label: string;
   value: string;
-  hint: string;
+  hint: ReactNode;
   symbol: string;
   tone: string;
   description?: string;
@@ -1296,7 +1296,7 @@ function WebshopOrdersRegister({ dataset, paymentStateFilter, onPaymentStateChan
           <SalesMetricCard label="WEBSHOP-ЗАМОВЛЕННЯ" value={fmtNum(summary.total)} hint={summary.partial ? `Метрики нижче — за ${fmtNum(summary.basedOn)} записами` : "За обраний період"} symbol="W" tone="#118dff" />
           <SalesMetricCard label="СУМА ЗАМОВЛЕНЬ" value={fmtMoney(summary.revenue)} hint={summary.partial ? "За поточною сторінкою" : `${fmtNum(summary.total)} замовлень`} symbol="₴" tone="#805ad5" />
           <SalesMetricCard label="СЕРЕДНІЙ ЧЕК" value={fmtMoney(summary.averageOrder)} hint={summary.partial ? "За поточною сторінкою" : "Сума / кількість замовлень"} symbol="Ø" tone="#168b9b" />
-          <SalesMetricCard label="СИНХРОНІЗОВАНО З P2" value={fmtPct(summary.syncedPct)} hint={`${fmtNum(summary.synced)} із ${fmtNum(summary.basedOn)} замовлень`} symbol="P2" tone="#20a66a" />
+          <SalesMetricCard label="СИНХРОНІЗОВАНО З P2" value={fmtPct(summary.syncedPct)} hint={<><span className="block">{fmtNum(summary.synced)} із {fmtNum(summary.basedOn)} замовлень</span><button type="button" aria-pressed={syncFilter === "unsynced"} onClick={() => onSyncFilterChange(syncFilter === "unsynced" ? "all" : "unsynced")} className="mt-1 rounded text-[10px] font-bold text-[#c54848] underline decoration-dotted underline-offset-2 hover:text-[#9b2929] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#176aa8]">Не синхронізовано: {fmtNum(Math.max(0, summary.basedOn - summary.synced))}</button></>} symbol="P2" tone="#20a66a" />
           <SalesMetricCard label="ОБРАЛИ ОНЛАЙН-ОПЛАТУ" value={fmtPct(summary.onlinePaidPct)} hint={`${fmtNum(summary.onlinePaid)} із ${fmtNum(summary.basedOn)} замовлень`} symbol="%" tone="#e39a25" />
         </div>
         <div className="grid items-start gap-3 xl:grid-cols-3"><DistributionList title="Способи оплати" rows={summary.paymentTypes} label={paymentLabel} selectedKey={paymentFilter === "all" ? undefined : paymentFilter} onSelect={(key) => onPaymentFilterChange(paymentFilter === key ? "all" : key as WebshopPaymentFilter)} /><DistributionList title="Способи доставки" rows={summary.deliveryTypes} label={deliveryLabel} selectedKey={deliveryFilter === "all" ? undefined : deliveryFilter} onSelect={(key) => onDeliveryFilterChange(deliveryFilter === key ? "all" : key as WebshopDeliveryFilter)} /><DistributionList title="Фінальні статуси замовлень P2" rows={summary.statuses} label={(value) => value === "unknown" ? "Не вказано" : value} selectedKey={statusFilter === "all" ? undefined : statusFilter} totalOverride={summary.statusesTotal} onSelect={(key) => onStatusFilterChange(statusFilter === key ? "all" : key)} /></div>
