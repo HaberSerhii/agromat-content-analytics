@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { sourceLoader } from "./helpers/load-source.mjs";
 
 const load = sourceLoader();
-const { paymentState, normalizePayment, deduplicatePayments, summarizePayments, orderPaymentState, matchOrderPayments, paymentAmountMismatch } = load("@/lib/online-payments");
+const { paymentState, normalizePayment, deduplicatePayments, summarizePayments, orderPaymentState, matchOrderPayments, paymentAmountMismatch, paymentFailureMessage } = load("@/lib/online-payments");
 const { archiveWindows, liqpaySignature, readOnlinePayments } = load("@/lib/liqpay");
 const payment = (id, status, amount = 100, currency = "UAH", end_date = "1720000000000") => normalizePayment({ payment_id: id, order_id: "order-1", status, amount, currency, paytype: "card", end_date });
 
@@ -107,4 +107,16 @@ test("successful partial, duplicate and foreign currency payments do not imply f
   assert.equal(paymentAmountMismatch([success], 200, "UAH"), true);
   assert.equal(paymentAmountMismatch([success], 100, "EUR"), true);
   assert.equal(paymentAmountMismatch([payment("bad", "failure")], 200, "UAH"), false);
+});
+
+test("known provider failures have Ukrainian explanations while raw data remains intact", () => {
+  const insufficient = normalizePayment({ status: "failure", err_description: "Insufficient funds" });
+  assert.equal(paymentFailureMessage(insufficient), "Недостатньо коштів на картці");
+  assert.equal(insufficient.errorDescription, "Insufficient funds");
+  assert.equal(paymentFailureMessage({ errorDescription: "Withdrawal limit already reached.", errorCode: "9863" }), "Досягнуто ліміт списання коштів із картки");
+  assert.match(paymentFailureMessage({ errorDescription: null, errorCode: "expired_3ds" }), /Час підтвердження/);
+});
+test("unknown provider messages do not invent an error reason", () => {
+  assert.match(paymentFailureMessage({ errorDescription: "New provider error", errorCode: "new" }), /Оригінальна причина/);
+  assert.equal(paymentFailureMessage({ errorDescription: null, errorCode: null }), "Причина не передана LiqPay");
 });

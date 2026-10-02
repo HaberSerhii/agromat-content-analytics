@@ -113,3 +113,24 @@ export function paymentAmountMismatch(attempts: OnlinePayment[], cost: number, c
   return successful.length > 0 && (successful.some((attempt) => attempt.currency !== currency)
     || Math.abs(successful.reduce((sum, attempt) => sum + attempt.amount, 0) - cost) >= 0.011);
 }
+
+/** Display a verified translation; preserve provider text separately for support. */
+export function paymentFailureMessage(payment: Pick<OnlinePayment, "errorCode" | "errorDescription">): string {
+  const original = payment.errorDescription?.trim();
+  if (!original) return payment.errorCode === "expired_3ds" ? "Час підтвердження оплати минув. Спробуйте оплатити ще раз." : "Причина не передана LiqPay";
+  const key = original.toLowerCase().replace(/[.!]+$/, "").replace(/\s+/g, " ");
+  const translations: Record<string, string> = {
+    "insufficient funds": "Недостатньо коштів на картці",
+    "withdrawal limit already reached": "Досягнуто ліміт списання коштів із картки",
+    "your payment session has timed out": "Час підтвердження оплати минув. Спробуйте оплатити ще раз.",
+    "failed to make payment. please make sure the parameters are entered correctly and try again": "Не вдалося виконати платіж. Перевірте введені дані та спробуйте ще раз.",
+    "card expired": "Термін дії картки минув",
+    "expired card": "Термін дії картки минув",
+    "invalid card number": "Неправильний номер картки",
+    "transaction declined": "Транзакцію відхилено",
+    "payment declined": "Платіж відхилено",
+  };
+  if (translations[key]) return translations[key];
+  if (/[іїєґ]/i.test(original)) return original;
+  return "Платіж не виконано. Оригінальна причина доступна в деталях платежу.";
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PAYMENT_METHOD_LABELS, PAYMENT_STATE_LABELS, orderPaymentState, paymentAmountMismatch, type OnlinePayment, type OnlinePaymentsDataset, type PaymentState } from "@/lib/online-payments";
+import { PAYMENT_METHOD_LABELS, PAYMENT_STATE_LABELS, orderPaymentState, paymentAmountMismatch, paymentFailureMessage, type OnlinePayment, type OnlinePaymentsDataset, type PaymentState } from "@/lib/online-payments";
 
 export type OnlinePaymentsAnalysisData = Omit<OnlinePaymentsDataset, "payments"> & {
   matchedOrders: number; onlineOrders: number; mappingConfigured: boolean;
@@ -50,12 +50,13 @@ export function OrderPaymentDetails({ attempts, online, cost, currency, expanded
     {expanded && <><div className="text-[10px] font-bold text-[#687582]">Прийнято замовлення → Онлайн-оплата · {attempts.length} спроб</div>
       {detailUnavailable && <p className="text-[10px] text-[#916c21]">Не вдалося уточнити всі спроби. Показано доступні дані архіву.</p>}
       {attempts.map((attempt, index) => <div key={`${attempt.id}-${index}`} className="rounded-lg border border-[#dce4ea] bg-white p-3 text-[10px]">
-        <div className="flex flex-wrap justify-between gap-2"><b style={{ color: tones[attempt.state] }}>{PAYMENT_STATE_LABELS[attempt.state]} · {attempt.status}</b><b>{money(attempt.amount, attempt.currency)}</b></div>
+        <div className="flex flex-wrap justify-between gap-2"><b style={{ color: tones[attempt.state] }}>{PAYMENT_STATE_LABELS[attempt.state]}</b><b>{money(attempt.amount, attempt.currency)}</b></div>
         <div className="mt-1 text-[#687582]">{PAYMENT_METHOD_LABELS[attempt.method] || attempt.method} · ID {attempt.id || "—"} · {time(attempt.updatedAt || attempt.createdAt)}</div>
-        {attempt.state === "failure" && <div className="mt-2 text-[#b73535]">{attempt.errorDescription || "Причина не передана LiqPay"}{attempt.errorCode && <> · Код: {attempt.errorCode}</>}</div>}
+        {attempt.state === "failure" && <div className="mt-2 text-[#b73535]">{paymentFailureMessage(attempt)}{attempt.errorCode && <> · Код: {attempt.errorCode}</>}</div>}
+        {attempt.state === "failure" && attempt.errorDescription && <details className="mt-2 text-[#687582]"><summary className="cursor-pointer">Оригінальна причина LiqPay</summary><p className="mt-1 break-words">{attempt.errorDescription}</p><p className="mt-1">Статус API: {attempt.status}</p></details>}
       </div>)}
     </>}
-    {!expanded && state === "failure" && <div className="max-w-[220px] text-[9px] text-[#b73535]">{attempts.find((attempt) => attempt.state === "failure")?.errorDescription || "Причина не передана LiqPay"}</div>}
+    {!expanded && state === "failure" && <div className="max-w-[220px] text-[9px] text-[#b73535]">{paymentFailureMessage(attempts.find((attempt) => attempt.state === "failure")!)}</div>}
   </div>;
 }
 
