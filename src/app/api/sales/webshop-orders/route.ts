@@ -14,6 +14,9 @@ import {
   readPromotionalPricePositionCodes,
 } from "@/lib/promotion-price-position";
 
+import { readOnlinePayments } from "@/lib/liqpay";
+import { deduplicatePayments, summarizePayments, matchOrderPayments, indexOrderPayments, type OnlinePayment } from "@/lib/online-payments";
+
 export const dynamic = "force-dynamic";
 
 type ApiOrder = {
@@ -25,7 +28,8 @@ type ApiOrder = {
   doc_date: string | null;
   status: string | null;
   http_status: number | null;
-  payment: { status: string | null; type: string | null; system_ref: number | null } | null;
+  payment: { status: string | null; type: string | null; system_ref: number | null; order_id?: string; liqpay_order_id?: string } | null;
+  online_payments?: OnlinePayment[];
   totals: { cost: number; delivery: number; items_sum: number; weight: number; currency: string };
   customer: {
     client_id: number | null;
@@ -329,6 +333,12 @@ export async function GET(req: Request) {
           positionedPromotionCodes as ReadonlySet<number>,
         ))
         .filter((order): order is ApiOrder => order != null);
+    const onlinePayments = await readOnlinePayments(dateFrom, dateTo);
+    const mapping = process.env.LIQPAY_ORDER_ID_FIELD;
+    const paymentIndex = indexOrderPayments(onlinePayments.payments);
+    for (const order of allOrders) {
+      order.online_payments = matchOrderPayments(order, paymentIndex, mapping);
+    }
     const facetOrders = allOrders.filter((order) => (
       (payment === "all" || paymentCategory(order) === payment)
       && (delivery === "all" || order.delivery?.type === delivery)
@@ -339,11 +349,13 @@ export async function GET(req: Request) {
       campaigns: utmOptions(facetOrders.filter((order) => matchesUtm(order, utmSource, "")), "utm_campaign"),
     };
     const enrichedOrders = allOrders.filter((order) => matchesUtm(order, utmSource, utmCampaign));
-    const filteredOrders = enrichedOrders.filter((order) => (
+    const paymentStateFilter = url.searchParams.get("payment_state") || "all";
+    const paymentScopeOrders = enrichedOrders.filter((order) => (
       (payment === "all" || paymentCategory(order) === payment)
       && (delivery === "all" || order.delivery?.type === delivery)
       && (orderStatus === "all" || fulfillmentStatus(order) === orderStatus)
     ));
+    const filteredOrders = paymentScopeOrders.filter((order) => paymentStateFilter === "all" || (order.online_payments || []).some((attempt) => attempt.state === paymentStateFilter));
     const paymentFacet = enrichedOrders.filter((order) => (
       (delivery === "all" || order.delivery?.type === delivery)
       && (orderStatus === "all" || fulfillmentStatus(order) === orderStatus)
@@ -369,6 +381,14 @@ export async function GET(req: Request) {
       data: filteredOrders.slice(start, start + DETAIL_PAGE_SIZE),
       meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: true },
       summary,
+      onlinePayments: {
+        ...onlinePayments,
+        payments: undefined,
+        summary: summarizePayments(deduplicatePayments(paymentScopeOrders.flatMap((order) => order.online_payments || []))),
+        matchedOrders: paymentScopeOrders.filter((order) => order.online_payments?.length).length,
+        onlineOrders: paymentScopeOrders.filter((order) => order.payment?.type === "online").length,
+        mappingConfigured: true,
+      },
       utm,
     }, {
       headers: {
