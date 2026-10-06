@@ -1,3 +1,4 @@
+import { compareProductAnalysisRows, normalizeProductSortKey, type ProductSortKey } from "@/lib/product-analysis-sort";
 import {
   buildOverviewCohorts,
   normalizeOverviewSelection,
@@ -57,6 +58,8 @@ type DashboardFilters = {
   maxPrice?: number | null;
   minStock?: number | null;
   maxStock?: number | null;
+  productSortKey?: ProductSortKey | null;
+  productSortDirection?: "asc" | "desc";
   productSignal?:
     | "highImpressions"
     | "lowCtr"
@@ -749,6 +752,8 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
     maxPrice: Number.isFinite(input.maxPrice) ? Number(input.maxPrice) : null,
     minStock: Number.isFinite(input.minStock) ? Number(input.minStock) : null,
     maxStock: Number.isFinite(input.maxStock) ? Number(input.maxStock) : null,
+    productSortKey: normalizeProductSortKey(input.productSortKey),
+    productSortDirection: input.productSortDirection === "asc" ? "asc" : "desc",
     productSignal:
       input.productSignal === "highImpressions" ||
       input.productSignal === "lowCtr" ||
@@ -1674,6 +1679,7 @@ async function buildDashboard(input: DashboardFilters) {
       return true;
     });
     productRows.sort((left, right) => {
+      if (filters.productSortKey) return compareProductAnalysisRows(left, right, filters.productSortKey, filters.productSortDirection || "desc");
       if (filters.productSignal === "lowCtr")
         return (left.ctr ?? Infinity) - (right.ctr ?? Infinity);
       if (filters.productSignal === "lowAtc")
@@ -1815,6 +1821,8 @@ export async function GET(request: Request) {
       maxPrice: params.has("maxPrice") ? Number(params.get("maxPrice")) : null,
       minStock: params.has("minStock") ? Number(params.get("minStock")) : null,
       maxStock: params.has("maxStock") ? Number(params.get("maxStock")) : null,
+      productSortKey: normalizeProductSortKey(params.get("productSortKey")),
+      productSortDirection: params.get("productSortDirection") === "asc" ? "asc" : "desc",
       productSignal: (params.get("productSignal") ||
         null) as DashboardFilters["productSignal"],
       processingStatus: (params.get("processingStatus") ||

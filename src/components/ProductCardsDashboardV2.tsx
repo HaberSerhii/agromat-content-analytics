@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- product images come from the Agromat CDN */
 
+import { PRODUCT_SORT_COLUMNS, type ProductSortKey } from "@/lib/product-analysis-sort";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CONTENT_REVIEW_ACTIONS,
@@ -2073,6 +2074,8 @@ export function ProductCardsDashboardV2() {
   const [maxPrice, setMaxPrice] = useState("");
   const [minStock, setMinStock] = useState("");
   const [maxStock, setMaxStock] = useState("");
+  const [productSortKey, setProductSortKey] = useState<ProductSortKey | null>(null);
+  const [productSortDirection, setProductSortDirection] = useState<"asc" | "desc">("desc");
   const [productSignal, setProductSignal] = useState<ProductSignal | "">("");
   const [chartMode, setChartMode] = useState<ChartMode>("categories");
   const [copied, setCopied] = useState("");
@@ -2149,6 +2152,8 @@ export function ProductCardsDashboardV2() {
     minStock,
     maxStock,
     productSignal,
+    productSortKey,
+    productSortDirection,
   ]);
   const previousLoadScopeRef = useRef(loadScopeKey);
 
@@ -2181,6 +2186,8 @@ export function ProductCardsDashboardV2() {
             minStock: minStock ? Number(minStock) : null,
             maxStock: maxStock ? Number(maxStock) : null,
             productSignal: productSignal || null,
+            productSortKey,
+            productSortDirection,
           };
         const fetchDashboard = (includeAnalytics: boolean) => fetch("/api/products/dashboard-v2", {
           method: "POST", headers: { "Content-Type": "application/json" }, signal,
@@ -2228,6 +2235,8 @@ export function ProductCardsDashboardV2() {
       minStock,
       maxStock,
       productSignal,
+      productSortKey,
+      productSortDirection,
     ],
   );
 
@@ -2325,6 +2334,8 @@ export function ProductCardsDashboardV2() {
     setMinStock("");
     setMaxStock("");
     setProductSignal("");
+    setProductSortKey(null);
+    setProductSortDirection("desc");
     setPage(1);
     setPagePickerOpen(false);
     setPagePickerDraft("");
@@ -2670,6 +2681,8 @@ export function ProductCardsDashboardV2() {
         minStock: minStock ? Number(minStock) : null,
         maxStock: maxStock ? Number(maxStock) : null,
         productSignal: productSignal || null,
+            productSortKey,
+            productSortDirection,
       }),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -3553,30 +3566,23 @@ export function ProductCardsDashboardV2() {
                       </colgroup>
                       <thead className="bg-[#f7f8f8] text-[9px] font-black uppercase tracking-[.1em] text-[#8d969f]">
                         <tr>
-                          <th className="px-2 py-3">Товар</th>
-                          <th className="hidden px-2 py-3 xl:table-cell">
-                            Категорія
-                          </th>
-                          <th className="hidden px-2 py-3 xl:table-cell">
-                            Бренд
-                          </th>
-                          <th className="hidden px-2 py-3 xl:table-cell">
-                            Артикул
-                          </th>
-                          <th className="hidden px-1 py-3 text-center xl:table-cell">
-                            Фото
-                          </th>
-                          <th className="px-1 py-3 text-center">Атрибути</th>
-                          <th className="hidden px-1 py-3 text-center xl:table-cell">
-                            Відгуки
-                          </th>
-                          <th className="px-1 py-3 text-center">Залишок</th>
-                          <th className="px-2 py-3 text-center">Impressions</th>
-                          <th className="px-2 py-3 text-center">CTR</th>
-                          <th className="px-2 py-3 text-center">ATC</th>
-                          <th className="px-2 py-3 text-center">
-                            Content Score
-                          </th>
+                          {PRODUCT_SORT_COLUMNS.map(([key, label], index) => {
+                            const activeKey = productSortKey || (productSignal === "lowCtr" ? "ctr" : productSignal === "lowAtc" ? "atc" : productSignal === "poorContent" ? "contentScore" : "impressions");
+                            const direction = productSortKey ? productSortDirection : activeKey === "impressions" ? "desc" : "asc";
+                            const active = activeKey === key;
+                            return <th key={key} scope="col"
+                              aria-sort={active ? direction === "asc" ? "ascending" : "descending" : "none"}
+                              className={`${[1, 2, 3, 4, 6].includes(index) ? "hidden xl:table-cell " : ""}px-1 py-3 ${index >= 4 ? "text-center" : "text-left"}`}>
+                              <button type="button" className={`w-full rounded text-inherit font-inherit uppercase hover:text-[#118dff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] ${active ? "text-[#118dff]" : ""}`}
+                                onClick={() => {
+                                  setProductSortKey(key);
+                                  setProductSortDirection(active ? direction === "asc" ? "desc" : "asc" : index < 4 ? "asc" : "desc");
+                                  setPage(1);
+                                }}>
+                                {label}<span aria-hidden="true">{active ? direction === "asc" ? " ↑" : " ↓" : " ↕"}</span>
+                              </button>
+                            </th>;
+                          })}
                         </tr>
                       </thead>
                       <tbody>
