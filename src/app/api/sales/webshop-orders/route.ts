@@ -308,20 +308,22 @@ export async function GET(req: Request) {
     const utmCampaign = url.searchParams.get("utm_campaign") || "";
     const promotionPricePosition = normalizePromotionPricePosition(url.searchParams.get("promotion_price_position"));
 
-    const scopeKey = `${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}|${synced || "all"}`;
-    const ordersResult = await getServerResult({
-      namespace: "webshop-orders-dataset-with-p2-15m-v2",
-      key: scopeKey,
-      ttlMs: SALES_AUTO_REFRESH_MS,
-      maxEntries: 16,
-      load: () => fetchCompleteOrders(dateFrom, dateTo, synced),
-    });
-    const [returnLookup, managerLookup] = await Promise.all([
+    const scopeKey = `${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}`;
+    const [ordersResult, returnLookup, managerLookup, onlinePayments] = await Promise.all([
+      getServerResult({
+        namespace: "webshop-orders-dataset-with-p2-15m-v3",
+        key: scopeKey,
+        ttlMs: SALES_AUTO_REFRESH_MS,
+        maxEntries: 16,
+        load: () => fetchCompleteOrders(dateFrom, dateTo, null),
+      }),
       readSalesWebshopReturnLookup(),
       readSalesWebshopManagerLookup(),
+      readOnlinePayments(dateFrom, dateTo),
     ]);
     const returnedWebshopIds = new Set(returnLookup.keys());
-    const enrichedAllOrders = ordersResult.value.map((order) => enrichOrder(order, returnLookup, managerLookup, returnedWebshopIds));
+    const scopedOrders = ordersResult.value.filter((order) => (synced !== "true" && synced !== "false") || order.is_synced === (synced === "true"));
+    const enrichedAllOrders = scopedOrders.map((order) => enrichOrder(order, returnLookup, managerLookup, returnedWebshopIds));
     const positionedPromotionCodes = promotionPricePosition === "all"
       ? null
       : await readPromotionalPricePositionCodes(promotionPricePosition, dateFrom, dateTo);
@@ -333,7 +335,6 @@ export async function GET(req: Request) {
           positionedPromotionCodes as ReadonlySet<number>,
         ))
         .filter((order): order is ApiOrder => order != null);
-    const onlinePayments = await readOnlinePayments(dateFrom, dateTo);
     const mapping = process.env.LIQPAY_ORDER_ID_FIELD;
     const paymentIndex = indexOrderPayments(onlinePayments.payments);
     for (const order of allOrders) {

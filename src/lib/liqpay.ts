@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import { getServerResult } from "@/lib/server-result-cache";
 import { deduplicatePayments, normalizePayment, summarizePayments, type OnlinePaymentsDataset } from "@/lib/online-payments";
 
@@ -43,7 +44,7 @@ export async function readOnlinePayments(from: string, to: string): Promise<Onli
   try {
     const result = await getServerResult({
       namespace: "liqpay-archive-v1", key: `${process.env.LIQPAY_PUBLIC_KEY}|${from}|${to}`,
-      ttlMs: 60_000, maxEntries: 16,
+      ttlMs: SALES_AUTO_REFRESH_MS, staleMs: SALES_AUTO_REFRESH_MS, maxEntries: 16,
       load: async () => {
         const payments = [];
         for (const window of archiveWindows(from, to)) {
