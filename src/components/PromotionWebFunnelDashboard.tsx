@@ -18,7 +18,7 @@ type SuggestedUrl = {
 
 const CHANNELS: Array<{ key: WebFunnelChannel; label: string; color: string }> = [
   { key: "all", label: "Всі канали", color: "#118dff" },
-  { key: "organic", label: "Органіка", color: "#107c10" },
+  { key: "organic", label: "Органіка (всі)", color: "#107c10" },
   { key: "cpc", label: "Google CPC", color: "#f7630c" },
   { key: "meta_cpc", label: "Meta CPC", color: "#0866ff" },
   { key: "direct", label: "Direct", color: "#744da9" },
