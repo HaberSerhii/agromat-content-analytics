@@ -19,7 +19,8 @@ type SuggestedUrl = {
 const CHANNELS: Array<{ key: WebFunnelChannel; label: string; color: string }> = [
   { key: "all", label: "Всі канали", color: "#118dff" },
   { key: "organic", label: "Органіка", color: "#107c10" },
-  { key: "cpc", label: "CPC", color: "#f7630c" },
+  { key: "cpc", label: "Google CPC", color: "#f7630c" },
+  { key: "meta_cpc", label: "Meta CPC", color: "#0866ff" },
   { key: "direct", label: "Direct", color: "#744da9" },
 ];
 
@@ -575,7 +576,7 @@ export function PromotionWebFunnelDashboard({
             <div className="mb-1 text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
               Канал
             </div>
-            <div className="grid w-full grid-cols-4 rounded-xl border p-0.5 sm:w-auto" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+            <div className="grid w-full grid-cols-3 rounded-xl border p-0.5 sm:w-auto sm:grid-cols-5" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
               {CHANNELS.map((item) => (
                 <button
                   key={item.key}
@@ -595,11 +596,11 @@ export function PromotionWebFunnelDashboard({
 
         <div className="mt-3 grid gap-2 border-t pt-3 sm:grid-cols-2" style={{ borderColor: "var(--border)" }}>
           <label>
-            <span className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>UTM source</span>
+            <span className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>Джерело сеансу</span>
             <input value={utmSource} onChange={(event) => { setUtmSource(event.target.value); setAnchor(""); }} placeholder="Усі джерела · або введіть source" className="h-9 w-full rounded-lg border px-3 text-xs outline-none" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }} />
           </label>
           <label>
-            <span className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>UTM campaign</span>
+            <span className="mb-1 block text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>Кампанія сеансу</span>
             <input value={utmCampaign} onChange={(event) => { setUtmCampaign(event.target.value); setAnchor(""); }} placeholder="Усі кампанії · або введіть campaign" className="h-9 w-full rounded-lg border px-3 text-xs outline-none" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }} />
           </label>
         </div>
@@ -614,7 +615,7 @@ export function PromotionWebFunnelDashboard({
             </span>
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
               {data.scope === "sitewide"
-                ? "Унікальні користувачі кожної події GA4 · як у загальній воронці Looker"
+                ? "Унікальні користувачі кожної події · канал за джерелом сеансу"
                 : "Унікальні користувачі · події після відвідування URL в одній сесії"}
             </span>
           </div>

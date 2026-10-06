@@ -1,5 +1,5 @@
 export type WebFunnelPeriodKind = "week" | "month" | "custom";
-export type WebFunnelChannel = "all" | "organic" | "cpc" | "direct";
+export type WebFunnelChannel = "all" | "organic" | "cpc" | "meta_cpc" | "direct";
 export type WebFunnelDevice = "all" | "mobile" | "desktop";
 export type WebFunnelStageKey =
   | "landing"

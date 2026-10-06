@@ -1,3 +1,4 @@
+import { PROMOTION_CHANNELS, promotionTrafficFieldsSql, promotionChannelSql } from "@/lib/promotion-traffic";
 import { BigQuery } from "@google-cloud/bigquery";
 import {
   bigQueryCacheDay,
@@ -14,7 +15,7 @@ import type {
   WebFunnelStageKey,
 } from "@/lib/promotion-web-funnel-types";
 
-const CHANNELS: WebFunnelChannel[] = ["all", "organic", "cpc", "direct"];
+const CHANNELS: readonly WebFunnelChannel[] = PROMOTION_CHANNELS;
 const DEVICES: WebFunnelDevice[] = ["all", "mobile", "desktop"];
 const STAGES: Array<{ key: WebFunnelStageKey; label: string; order: number }> = [
   { key: "landing", label: "Старт", order: 1 },
@@ -379,10 +380,7 @@ base AS (
     user_pseudo_id,
     CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS ga_session_id,
     (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') AS page_location,
-    LOWER(COALESCE(collected_traffic_source.manual_source, traffic_source.source, '')) AS traffic_source_name,
-    LOWER(COALESCE(collected_traffic_source.manual_medium, traffic_source.medium, '')) AS traffic_medium,
-    collected_traffic_source.gclid AS gclid,
-    LOWER(COALESCE(collected_traffic_source.manual_campaign_name, '')) AS traffic_campaign_name,
+    ${promotionTrafficFieldsSql},
     LOWER(device.category) AS device_category
   FROM \`${projectId}.${datasetId}.events_*\`
   WHERE (
@@ -391,29 +389,20 @@ base AS (
     AND event_name IN ('session_start', 'page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase')
     AND user_pseudo_id IS NOT NULL
     AND geo.country = 'Ukraine'
-    AND (@utmSource = '' OR LOWER(COALESCE(collected_traffic_source.manual_source, traffic_source.source, '')) = @utmSource)
-    AND (@utmCampaign = '' OR LOWER(COALESCE(collected_traffic_source.manual_campaign_name, '')) = @utmCampaign)
 ),
 events AS (
   SELECT
     *,
     IF(ga_session_id IS NULL, NULL, CONCAT(user_pseudo_id, '/', ga_session_id)) AS session_key,
-    CASE
-      WHEN gclid IS NOT NULL
-        OR traffic_medium IN ('cpc', 'ppc', 'paid', 'paid_search', 'paidsearch')
-        THEN 'cpc'
-      WHEN traffic_medium = 'organic' THEN 'organic'
-      WHEN (traffic_source_name IN ('', '(direct)', 'direct')
-        AND traffic_medium IN ('', '(none)', 'none', '(not set)'))
-        THEN 'direct'
-      ELSE 'other'
-    END AS channel,
+    ${promotionChannelSql} AS channel,
     CASE
       WHEN device_category = 'mobile' THEN 'mobile'
       WHEN device_category = 'desktop' THEN 'desktop'
       ELSE 'other'
     END AS device
   FROM base
+  WHERE (@utmSource = '' OR traffic_source_name = @utmSource)
+    AND (@utmCampaign = '' OR traffic_campaign_name = @utmCampaign)
 ),
 ${stageCtes},
 expanded_dimensions AS (
@@ -434,7 +423,7 @@ SELECT
   stage_key,
   COUNT(DISTINCT user_pseudo_id) AS users
 FROM expanded_dimensions
-WHERE channel IN ('all', 'organic', 'cpc', 'direct')
+WHERE channel IN ('all', 'organic', 'cpc', 'meta_cpc', 'direct')
   AND device IN ('all', 'mobile', 'desktop')
 GROUP BY period_key, channel, device, stage_key
 ORDER BY period_key, channel, device, stage_key
@@ -515,7 +504,7 @@ export async function readPromotionWebFunnel(input: {
   const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}:${utmSource}:${utmCampaign}`;
   const rows = await readThroughBigQueryCache<QueryRow[]>({
     namespace: "promotion-web-funnel",
-    key: `v1:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
+    key: `v2-session-channels:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
     load: async () => {
       const bigQuery = getBigQueryClient();
       const [queryRows] = await bigQuery.query({

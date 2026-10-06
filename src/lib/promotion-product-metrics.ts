@@ -1,3 +1,4 @@
+import { PROMOTION_CHANNELS, promotionTrafficFieldsSql, promotionChannelSql } from "@/lib/promotion-traffic";
 import { BigQuery } from "@google-cloud/bigquery";
 import {
   bigQueryCacheDay,
@@ -22,7 +23,7 @@ import {
   type ProductLite,
 } from "@/lib/products-store";
 
-const CHANNELS: WebFunnelChannel[] = ["all", "organic", "cpc", "direct"];
+const CHANNELS: readonly WebFunnelChannel[] = PROMOTION_CHANNELS;
 const DEVICES: WebFunnelDevice[] = ["all", "mobile", "desktop"];
 const MAX_RANKING_ROWS = 250;
 const MIN_LIST_IMPRESSIONS = 20;
@@ -132,9 +133,7 @@ WITH base AS (
     user_pseudo_id,
     CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS ga_session_id,
     (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') AS page_location,
-    LOWER(COALESCE(collected_traffic_source.manual_source, traffic_source.source, '')) AS traffic_source_name,
-    LOWER(COALESCE(collected_traffic_source.manual_medium, traffic_source.medium, '')) AS traffic_medium,
-    collected_traffic_source.gclid AS gclid,
+    ${promotionTrafficFieldsSql},
     LOWER(device.category) AS device_category,
     items
   FROM \`${projectId}.${datasetId}.events_*\`
@@ -147,16 +146,7 @@ events AS (
   SELECT
     *,
     IF(ga_session_id IS NULL, NULL, CONCAT(user_pseudo_id, '/', ga_session_id)) AS session_key,
-    CASE
-      WHEN gclid IS NOT NULL
-        OR traffic_medium IN ('cpc', 'ppc', 'paid', 'paid_search', 'paidsearch')
-        THEN 'cpc'
-      WHEN traffic_medium = 'organic' THEN 'organic'
-      WHEN (traffic_source_name IN ('', '(direct)', 'direct')
-        AND traffic_medium IN ('', '(none)', 'none', '(not set)'))
-        THEN 'direct'
-      ELSE 'other'
-    END AS channel,
+    ${promotionChannelSql} AS channel,
     CASE
       WHEN device_category = 'mobile' THEN 'mobile'
       WHEN device_category = 'desktop' THEN 'desktop'
@@ -329,7 +319,7 @@ export async function readPromotionProductMetrics(input: {
   const cacheKey = `${normalizedUrl}:${input.from}:${input.to}:${channel}:${device}`;
   const queryRows = await readThroughBigQueryCache<ProductMetricQueryRow[]>({
     namespace: "promotion-product-metrics",
-    key: `v1:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
+    key: `v2-session-channels:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
     load: async () => {
       const bigQuery = new BigQuery({ projectId: getBigQueryProjectId() });
       const [rows] = await bigQuery.query({
