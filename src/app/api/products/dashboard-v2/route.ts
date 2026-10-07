@@ -154,6 +154,10 @@ const CTR_MIN_IMPRESSIONS = 20;
 const CATEGORY_FORECAST_MIN_IMPRESSIONS = 200;
 const CATEGORY_FORECAST_MIN_ATC = 10;
 const CTR_CACHE_TTL_MS = 15 * 60_000;
+// Product analytics use a fixed daily BigQuery snapshot. Catalog changes are
+// still checked through syncedAt, requiredAttrs and attributeIndex identity.
+const PRODUCT_ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60_000;
+const PRODUCT_RESPONSE_STALE_MS = 20 * 60_000;
 const BIGQUERY_FAILURE_CACHE_TTL_MS = 60_000;
 
 let ctrCache: { key: string; expiresAt: number; value: CtrSummary } | null =
@@ -1640,7 +1644,7 @@ async function buildDashboard(input: DashboardFilters) {
         expiresAt:
           Date.now() +
           (analysisDataset.available
-            ? CTR_CACHE_TTL_MS
+            ? PRODUCT_ANALYSIS_CACHE_TTL_MS
             : BIGQUERY_FAILURE_CACHE_TTL_MS),
         value: analysisDataset,
       };
@@ -1788,6 +1792,7 @@ async function dashboardResponse(input: DashboardFilters) {
         namespace: "product-dashboard-json",
         key: `${dateInKyiv()}:${JSON.stringify(filters)}`,
         ttlMs: 30_000,
+        staleMs: filters.view === "products" ? PRODUCT_RESPONSE_STALE_MS : 0,
         maxEntries: 48,
         load: async () => JSON.stringify(await buildDashboard(filters)),
       });
