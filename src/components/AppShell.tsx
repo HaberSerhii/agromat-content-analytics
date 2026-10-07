@@ -118,6 +118,8 @@ const CpoAnalyticsDashboard = dynamic(
   },
 );
 
+const AbandonedCartsDemo = dynamic(() => import("@/components/AbandonedCartsDemo"), { ssr: false });
+
 // Renders all sections in a single persistent shell hosted by the root layout.
 // Heavy secondary dashboards stay mounted after their first visit so filters
 // and already-loaded data survive tab switches.
@@ -174,6 +176,7 @@ export function AppShell() {
 
       {isBigQueryAudit && <BigQueryAuditDashboard />}
       {isCpoAnalytics && <CpoAnalyticsDashboard />}
+      {pathname === "/carts-demo" && <AbandonedCartsDemo />}
     </>
   );
 }

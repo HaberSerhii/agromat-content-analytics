@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import AbandonedCheckout from "@/components/AbandonedCheckout";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import OnlinePaymentsAnalysis, { OrderPaymentDetails, type OnlinePaymentsAnalysisData } from "@/components/OnlinePaymentsAnalysis";
 import type { OnlinePayment } from "@/lib/online-payments";
@@ -316,7 +317,7 @@ type RankingMetric = "goods" | "revenue";
 type DocumentSegment = "Усі" | "Плитка" | "Сантехніка";
 type SalesChannel = "all" | "monomarket";
 
-type SalesDashboardView = "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
+type SalesDashboardView = "checkout" | "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
 type WebshopSyncFilter = "all" | "synced" | "unsynced";
 type WebshopPaymentFilter = "all" | "cash" | "bank" | "online_full" | "online_parts";
 type WebshopDeliveryFilter = "all" | "npDepartment" | "npCourier" | "agrWarehouse" | "agrCity" | "agrUkraine";
@@ -336,6 +337,7 @@ const STATUS_FILTERS = [
 const SALES_VIEW_ITEMS: Array<{ id: SalesDashboardView; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "План і динаміка" },
   { id: "webshop", label: "Webshop-замовлення", hint: "Реєстр і склад замовлень" },
+  { id: "checkout", label: "Забутий чекаут", hint: "Кошики та етапи оформлення" },
   { id: "web", label: "Веб-аналіз продажів", hint: "Користувачі, кошики, замовлення" },
   { id: "brands", label: "Бренди", hint: "Кількість, сума і товари" },
   { id: "categories", label: "Категорії", hint: "Кількість, сума і товари" },
@@ -1887,7 +1889,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const resetStatuses = () => setSelectedStatuses([]);
 
   const activeView = SALES_VIEW_ITEMS.find((item) => item.id === view) || SALES_VIEW_ITEMS[0];
-  const supportsSalesChannel = view !== "webshop" && view !== "web";
+  const supportsSalesChannel = view !== "webshop" && view !== "web" && view !== "checkout";
   const selectedManagerData = selectedManager
     ? data.summary.managers.find((manager) => manager.seller === selectedManager)
     : null;
@@ -1913,6 +1915,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const canceledStatusRevenue = canceledStatusRows.reduce((sum, item) => sum + item.revenue, 0);
   const pageDescriptions: Record<SalesDashboardView, string> = {
     overview: "Виконання плану й динаміка повністю відвантажених замовлень.",
+    checkout: "Покинуті кошики, етапи checkout, контакти та промокоди.",
     webshop: "Детальні Webshop-замовлення: клієнти, оплата, доставка, товари та виконання P2.",
     web: "Шлях користувача від відвідування сайту до оформленого замовлення.",
     brands: "Продажі за брендами з деталізацією до рівня товару.",
@@ -1933,21 +1936,21 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               <div className="text-[9px] font-semibold uppercase tracking-[.2em] text-[#91a0af]">Sales analytics</div>
             </div>
           </div>
-          <nav className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
+          <nav className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-col">
             {SALES_VIEW_ITEMS.map((item, index) => {
               const active = view === item.id;
               return (
                 <button
                   key={item.id}
                   onClick={() => setView(item.id)}
-                  className="min-w-[190px] rounded-xl border-0 px-3 py-3 text-left transition lg:min-w-0"
+                  className="min-w-0 rounded-xl border-0 px-3 py-3 text-left transition"
                   style={{ background: active ? "#25384d" : "transparent", boxShadow: active ? "inset 3px 0 #118dff" : "none" }}
                 >
                   <div className="flex items-center gap-3">
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black" style={{ color: active ? "#fff" : "#82909e", background: active ? "#118dff" : "#222d38" }}>{index + 1}</span>
                     <div className="min-w-0">
                       <div className="text-xs font-bold" style={{ color: active ? "#fff" : "#bac2ca" }}>{item.label}</div>
-                      <div className="mt-0.5 truncate text-[9px] text-[#758391]">{item.hint}</div>
+                      <div className="mt-0.5 text-[9px] text-[#758391]">{item.hint}</div>
                     </div>
                   </div>
                 </button>
@@ -1967,7 +1970,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
             <div className="flex flex-wrap items-center gap-2">
               {refreshing && <span className="rounded-lg bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2]">Оновлення…</span>}
               <button type="button" onClick={refreshNow} disabled={refreshing || webshopOrdersLoading} className="rounded-lg border border-[#cfe3f5] bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2] disabled:cursor-wait disabled:opacity-60">Оновити зараз</button>
-              <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">{view === "webshop" ? "Orders API + P2" : "облікова система + GA4"}</b></span>
+              <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">{view === "checkout" ? "Carts API" : view === "webshop" ? "Orders API + P2" : "облікова система + GA4"}</b></span>
             </div>
           </header>
 
@@ -2026,7 +2029,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <button type="button" onClick={() => selectDay(today)} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#586572]">Сьогодні</button>
                   <button type="button" title="Наступний день" aria-label="Наступний день" disabled={dayAnchor >= today} onClick={() => selectDay(shiftDay(dayAnchor, 1))} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-sm font-bold text-[#586572] disabled:cursor-not-allowed disabled:opacity-35">→</button>
                 </div>
-                {view !== "webshop" && <button
+                {view !== "webshop" && view !== "checkout" && <button
                   type="button"
                   aria-pressed={compareWithPreviousYear}
                   onClick={() => setCompareWithPreviousYear((current) => !current)}
@@ -2087,6 +2090,8 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                 <OrdersTrendChart days={data.summary.ordersByDate || []} previousDays={compareWithPreviousYear && !comparisonLoading ? comparisonData?.summary.ordersByDate : undefined} />
               </div>
             )}
+
+            {view === "checkout" && <AbandonedCheckout from={dateFrom} to={dateTo} refreshTick={refreshTick} />}
 
             {view === "webshop" && <WebshopOrdersRegister paymentStateFilter={webshopPaymentStateFilter} onPaymentStateChange={(value) => { setWebshopPaymentStateFilter(value); setWebshopOrdersPage(1); }} dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} utmSource={utmSource} utmCampaign={utmCampaign} onUtmSourceChange={(value) => { setUtmSource(value); setWebshopOrdersPage(1); }} onUtmCampaignChange={(value) => { setUtmCampaign(value); setWebshopOrdersPage(1); }} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
 

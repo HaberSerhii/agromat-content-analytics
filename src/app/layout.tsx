@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { AppShell } from "@/components/AppShell";
 import { Tabs } from "@/components/Tabs";
 import "./globals.css";
+import "./checkout.css";
 
 export const metadata: Metadata = {
   title: "Agromat Content Analytics",
