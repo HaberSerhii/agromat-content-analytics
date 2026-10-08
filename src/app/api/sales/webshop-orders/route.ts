@@ -1,3 +1,4 @@
+import { marketingDailySeries } from "@/lib/marketing-daily-series";
 import { NextResponse } from "next/server";
 import { getServerResult } from "@/lib/server-result-cache";
 import {
@@ -382,6 +383,7 @@ export async function GET(req: Request) {
       data: filteredOrders.slice(start, start + DETAIL_PAGE_SIZE),
       meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: true },
       summary,
+      daily: marketingDailySeries(filteredOrders, dateFrom, dateTo),
       onlinePayments: {
         ...onlinePayments,
         payments: undefined,

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { MarketingDailyChart } from "@/components/MarketingDailyChart";
+import type { MarketingDay } from "@/lib/marketing-daily-series";
 import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
 type UtmOption = { value: string; label: string; count: number };
@@ -16,6 +18,7 @@ type OrderRow = {
 };
 type CampaignResponse = {
   data: OrderRow[];
+  daily: MarketingDay[];
   meta: { total: number; page: number; total_pages: number };
   summary: {
     total: number;
@@ -29,13 +32,9 @@ type CampaignResponse = {
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
 const moneyFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
 
-function inputDate(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function currentMonthRange() {
-  const today = new Date();
-  return { from: inputDate(new Date(today.getFullYear(), today.getMonth(), 1)), to: inputDate(today) };
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" });
+  return { from: `${today.slice(0, 7)}-01`, to: today };
 }
 
 function formatMoney(value: number) {
@@ -81,12 +80,12 @@ export function PromotionMarketingDashboard({ pricePosition = "all" }: { pricePo
         if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити UTM-замовлення");
         return payload as CampaignResponse;
       })
-      .then((payload) => { setData(payload); setError(""); })
+      .then((payload) => { if (!controller.signal.aborted) { setData(payload); setError(""); } })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
         setError(reason instanceof Error ? reason.message : "Не вдалося завантажити дані");
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [campaign, from, page, pricePosition, source, status, to]);
 
@@ -129,8 +128,10 @@ export function PromotionMarketingDashboard({ pricePosition = "all" }: { pricePo
       <MetricCard label="Замовлення із сайту" value={numberFmt.format(summary?.total ?? 0)} hint="після фільтрів кампанії та статусу" tone="#ef6c3b" />
     </div>
 
+    <MarketingDailyChart days={data?.daily || []} campaign={data?.utm.campaigns.find(item => item.value === campaign)?.label || campaign.replace(/^value:/, "")} loading={loading} error={error} onClear={() => { setCampaign(""); setPage(1); }} />
+
     {!campaign && !source && status === "all" && (data?.utm.campaigns.length ?? 0) > 0 && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
-      <div className="mb-3"><div className="text-sm font-bold">Ефективність за кампаніями</div><div className="text-[11px]" style={{ color: "var(--text-dim)" }}>Топ кампаній за кількістю замовлень · натисніть для детального реєстру</div></div>
+      <div className="mb-3"><div className="text-sm font-bold">Ефективність за кампаніями</div><div className="text-[11px]" style={{ color: "var(--text-dim)" }}>Топ кампаній за кількістю замовлень · натисніть для графіка та детального реєстру</div></div>
       <div className="grid gap-2 lg:grid-cols-2">
         {data?.utm.campaigns.filter((item) => item.value !== "missing").slice(0, 8).map((item) => {
           const metric = campaignMetrics[item.value];
