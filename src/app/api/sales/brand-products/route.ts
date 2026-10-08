@@ -1,3 +1,4 @@
+import { normalizeSalesChannel } from "@/lib/sales-order-origin";
 import { NextResponse } from "next/server";
 import { readSalesBrandProducts, type SalesDateFilter } from "@/lib/sales-s3";
 import { getServerResult } from "@/lib/server-result-cache";
@@ -55,7 +56,7 @@ export async function GET(req: Request) {
       ? positionCodes.size ? [...positionCodes] : [-1]
       : url.searchParams.get("product_codes") || undefined,
     statuses: url.searchParams.getAll("status"),
-    channel: url.searchParams.get("channel") === "monomarket" ? "monomarket" : "all",
+    channel: normalizeSalesChannel(url.searchParams.get("channel")),
   });
 }
 
@@ -72,7 +73,7 @@ export async function POST(req: Request) {
       statuses: Array.isArray(body?.statuses) || typeof body?.statuses === "string"
         ? body.statuses
         : undefined,
-      channel: body?.channel === "monomarket" ? "monomarket" : "all",
+      channel: normalizeSalesChannel(body?.channel),
     },
   );
 }

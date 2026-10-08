@@ -319,7 +319,7 @@ type SalesWebshopOrdersDataset = {
 
 type RankingMetric = "goods" | "revenue";
 type DocumentSegment = "Усі" | "Плитка" | "Сантехніка";
-type SalesChannel = "all" | "monomarket";
+type SalesChannel = "all" | "monomarket" | "rozetka";
 
 type SalesDashboardView = "checkout" | "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
 type WebshopSyncFilter = "all" | "synced" | "unsynced";
@@ -2008,6 +2008,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                     {([
                       ["all", "Усі продажі ІМ Агромат"],
                       ["monomarket", "Мономаркет"],
+                      ["rozetka", "Розетка"],
                     ] as const).map(([channel, label]) => (
                       <button
                         key={channel}
@@ -2052,7 +2053,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <span className="flex h-4 w-4 items-center justify-center rounded border text-[9px]" style={{ borderColor: compareWithPreviousYear ? "#118dff" : "#aeb7c0", background: compareWithPreviousYear ? "#118dff" : "#fff", color: "#fff" }}>{compareWithPreviousYear ? "✓" : ""}</span>
                   Порівняти з минулим роком
                 </button>}
-                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{data.filter.label}{supportsSalesChannel ? ` · ${salesChannel === "monomarket" ? "Мономаркет" : "усі продажі ІМ Агромат"}` : ""}</b></div>
+                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{data.filter.label}{supportsSalesChannel ? ` · ${salesChannel === "rozetka" ? "Розетка" : salesChannel === "monomarket" ? "Мономаркет" : "усі продажі ІМ Агромат"}` : ""}</b></div>
               </div>
             </section>
 

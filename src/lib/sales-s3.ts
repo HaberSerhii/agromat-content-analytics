@@ -1,3 +1,5 @@
+import { normalizeSalesChannel, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
+export type { SalesChannel } from "@/lib/sales-order-origin";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { readPersistentResult, writePersistentResult } from "@/lib/persistent-result-cache";
@@ -36,7 +38,7 @@ export type SalesRow = {
   cartNumber: string;
 };
 
-export type SalesChannel = "all" | "monomarket";
+
 
 export type SalesBucketSummary = {
   label: string;
@@ -549,7 +551,7 @@ function getEffectiveFilter(filter: SalesDateFilter | undefined) {
   const to = rawFrom && rawTo && rawFrom > rawTo ? rawFrom : rawTo;
   const productCodes = parseProductCodes(filter?.productCodes);
   const statuses = parseStatuses(filter?.statuses);
-  const channel: SalesChannel = filter?.channel === "monomarket" ? "monomarket" : "all";
+  const channel = normalizeSalesChannel(filter?.channel);
   return { from: from || null, to: to || null, productCodes, statuses, channel };
 }
 
@@ -1612,12 +1614,17 @@ async function readCachedSalesRows(): Promise<CachedSalesRows> {
   }
 }
 
+async function scopeRowsToChannel(rows: ParsedSalesRow[], filter?: SalesDateFilter) {
+  if (filter?.channel !== "rozetka") return rows;
+  return filterRozetkaSalesRows(rows, await readRozetkaOrderIds());
+}
+
 export async function readSalesDataset(
   filter?: SalesDateFilter,
   options?: SalesDatasetOptions,
 ): Promise<SalesDataset> {
   const { rows, source } = await readCachedSalesRows();
-  return buildDataset(rows, source, filter, options);
+  return buildDataset(await scopeRowsToChannel(rows, filter), source, filter, options);
 }
 
 export async function readSalesWebshopOrders(filter?: SalesDateFilter): Promise<SalesWebshopOrdersDataset> {
@@ -1723,7 +1730,7 @@ export async function readSalesCategoryProducts(
   filter?: SalesDateFilter,
 ): Promise<SalesProductSummary[]> {
   const { rows } = await readCachedSalesRows();
-  return buildDimensionProducts(rows, "category", category, filter);
+  return buildDimensionProducts(await scopeRowsToChannel(rows, filter), "category", category, filter);
 }
 
 export async function readSalesBrandProducts(
@@ -1731,7 +1738,7 @@ export async function readSalesBrandProducts(
   filter?: SalesDateFilter,
 ): Promise<SalesProductSummary[]> {
   const { rows } = await readCachedSalesRows();
-  return buildDimensionProducts(rows, "brand", brand, filter);
+  return buildDimensionProducts(await scopeRowsToChannel(rows, filter), "brand", brand, filter);
 }
 
 // Product quantities from documents that completed their whole lifecycle
