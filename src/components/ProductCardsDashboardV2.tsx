@@ -615,7 +615,7 @@ function MetricCard({
                   onClick={() => onSelect({ metric: meta.key, segment, scope: "current" })}
                   className="rounded text-[22px] font-black leading-none tracking-tight text-[#252f3a] underline decoration-dotted decoration-[#b9c6d2] underline-offset-4 hover:text-[#118dff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] aria-pressed:text-[#118dff] disabled:cursor-default disabled:no-underline"
                 >{value}</button>
-                {delta !== 0 && (
+                {!isCtr && delta !== 0 && (
                   <button
                     type="button"
                     disabled={disabled}
@@ -627,6 +627,28 @@ function MetricCard({
                   ><Delta value={delta} /></button>
                 )}
               </div>
+              {isCtr && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {([
+                    { scope: "added", label: "Покращились", sign: "+", count: segment === "tile" ? data?.metrics.ctr.improvedTile || 0 : data?.metrics.ctr.improvedSanitary || 0, color: "#087a55", background: "#e6f5ee" },
+                    { scope: "removed", label: "Погіршились", sign: "−", count: segment === "tile" ? data?.metrics.ctr.declinedTile || 0 : data?.metrics.ctr.declinedSanitary || 0, color: "#bd3b3b", background: "#fdecec" },
+                  ] as const).map(({ scope, label: directionLabel, sign, count, color, background }) => (
+                    <button
+                      key={scope}
+                      type="button"
+                      disabled={disabled}
+                      aria-pressed={active && selection?.scope === scope}
+                      aria-label={`${meta.label} · ${label}: ${directionLabel.toLowerCase()} ${count} карток — показати товари`}
+                      title={`Показати картки, у яких CTR ${scope === "added" ? "зріс" : "знизився"}`}
+                      onClick={() => onSelect({ metric: "ctr", segment, scope })}
+                      style={{ color, background }}
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-black tabular-nums hover:ring-2 hover:ring-[#9cccf6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] aria-pressed:ring-2 aria-pressed:ring-[#118dff] disabled:cursor-default"
+                    >
+                      {directionLabel} <span>{sign}{formatNumber(count)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
