@@ -25,7 +25,7 @@ export async function readRozetkaOrderIds(): Promise<ReadonlySet<string>> {
       const base = (process.env.AGROMAT_API_BASE_URL || "https://www.agromat.ua/api/v1").replace(/\/$/, "");
       const headers = { Accept: "application/json", "X-API-Key": apiKey };
       async function page(number: number): Promise<OriginPage> {
-        const params = new URLSearchParams({ page: String(number), per_page: "100", with_movements: "false" });
+        const params = new URLSearchParams({ page: String(number), per_page: "100", with_movements: "false", source: "rozetka" });
         const response = await fetch(`${base}/orders/?${params}`, {
           headers,
           cache: "no-store",

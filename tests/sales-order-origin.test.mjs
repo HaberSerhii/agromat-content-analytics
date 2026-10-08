@@ -10,6 +10,7 @@ test("Rozetka lookup reads every page, caches IDs, and leaves ERP dates independ
     fetch: async (url) => {
       calls++;
       const params = new URL(url).searchParams;
+      assert.equal(params.get("source"), "rozetka");
       assert.equal(params.has("date_from"), false);
       assert.equal(params.has("date_to"), false);
       return { ok: true, json: async () => ({ data: params.get("page") === "1" ? [{ id: 11, origin: { source: "site" } }] : [{ id: 22, origin: { source: "rozetka" } }], meta: { total_pages: 2 } }) };
