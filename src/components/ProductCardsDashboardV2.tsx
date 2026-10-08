@@ -344,7 +344,7 @@ const METRIC_META: Array<{
     label: "Неактивні товари",
     symbol: "!",
     tone: "#d14343",
-    note: "Перейшли в неактивний статус цього місяця",
+    note: "Зараз неактивні · зміна від кінця минулого місяця",
   },
   {
     key: "promoProducts",
@@ -3143,8 +3143,8 @@ export function ProductCardsDashboardV2() {
             const detail = data.overviewDrilldown;
             const isCtr = detail.metric === "ctr";
             const isInactive = detail.metric === "inactiveProducts";
-            const positiveLabel = isCtr ? "CTR зріс" : isInactive ? "Лише цього місяця" : "Додалися";
-            const negativeLabel = isCtr ? "CTR знизився" : isInactive ? "Лише минулого місяця" : "Вибули";
+            const positiveLabel = isCtr ? "CTR зріс" : isInactive ? "Стали неактивними" : "Додалися";
+            const negativeLabel = isCtr ? "CTR знизився" : isInactive ? "Вийшли з неактивних" : "Вибули";
             const choices: Array<{ scope: OverviewScope; label: string }> = [
               { scope: "current", label: `У показнику: ${formatNumber(detail.currentCount)}` },
               { scope: "changes", label: `Усі зміни: ${formatNumber(detail.added + detail.removed)}` },
@@ -3153,14 +3153,14 @@ export function ProductCardsDashboardV2() {
             ];
             return <>
               <p className="mt-1">
-                {isCtr || isInactive
+                {isCtr
                   ? `${formatDate(detail.currentFrom)}–${formatDate(detail.currentTo)} порівняно з ${formatDate(detail.previousFrom)}–${formatDate(detail.previousTo)}.`
                   : detail.previousTo ? `Порівняння зі станом на ${formatDate(detail.previousTo)}.` : "Попереднього знімка немає; зміни не визначені."}
                 {" "}Баланс: +{formatNumber(detail.added)} − {formatNumber(detail.removed)} = {detail.delta > 0 ? "+" : ""}{formatNumber(detail.delta)}.
               </p>
               <p className="mt-1">
                 {isCtr ? "Плюс — CTR зріс, мінус — знизився; щонайменше 20 показів у кожному періоді."
-                  : isInactive ? "Плюс — перехід у неактивний статус лише цього місяця, мінус — лише минулого. Товари з переходами в обох періодах не змінюють баланс."
+                  : isInactive ? "Плюс — товари, що стали неактивними після кінця минулого місяця; мінус — товари, що вийшли з неактивних. Показник враховує поточний стан, включно з поверненням у наявність."
                   : "Плюс — товар увійшов до показника, мінус — вибув із нього. У таблиці показано поточні дані; відсутні товари — зі знімка."}
               </p>
               {!detail.available && <p className="mt-1 font-bold">Дані CTR недоступні. Спробуйте оновити сторінку.</p>}

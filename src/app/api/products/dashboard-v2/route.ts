@@ -218,21 +218,16 @@ function isInactive(product: ProductLite) {
   return product.deleted || (product.statusId !== 5 && product.statusId !== 3);
 }
 
-function isActiveStatusId(statusId: number) {
-  return statusId === 5 || statusId === 3;
-}
-
-function transitionedToInactiveInRange(
-  product: ProductLite,
-  from: string,
-  to: string,
-) {
-  return product.statusHistory.some(
-    (change) =>
-      inDateRange(change.at, from, to) &&
-      isActiveStatusId(change.from) &&
-      !isActiveStatusId(change.to),
-  );
+// Reconstruct the month boundary when its daily snapshot is unavailable.
+// Reverse all changes detected this month, including archive status (-1).
+function productAtMonthStart(product: ProductLite, currentFrom: string): ProductLite | null {
+  if (dateInKyiv(new Date(product.firstSeenAt)) >= currentFrom) return null;
+  let statusId = product.deleted ? -1 : product.statusId;
+  const changes = [...product.statusHistory].sort((a, b) => b.at.localeCompare(a.at));
+  for (const change of changes) {
+    if (dateInKyiv(new Date(change.at)) >= currentFrom) statusId = change.from;
+  }
+  return { ...product, statusId, deleted: statusId === -1 };
 }
 
 function previousCalendarDate(date: string) {
@@ -814,8 +809,8 @@ async function buildDashboard(input: DashboardFilters) {
   const monthBaselineDate = snapshots.find(
     (snapshot) => snapshot.date < ranges.currentFrom,
   )?.date;
-  const exactMonthBaselineDate =
-    monthBaselineDate === previousCalendarDate(ranges.currentFrom)
+  const monthEndBaselineDate =
+    monthBaselineDate?.slice(0, 7) === ranges.previousFrom.slice(0, 7)
       ? monthBaselineDate
       : null;
   const productAnalysisCacheKey = `${today}:${syncedAt || ""}:${products.length}:${JSON.stringify(requiredAttrs)}`;
@@ -837,9 +832,9 @@ async function buildDashboard(input: DashboardFilters) {
   ] = await Promise.all([
     comparisonDate ? readDailySnapshot(comparisonDate) : Promise.resolve(null),
     filters.view === "overview" &&
-    exactMonthBaselineDate &&
-    exactMonthBaselineDate !== comparisonDate
-      ? readDailySnapshot(exactMonthBaselineDate)
+    monthEndBaselineDate &&
+    monthEndBaselineDate !== comparisonDate
+      ? readDailySnapshot(monthEndBaselineDate)
       : Promise.resolve(null),
     filters.view === "overview" && (filters.includeAnalytics || filters.overviewSelection?.metric === "ctr")
       ? readCtr(products, today, syncedAt)
@@ -868,12 +863,9 @@ async function buildDashboard(input: DashboardFilters) {
   ]);
   const previousProducts = comparisonSnapshot?.products || products;
   const monthBaselineProducts =
-    exactMonthBaselineDate === comparisonDate
-      ? comparisonSnapshot?.products || []
-      : monthBaselineSnapshot?.products || [];
-  const monthBaselineById = new Map(
-    monthBaselineProducts.map((product) => [product.id, product]),
-  );
+    monthEndBaselineDate === comparisonDate
+      ? comparisonSnapshot?.products
+      : monthBaselineSnapshot?.products;
   const emptyProducts: ProductLite[] = [];
   const isOverview = filters.view === "overview";
   const currentNew = isOverview
@@ -902,34 +894,15 @@ async function buildDashboard(input: DashboardFilters) {
           ),
       )
     : emptyProducts;
-  const currentInactive = isOverview
-    ? products.filter((product) => {
-        if (
-          transitionedToInactiveInRange(
-            product,
-            ranges.currentFrom,
-            ranges.currentTo,
-          )
-        )
-          return true;
-
-        // Compatibility for archive transitions detected before archive events
-        // were written into statusHistory. This is exact only when the snapshot
-        // immediately preceding the month is available.
-        const baseline = monthBaselineById.get(product.id);
-        return Boolean(
-          baseline && !isInactive(baseline) && isInactive(product),
-        );
-      })
-    : emptyProducts;
+  const currentInactive = isOverview ? products.filter(isInactive) : emptyProducts;
   const previousInactive = isOverview
-    ? products.filter((product) =>
-        transitionedToInactiveInRange(
-          product,
-          ranges.previousFrom,
-          ranges.previousTo,
-        ),
-      )
+    ? (monthBaselineProducts
+        ? monthBaselineProducts
+        : products.flatMap((product) => {
+            const baseline = productAtMonthStart(product, ranges.currentFrom);
+            return baseline ? [baseline] : [];
+          })
+      ).filter(isInactive)
     : emptyProducts;
   const currentPromo = isOverview
     ? products.filter(
@@ -952,7 +925,7 @@ async function buildDashboard(input: DashboardFilters) {
   const selectedCohort = selection ? cohorts[selection.metric][selection.segment] : null;
   const catalogProducts = selection && selectedCohort
     ? selectOverviewRows(selectedCohort, selection.scope, products) : products;
-  const comparesMonths = selection?.metric === "inactiveProducts" || selection?.metric === "ctr";
+  const comparesMonths = selection?.metric === "ctr";
   const overviewDrilldown = selection && selectedCohort ? {
     ...selection,
     currentCount: selectedCohort.current.length,
@@ -962,7 +935,9 @@ async function buildDashboard(input: DashboardFilters) {
     currentFrom: ranges.currentFrom,
     currentTo: today,
     previousFrom: comparesMonths ? ranges.previousFrom : null,
-    previousTo: comparesMonths ? ranges.previousTo : comparisonDate,
+    previousTo: selection.metric === "inactiveProducts"
+      ? monthEndBaselineDate || previousCalendarDate(ranges.currentFrom)
+      : comparesMonths ? ranges.previousTo : comparisonDate,
     available: selection.metric !== "ctr" || ctr.available,
   } : null;
 

@@ -51,25 +51,47 @@ function setup({ products = [], snapshots = {}, ctr = [], failCtr = false } = {}
   return { dashboard, route, load };
 }
 
-test("inactive total and monthly balance identify exact products, including recovered and archived ones", async () => {
+test("inactive KPI counts current state against the previous month end, subtracting recoveries", async () => {
   const products = [
     product(1, { statusId: 1, statusHistory: [inactiveAt("2026-09-10")] }),
-    product(2, { statusHistory: [inactiveAt("2026-08-10"), inactiveAt("2026-09-12")] }),
-    product(3, { statusHistory: [inactiveAt("2026-08-20")] }),
+    product(2, { statusHistory: [{ at: "2026-09-12", from: 1, to: 5 }, inactiveAt("2026-09-10")] }),
+    product(3, { statusHistory: [{ at: "2026-09-20", from: 1, to: 5 }] }),
     product(4, { deleted: true }),
-    product(5, { ...sanitary, statusHistory: [inactiveAt("2026-09-15")] }),
-    product(6, { statusHistory: [{ at: "2026-09-14", from: 1, to: 4 }] }),
+    product(5, { ...sanitary, statusId: 1 }),
+    product(6, { statusId: 1 }),
   ];
-  const { dashboard } = setup({ products, snapshots: { "2026-08-31": [product(4)] } });
+  const baseline = [product(1), product(2), product(3, { statusId: 1 }), product(4),
+    product(5, { ...sanitary, statusId: 1 }), product(6, { statusId: 1 })];
+  const { dashboard } = setup({ products, snapshots: {
+    "2026-08-31": baseline,
+    "2026-09-28": products,
+  } });
   const current = await dashboard("inactiveProducts");
-  assert.deepEqual(current.rows.map((row) => row.id).sort(), [1, 2, 4]);
+  assert.deepEqual(current.rows.map((row) => row.id).sort(), [1, 4, 6]);
   assert.equal(current.total, current.metrics.inactiveProducts.tile);
   const changes = await dashboard("inactiveProducts", "tile", "changes");
   assert.deepEqual(changes.rows.map((row) => [row.id, row.overviewContribution]), [[1, 1], [4, 1], [3, -1]]);
   assert.equal(changes.overviewDrilldown.delta, 1);
   assert.equal(changes.metrics.inactiveProducts.deltaTile, 1);
+  assert.equal(changes.overviewDrilldown.previousTo, "2026-08-31");
   assert.equal((await dashboard("inactiveProducts", "sanitary")).total, 1);
   assert.deepEqual((await dashboard("inactiveProducts", "tile", "removed")).rows.map((row) => row.id), [3]);
+});
+
+test("inactive baseline falls back to status history and excludes newly observed products", async () => {
+  const { dashboard } = setup({ products: [
+    product(1, { statusId: 1 }), // unchanged inactive, carried from August
+    product(2, { statusHistory: [{ at: "2026-09-02", from: 1, to: 5 }] }),
+    product(3, { statusId: 1, firstSeenAt: "2026-09-03" }),
+    product(4, { statusId: 1, statusHistory: [
+      inactiveAt("2026-09-04"), { at: "2026-09-02", from: 1, to: 5 },
+    ] }), // round trip has no net contribution
+    product(5), // always available
+  ] });
+  const result = await dashboard("inactiveProducts", "tile", "changes");
+  assert.equal(result.metrics.inactiveProducts.tile, 3);
+  assert.equal(result.metrics.inactiveProducts.deltaTile, 0);
+  assert.deepEqual(result.rows.map((row) => [row.id, row.overviewContribution]), [[3, 1], [2, -1]]);
 });
 
 test("new products use the KPI's date, availability and hidden-batch rules and deduplicate IDs", async () => {

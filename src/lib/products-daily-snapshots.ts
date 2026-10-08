@@ -82,7 +82,17 @@ export function pruneDailySnapshotsOnDisk(keep: number): number {
   ensureDir();
   const manifest = readManifest();
   const existing = manifest.snapshots.filter((s) => fs.existsSync(snapshotFile(s.date)));
-  const toDrop = existing.slice(0, Math.max(0, existing.length - keep));
+  // Keep the final observed state of every closed month for monthly KPIs,
+  // in addition to the rolling window of daily snapshots.
+  const latestMonth = existing.at(-1)?.date.slice(0, 7);
+  const monthEnds = new Map<string, string>();
+  for (const entry of existing) {
+    const month = entry.date.slice(0, 7);
+    if (month !== latestMonth) monthEnds.set(month, entry.date);
+  }
+  const retainedMonthEnds = new Set(monthEnds.values());
+  const toDrop = existing.slice(0, Math.max(0, existing.length - keep))
+    .filter((entry) => !retainedMonthEnds.has(entry.date));
   for (const entry of toDrop) deleteSnapshotFile(entry.date);
 
   const dropped = new Set(toDrop.map((s) => s.date));
