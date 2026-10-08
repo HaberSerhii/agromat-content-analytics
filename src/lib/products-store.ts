@@ -1,3 +1,4 @@
+import { updateInactiveTracking } from "@/lib/product-inactive-tracking";
 // Storage layer for product data.
 // Redis stores live lite/full data, sync state, changes and timeline.
 // Daily "as of date" snapshots live on VPS disk as gzip files.
@@ -576,6 +577,7 @@ export async function writeAllLite(products: ProductLite[], syncedAt: string): P
   // Mirror to disk so the next cold load skips the 31-shard Redis pipeline.
   // Sync I/O is OK here — sync already takes minutes; an extra ~100ms is noise.
   writeDiskSnapshot(products, syncedAt);
+  updateInactiveTracking(products, syncedAt);
   return shardCount;
 }
 

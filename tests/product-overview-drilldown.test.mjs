@@ -15,7 +15,7 @@ const sanitary = { categoryId: 2, categoryName: "Сантехніка", category
 const routeName = "@/app/api/products/dashboard-v2/route";
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-function setup({ products = [], snapshots = {}, ctr = [], failCtr = false } = {}) {
+function setup({ products = [], snapshots = {}, ctr = [], failCtr = false, tracking } = {}) {
   class FixedDate extends Date {
     constructor(...args) { super(...(args.length ? args : ["2026-09-29T12:00:00Z"])); }
   }
@@ -30,6 +30,14 @@ function setup({ products = [], snapshots = {}, ctr = [], failCtr = false } = {}
         if (failCtr) throw new Error("GA4 unavailable");
         return ctr;
       } },
+      "@/lib/product-inactive-tracking": {
+        isInactiveProduct: (product) => product.deleted || ![3, 5].includes(product.statusId),
+        readInactiveTracking: () => tracking === undefined ? {
+          month: "2026-09", trackedIds: products.map((product) => product.id),
+          baseline: (snapshots["2026-08-31"] || []).filter((product) => product.deleted || ![3, 5].includes(product.statusId)),
+          baselineAt: "2026-08-31T20:00:00Z",
+        } : tracking,
+      },
       "@/lib/content-reviews-store": { listContentProductReviews: async () => [] },
       "@/lib/new-product-assignments-store": { listAssignedNewProductCodes: async () => new Set() },
       "@/lib/products-store": {
@@ -78,20 +86,31 @@ test("inactive KPI counts current state against the previous month end, subtract
   assert.deepEqual((await dashboard("inactiveProducts", "tile", "removed")).rows.map((row) => row.id), [3]);
 });
 
-test("inactive baseline falls back to status history and excludes newly observed products", async () => {
-  const { dashboard } = setup({ products: [
-    product(1, { statusId: 1 }), // unchanged inactive, carried from August
-    product(2, { statusHistory: [{ at: "2026-09-02", from: 1, to: 5 }] }),
-    product(3, { statusId: 1, firstSeenAt: "2026-09-03" }),
-    product(4, { statusId: 1, statusHistory: [
-      inactiveAt("2026-09-04"), { at: "2026-09-02", from: 1, to: 5 },
-    ] }), // round trip has no net contribution
-    product(5), // always available
-  ] });
-  const result = await dashboard("inactiveProducts", "tile", "changes");
-  assert.equal(result.metrics.inactiveProducts.tile, 3);
+test("tracking starts at zero and excludes legacy inactive products", async () => {
+  const { dashboard } = setup({ products: [product(1, { statusId: 1 }), product(2, { deleted: true }), product(3)],
+    tracking: { month: "2026-09", trackedIds: [], baseline: [], baselineAt: "2026-09-29T12:00:00Z" } });
+  const result = await dashboard("inactiveProducts");
+  assert.equal(result.total, 0);
+  assert.equal(result.metrics.inactiveProducts.tile, 0);
+  assert.equal(result.metrics.inactiveProducts.sanitary, 0);
   assert.equal(result.metrics.inactiveProducts.deltaTile, 0);
-  assert.deepEqual(result.rows.map((row) => [row.id, row.overviewContribution]), [[3, 1], [2, -1]]);
+});
+
+test("only tracked products affect the live balance and prior month comparison", async () => {
+  const { dashboard } = setup({ products: [
+    product(1, { statusId: 1 }), // legacy inactive: excluded
+    product(2), // tracked but recovered
+    product(3, { statusId: 1 }), // tracked and still inactive
+    product(4, { ...sanitary, statusId: 1 }),
+  ], tracking: {
+    month: "2026-09", trackedIds: [2, 3, 4], baselineAt: "2026-08-31T20:00:00Z",
+    baseline: [product(2, { statusId: 1 }), product(3, { statusId: 1 })],
+  } });
+  const result = await dashboard("inactiveProducts", "tile", "changes");
+  assert.equal(result.metrics.inactiveProducts.tile, 1);
+  assert.equal(result.metrics.inactiveProducts.deltaTile, -1);
+  assert.equal(result.metrics.inactiveProducts.sanitary, 1);
+  assert.deepEqual(result.rows.map((row) => [row.id, row.overviewContribution]), [[2, -1]]);
 });
 
 test("new products use the KPI's date, availability and hidden-batch rules and deduplicate IDs", async () => {
