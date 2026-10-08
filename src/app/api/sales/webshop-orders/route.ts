@@ -1,3 +1,4 @@
+import { matchesOrderOrigin, summarizeOrderOrigins, type OrderOrigin } from "@/lib/orders-origin";
 import { marketingDailySeries } from "@/lib/marketing-daily-series";
 import { NextResponse } from "next/server";
 import { getServerResult } from "@/lib/server-result-cache";
@@ -21,6 +22,7 @@ import { deduplicatePayments, summarizePayments, matchOrderPayments, indexOrderP
 export const dynamic = "force-dynamic";
 
 type ApiOrder = {
+  origin?: OrderOrigin | null;
   id: number;
   order_num: number | string | null;
   order_doc_id: number | string | null;
@@ -301,6 +303,7 @@ export async function GET(req: Request) {
       });
     }
 
+    const originSource = url.searchParams.get("origin_source") || "all";
     const requestedPayment = url.searchParams.get("payment");
     const payment: PaymentFilter = isPaymentFilter(requestedPayment) ? requestedPayment : "all";
     const delivery = url.searchParams.get("delivery") || "all";
@@ -328,7 +331,7 @@ export async function GET(req: Request) {
     const positionedPromotionCodes = promotionPricePosition === "all"
       ? null
       : await readPromotionalPricePositionCodes(promotionPricePosition, dateFrom, dateTo);
-    const allOrders = promotionPricePosition === "all"
+    const originOrders = promotionPricePosition === "all"
       ? enrichedAllOrders
       : enrichedAllOrders
         .map((order) => keepOnlyMatchingItems(
@@ -336,6 +339,7 @@ export async function GET(req: Request) {
           positionedPromotionCodes as ReadonlySet<number>,
         ))
         .filter((order): order is ApiOrder => order != null);
+    const allOrders = originOrders.filter((order) => matchesOrderOrigin(order, originSource));
     const mapping = process.env.LIQPAY_ORDER_ID_FIELD;
     const paymentIndex = indexOrderPayments(onlinePayments.payments);
     for (const order of allOrders) {
@@ -392,6 +396,12 @@ export async function GET(req: Request) {
         onlineOrders: paymentScopeOrders.filter((order) => order.payment?.type === "online").length,
         mappingConfigured: true,
       },
+      origins: summarizeOrderOrigins(originOrders.filter((order) =>
+        matchesUtm(order, utmSource, utmCampaign)
+        && (payment === "all" || paymentCategory(order) === payment)
+        && (delivery === "all" || order.delivery?.type === delivery)
+        && (orderStatus === "all" || fulfillmentStatus(order) === orderStatus)
+      )),
       utm,
     }, {
       headers: {
