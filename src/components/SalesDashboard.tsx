@@ -4,6 +4,7 @@ import { orderOriginSource, orderOriginLabel, type OrderOrigin } from "@/lib/ord
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AbandonedCheckout from "@/components/AbandonedCheckout";
+import { fetchApiJson } from "@/lib/read-api-json";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import OnlinePaymentsAnalysis, { OrderPaymentDetails, type OnlinePaymentsAnalysisData } from "@/components/OnlinePaymentsAnalysis";
 import type { OnlinePayment } from "@/lib/online-payments";
@@ -1598,13 +1599,8 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     params.set("channel", salesChannel);
     params.set("compact", "1");
     selectedStatuses.forEach((status) => params.append("status", status));
-    const request = fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
+    const request = fetchApiJson(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
-      .then(async (res) => {
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || "Не вдалося завантажити аналіз продаж");
-        return json as SalesDataset;
-      })
       .then((json) => {
         if (!alive) return;
         setData(json);
@@ -1693,12 +1689,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     setWebshopOrdersLoading(true);
     setWebshopOrdersError(null);
     if (webshopPaymentStateFilter !== "all") params.set("payment_state", webshopPaymentStateFilter);
-    fetch(`/api/sales/webshop-orders?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => {
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Не вдалося завантажити Webshop-замовлення");
-        return payload as SalesWebshopOrdersDataset;
-      })
+    fetchApiJson(`/api/sales/webshop-orders?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
       .then((payload) => {
         if (alive) setWebshopOrders(payload);
       })
@@ -2062,7 +2053,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <span className="flex h-4 w-4 items-center justify-center rounded border text-[9px]" style={{ borderColor: compareWithPreviousYear ? "#118dff" : "#aeb7c0", background: compareWithPreviousYear ? "#118dff" : "#fff", color: "#fff" }}>{compareWithPreviousYear ? "✓" : ""}</span>
                   Порівняти з минулим роком
                 </button>}
-                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{data.filter.label}{supportsSalesChannel ? ` · ${salesChannel === "rozetka" ? "Розетка" : salesChannel === "monomarket" ? "Мономаркет" : "усі продажі ІМ Агромат"}` : ""}</b></div>
+                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{view === "webshop" || view === "checkout" ? `${dateFrom} — ${dateTo}` : data.filter.label}{supportsSalesChannel ? ` · ${salesChannel === "rozetka" ? "Розетка" : salesChannel === "monomarket" ? "Мономаркет" : "усі продажі ІМ Агромат"}` : ""}</b></div>
               </div>
             </section>
 
