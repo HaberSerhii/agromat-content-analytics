@@ -1,4 +1,5 @@
 export type ApiCart = {
+  ip?: string | null;
   id: number; status: "active" | "abandoned" | "converted"; anonymous: boolean;
   stage: string; checkout_step: number | null; furthest_stage: string; furthest_checkout_step: number | null;
   customer: { id: number | null; name: string | null; phone: string | null; email: string | null } | null;
