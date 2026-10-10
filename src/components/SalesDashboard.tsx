@@ -1599,7 +1599,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     params.set("channel", salesChannel);
     params.set("compact", "1");
     selectedStatuses.forEach((status) => params.append("status", status));
-    const request = fetchApiJson(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
+    const request = fetchApiJson<SalesDataset>(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
       .then((json) => {
         if (!alive) return;
@@ -1689,7 +1689,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     setWebshopOrdersLoading(true);
     setWebshopOrdersError(null);
     if (webshopPaymentStateFilter !== "all") params.set("payment_state", webshopPaymentStateFilter);
-    fetchApiJson(`/api/sales/webshop-orders?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
+    fetchApiJson<SalesWebshopOrdersDataset>(`/api/sales/webshop-orders?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
       .then((payload) => {
         if (alive) setWebshopOrders(payload);
       })
