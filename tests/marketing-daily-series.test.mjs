@@ -32,7 +32,7 @@ test("orders API daily series follows campaign filtering and is independent of r
   fetch: async url => {const page = Number(new URL(url).searchParams.get("page")); return {ok: true, json: async () => ({data: orders.slice((page-1)*50, page*50), meta: {total_pages: 2}})};},
  }, mocks: {
   "next/server": {NextResponse: {json: body => ({body})}},
-  "@/lib/server-result-cache": {getServerResult: async ({load}) => ({value: await load()})},
+  "@/lib/server-result-cache": {peekServerResult: () => null, getServerResult: async ({load}) => ({value: await load()})},
   "@/lib/sales-s3": {readSalesWebshopReturnLookup: async () => new Map(), readSalesWebshopManagerLookup: async () => new Map()},
   "@/lib/promotion-price-position": {normalizePromotionPricePosition: () => "all"},
   "@/lib/liqpay": {readOnlinePayments: async () => ({availability: "ready", payments: []})},

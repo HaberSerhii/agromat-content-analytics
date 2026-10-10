@@ -47,5 +47,5 @@ test("Rozetka filter covers all upstream pages and updates totals, daily series 
   assert.equal(body.origins.length, 2);
   assert.equal((await route.GET({ url: base + "&origin_source=webshop" })).body.summary.revenue, 100);
   assert.equal((await route.GET({ url: base })).body.meta.total, 3);
-  assert.equal(calls, 2, "channel switches reuse complete orders cache");
+  assert.equal(calls, 4, "channel switches reuse base and background P2 datasets");
 });

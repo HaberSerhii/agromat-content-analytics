@@ -154,3 +154,11 @@ export function canonicalSearchParams(params: URLSearchParams): string {
     )
     .join("&");
 }
+
+/** Read a completed result without waiting for an in-flight background refresh. */
+export function peekServerResult<T>(namespace: string, key: string): { value: T; status: "hit" | "stale" } | null {
+  const entry = namespaceCache(namespace).get(key);
+  if (!entry?.hasValue || (entry.staleUntil ?? entry.expiresAt) <= Date.now()) return null;
+  entry.lastAccess = Date.now();
+  return { value: entry.value as T, status: entry.expiresAt > Date.now() ? "hit" : "stale" };
+}

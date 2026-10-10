@@ -1,7 +1,7 @@
 import { matchesOrderOrigin, summarizeOrderOrigins, type OrderOrigin } from "@/lib/orders-origin";
 import { marketingDailySeries } from "@/lib/marketing-daily-series";
 import { NextResponse } from "next/server";
-import { getServerResult } from "@/lib/server-result-cache";
+import { getServerResult, peekServerResult } from "@/lib/server-result-cache";
 import {
   readSalesWebshopManagerLookup,
   readSalesWebshopReturnLookup,
@@ -239,9 +239,9 @@ function applyOrderFilters(params: URLSearchParams, dateFrom: string, dateTo: st
   if (synced === "true" || synced === "false") params.set("synced", synced);
 }
 
-async function fetchCompleteOrders(dateFrom: string, dateTo: string, synced: string | null) {
+async function fetchCompleteOrders(dateFrom: string, dateTo: string, synced: string | null, withMovements = false) {
   const orders: ApiOrder[] = [];
-  const firstParams = new URLSearchParams({ page: "1", per_page: String(DETAIL_PAGE_SIZE), with_movements: "true" });
+  const firstParams = new URLSearchParams({ page: "1", per_page: String(DETAIL_PAGE_SIZE), with_movements: String(withMovements) });
   applyOrderFilters(firstParams, dateFrom, dateTo, synced);
   const first = await fetchOrders(firstParams);
   orders.push(...first.data);
@@ -251,7 +251,7 @@ async function fetchCompleteOrders(dateFrom: string, dateTo: string, synced: str
   for (let startPage = 2; startPage <= first.meta.total_pages; startPage += 6) {
     const requests: Array<Promise<ApiResponse>> = [];
     for (let page = startPage; page < Math.min(startPage + 6, first.meta.total_pages + 1); page += 1) {
-      const params = new URLSearchParams({ page: String(page), per_page: String(DETAIL_PAGE_SIZE), with_movements: "true" });
+      const params = new URLSearchParams({ page: String(page), per_page: String(DETAIL_PAGE_SIZE), with_movements: String(withMovements) });
       applyOrderFilters(params, dateFrom, dateTo, synced);
       requests.push(fetchOrders(params));
     }
@@ -313,11 +313,14 @@ export async function GET(req: Request) {
     const promotionPricePosition = normalizePromotionPricePosition(url.searchParams.get("promotion_price_position"));
 
     const scopeKey = `${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}`;
-    const [ordersResult, returnLookup, managerLookup, onlinePayments] = await Promise.all([
+    const p2Namespace = "webshop-orders-background-p2-v1";
+    const p2Result = peekServerResult<ApiOrder[]>(p2Namespace, scopeKey);
+    const [baseResult, returnLookup, managerLookup, onlinePayments] = await Promise.all([
       getServerResult({
-        namespace: "webshop-orders-dataset-with-p2-15m-v3",
+        namespace: "webshop-orders-base-15m-v1",
         key: scopeKey,
         ttlMs: SALES_AUTO_REFRESH_MS,
+        staleMs: SALES_AUTO_REFRESH_MS,
         maxEntries: 16,
         load: () => fetchCompleteOrders(dateFrom, dateTo, null),
       }),
@@ -325,6 +328,12 @@ export async function GET(req: Request) {
       readSalesWebshopManagerLookup(),
       readOnlinePayments(dateFrom, dateTo),
     ]);
+    // Background enrichment never holds up the base registry. Concurrent readers share the job.
+    void getServerResult({ namespace: p2Namespace, key: scopeKey, ttlMs: SALES_AUTO_REFRESH_MS,
+      staleMs: SALES_AUTO_REFRESH_MS, maxEntries: 16,
+      load: () => fetchCompleteOrders(dateFrom, dateTo, null, true),
+    }).catch(error => console.warn("[webshop] background P2 refresh failed", error instanceof Error ? error.message : error));
+    const ordersResult = p2Result || baseResult;
     const returnedWebshopIds = new Set(returnLookup.keys());
     const scopedOrders = ordersResult.value.filter((order) => (synced !== "true" && synced !== "false") || order.is_synced === (synced === "true"));
     const enrichedAllOrders = scopedOrders.map((order) => enrichOrder(order, returnLookup, managerLookup, returnedWebshopIds));
@@ -385,7 +394,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       data: filteredOrders.slice(start, start + DETAIL_PAGE_SIZE),
-      meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: true },
+      meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: Boolean(p2Result) },
       summary,
       daily: marketingDailySeries(filteredOrders, dateFrom, dateTo),
       onlinePayments: {

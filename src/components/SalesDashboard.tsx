@@ -1338,9 +1338,11 @@ function WebshopOrdersRegister({ originSource, onOriginSourceChange, dataset, pa
             <label className="w-full sm:w-[340px]"><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Пошук на цій сторінці</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID, документ, клієнт, телефон, товар…" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" /></label>
           </div>
         </div>
-        {loading && <div className="px-5 py-14 text-center text-xs text-[#8a939c]">Завантаження замовлень і статусів P2…</div>}
+        {loading && !dataset && <div className="px-5 py-14 text-center text-xs text-[#8a939c]">Завантаження замовлень…</div>}
         {!loading && error && <div className="m-4 rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
-        {!loading && !error && dataset && <>
+        {!error && dataset && <>
+          {loading && <p className="px-5 py-2 text-xs text-[#8a939c]">Оновлення даних…</p>}
+          {!dataset.meta.movements_included && <p className="px-5 py-2 text-xs text-[#8a939c]">Замовлення завантажено. Статуси та фільтри P2 уточнюються у фоні; зараз показано базові статуси API.</p>}
           <div className="flex flex-wrap items-center justify-between gap-2 bg-[#fbfcfd] px-5 py-2.5 text-[10px] text-[#7b8691]"><span>На сторінці: <b className="text-[#33404c]">{fmtNum(orders.length)}</b> · усього за фільтрами: <b className="text-[#33404c]">{fmtNum(dataset.meta.total)}</b></span><span>Історія P2 завантажується при відкритті замовлення</span></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[1460px] border-collapse text-[10px]"><thead className="bg-[#f3f6f8] text-[#697581]"><tr><th className="w-10 px-3 py-3" /><th className="px-3 py-3 text-left">ID / документ</th><th className="px-3 py-3 text-left">Дата</th><th className="px-3 py-3 text-left">Клієнт</th><th className="px-3 py-3 text-left">Статус</th><th className="px-3 py-3 text-left">Менеджер ERP</th><th className="px-3 py-3 text-left">Оплата</th><th className="px-3 py-3 text-left">Доставка</th><th className="px-3 py-3 text-right">Товарів</th><th className="px-3 py-3 text-right">Доставка, ₴</th><th className="px-3 py-3 text-right">Сума</th><th className="px-3 py-3 text-center">P2</th></tr></thead>
             <tbody>{orders.map((order) => { const expanded = expandedOrder === order.id; const detailedOrder = orderDetails[order.id] || order; const itemQty = order.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0); const currentStatus = order.analytics_status || detailedOrder.fulfillment?.current?.name || order.status || "Без статусу"; const isNovaPoshtaReturn = currentStatus === "Оформлено повернення НП"; return <Fragment key={order.id}><tr className="border-t border-[#e8ecef] hover:bg-[#f8fbfd]"><td className="px-3 py-3 text-center"><button type="button" onClick={() => void toggleOrder(order)} aria-expanded={expanded} className="flex h-6 w-6 items-center justify-center rounded-md bg-[#eef7ff] font-black text-[#118dff]">{expanded ? "−" : "+"}</button></td><td className="px-3 py-3"><div className="font-black tabular-nums text-[#176aa8]">#{order.id}</div><div className="mt-1 text-[9px] font-bold text-[#16865c]">{orderOriginLabel(orderOriginSource(order))}{order.origin?.external_order_id ? ` · № ${order.origin.external_order_id}` : ""}</div><div className="mt-0.5 text-[9px] text-[#7b8691]">{order.order_num ? `№ ${order.order_num}` : "Без документа"}</div></td><td className="px-3 py-3 tabular-nums text-[#596673]">{orderDateTime(order.date)}</td><td className="max-w-[220px] px-3 py-3"><div className="truncate font-bold text-[#33404c]" title={customerName(order)}>{customerName(order)}</div><div className="mt-0.5 text-[9px] text-[#7b8691]">{order.customer.phone || order.customer.email || "—"}</div></td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 font-bold ${isNovaPoshtaReturn ? "bg-[#fff0e7] text-[#bd5c21]" : "bg-[#f0f3f6] text-[#52606d]"}`}>{currentStatus}</span>{isNovaPoshtaReturn && order.return_info && <div className="mt-1 text-[9px] font-bold text-[#bd5c21]">Повернення: {fmtMoney(order.return_info.returnSum)}</div>}</td><td className="max-w-[190px] px-3 py-3"><div className="truncate font-bold text-[#33404c]" title={order.erp_manager || undefined}>{order.erp_manager || "—"}</div></td><td className="px-3 py-3"><div className="font-bold text-[#805ad5]">{orderPaymentLabel(order)}</div><div className="mt-0.5 text-[9px] text-[#7b8691]">{order.payment?.status === "paymet_parts" ? "Платіж частинами" : order.payment?.status || "Статус не вказано"}</div><OrderPaymentDetails attempts={order.online_payments || []} online={order.payment?.type === "online"} cost={order.totals.cost || 0} currency={order.totals.currency || "UAH"} /></td><td className="max-w-[210px] truncate px-3 py-3 font-bold text-[#596673]" title={deliveryLabel(order.delivery?.type)}>{deliveryLabel(order.delivery?.type)}</td><td className="px-3 py-3 text-right tabular-nums">{fmtNum(itemQty)}</td><td className="px-3 py-3 text-right tabular-nums text-[#687582]">{fmtMoney(order.totals.delivery || 0)}</td><td className="px-3 py-3 text-right font-black tabular-nums text-[#26313d]">{fmtMoney(order.totals.cost || 0)}</td><td className="px-3 py-3 text-center"><span className={`rounded-full px-2 py-1 font-black ${order.is_synced ? "bg-[#eaf8f1] text-[#16865c]" : "bg-[#fff1f1] text-[#c54848]"}`}>{order.is_synced ? "Так" : "Ні"}</span></td></tr>
@@ -1523,6 +1525,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [webshopEnrichmentTick, setWebshopEnrichmentTick] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [categoryProducts, setCategoryProducts] = useState<Record<string, CategoryProductSummary[]>>({});
@@ -1664,6 +1667,12 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick]);
 
   useEffect(() => {
+    if (view !== "webshop" || !webshopOrders || webshopOrders.meta.movements_included) return;
+    const timer = window.setTimeout(() => setWebshopEnrichmentTick(tick => tick + 1), 15000);
+    return () => window.clearTimeout(timer);
+  }, [view, webshopOrders, webshopEnrichmentTick]);
+
+  useEffect(() => {
     if (view !== "webshop") return;
     let alive = true;
     const controller = new AbortController();
@@ -1704,7 +1713,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick]);
+  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick, webshopEnrichmentTick]);
 
   useEffect(() => {
     const category = expandedCategory;
