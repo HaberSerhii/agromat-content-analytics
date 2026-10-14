@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AbandonedCartsDemo from "./AbandonedCartsDemo";
 import type { ApiCart } from "@/lib/cart-types";
 
@@ -7,10 +7,14 @@ export default function AbandonedCheckout({ from, to, refreshTick }: { from: str
   const [data, setData] = useState<ApiCart[] | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const previousRefresh = useRef(refreshTick);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError(""); setData(null);
-    fetch(`/api/sales/carts?${new URLSearchParams({ from, to })}`, { signal: controller.signal, cache: "no-store" })
+    const params = new URLSearchParams({ from, to });
+    if (previousRefresh.current !== refreshTick) params.set("refresh", "1");
+    previousRefresh.current = refreshTick;
+    fetch(`/api/sales/carts?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error || "Не вдалося завантажити кошики"); return result.data as ApiCart[]; })
       .then(rows => { if (!controller.signal.aborted) setData(rows); })
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Помилка завантаження"); })
