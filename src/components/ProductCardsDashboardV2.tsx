@@ -149,6 +149,8 @@ type DashboardResponse = {
       deltaSanitary: number;
       benchmark: number | null;
       available: boolean;
+      changeTile: number | null;
+      changeSanitary: number | null;
       improvedTile: number;
       improvedSanitary: number;
       declinedTile: number;
@@ -600,6 +602,8 @@ function MetricCard({
           { segment: "tile", label: "Плитка", value: tileValue, delta: tileDelta },
           { segment: "sanitary", label: "Сантехніка", value: sanitaryValue, delta: sanitaryDelta },
         ] as const).map(({ segment, label, value, delta }) => {
+          const ctrChange = segment === "tile" ? data?.metrics.ctr.changeTile : data?.metrics.ctr.changeSanitary;
+          const roundedCtrChange = ctrChange == null ? null : Number(ctrChange.toFixed(2));
           const active = selection?.metric === meta.key && selection.segment === segment;
           const disabled = !data || (isCtr && (!data.metrics.ctr.available || value === "—"));
           return (
@@ -627,6 +631,15 @@ function MetricCard({
                   ><Delta value={delta} /></button>
                 )}
               </div>
+              {isCtr && (
+                <div
+                  className="mt-2 text-[10px] font-bold"
+                  style={{ color: roundedCtrChange == null || roundedCtrChange === 0 ? "#8c959e" : roundedCtrChange > 0 ? "#087a55" : "#bd3b3b" }}
+                  title="Зміна сумарного CTR до такого самого періоду минулого місяця, у відсоткових пунктах. Для товарів, які зараз у наявності."
+                >
+                  {roundedCtrChange == null ? "Немає даних для порівняння" : `${roundedCtrChange > 0 ? "+" : roundedCtrChange < 0 ? "−" : ""}${Math.abs(roundedCtrChange).toFixed(2)} в.п. до минулого місяця`}
+                </div>
+              )}
               {isCtr && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {([

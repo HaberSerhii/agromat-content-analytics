@@ -190,6 +190,8 @@ type CtrSummary = {
   benchmark: number | null;
   tile: number | null;
   sanitary: number | null;
+  changeTile: number | null;
+  changeSanitary: number | null;
   scoreTile: number;
   scoreSanitary: number;
   improvedTile: number;
@@ -537,7 +539,7 @@ async function readCtr(
   syncedAt: string | null,
 ): Promise<CtrSummary> {
   const ranges = monthRanges(today);
-  const key = `in-stock-v1:${Object.values(ranges).join(":")}:${syncedAt || ""}:${products.length}`;
+  const key = `in-stock-v2:${Object.values(ranges).join(":")}:${syncedAt || ""}:${products.length}`;
   if (ctrCache && ctrCache.key === key && ctrCache.expiresAt > Date.now())
     return ctrCache.value;
 
@@ -592,6 +594,10 @@ async function readCtr(
       tile: { impressions: 0, clicks: 0 },
       sanitary: { impressions: 0, clicks: 0 },
     };
+    const previousTotals = {
+      tile: { impressions: 0, clicks: 0 },
+      sanitary: { impressions: 0, clicks: 0 },
+    };
     let totalImpressions = 0;
     let totalClicks = 0;
     let scoreTile = 0;
@@ -607,6 +613,10 @@ async function readCtr(
       const segment = segmentOf(product);
       const current = periods.current;
       const previous = periods.previous;
+      if (previous) {
+        previousTotals[segment].impressions += previous.impressions;
+        previousTotals[segment].clicks += previous.clicks;
+      }
       if (current) {
         cohorts[segment].current.push(product);
         totals[segment].impressions += current.impressions;
@@ -648,8 +658,17 @@ async function readCtr(
       totals[segment].impressions > 0
         ? (totals[segment].clicks / totals[segment].impressions) * 100
         : null;
+    const change = (segment: Segment) => {
+      const currentCtr = ctr(segment);
+      const previous = previousTotals[segment];
+      return currentCtr != null && previous.impressions > 0
+        ? currentCtr - (previous.clicks / previous.impressions) * 100
+        : null;
+    };
     const value: CtrSummary = {
       cohorts,
+      changeTile: change("tile"),
+      changeSanitary: change("sanitary"),
       available: totalImpressions > 0,
       benchmark:
         totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : null,
@@ -671,6 +690,8 @@ async function readCtr(
       benchmark: null,
       tile: null,
       sanitary: null,
+      changeTile: null,
+      changeSanitary: null,
       scoreTile: 0,
       scoreSanitary: 0,
       improvedTile: 0,
@@ -814,6 +835,8 @@ async function buildDashboard(input: DashboardFilters) {
           benchmark: null,
           tile: null,
           sanitary: null,
+          changeTile: null,
+          changeSanitary: null,
           scoreTile: 0,
           scoreSanitary: 0,
           improvedTile: 0,
@@ -1680,6 +1703,8 @@ async function buildDashboard(input: DashboardFilters) {
       inactiveProducts: overviewMetric(cohorts.inactiveProducts),
       promoProducts: overviewMetric(cohorts.promoProducts),
       ctr: {
+        changeTile: ctr.changeTile,
+        changeSanitary: ctr.changeSanitary,
         tile: ctr.tile,
         sanitary: ctr.sanitary,
         deltaTile: ctr.scoreTile,
