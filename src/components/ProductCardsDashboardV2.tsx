@@ -358,7 +358,7 @@ const METRIC_META: Array<{
     label: "CTR Каталог → PDP",
     symbol: "↗",
     tone: "#0f9d72",
-    note: "Оцінка: покращення +1, погіршення −1",
+    note: "Лише в наявності · покращення +1, погіршення −1",
   },
 ];
 
@@ -655,7 +655,7 @@ function MetricCard({
       </div>
       {isCtr && (
         <div className="mt-3 border-t border-[#eef0f2] pt-2 text-[8px] text-[#8c959e]">
-          Глобальний бенчмарк сайту:{" "}
+          Бенчмарк товарів у наявності:{" "}
           <b className="text-[#596571]">
             {data?.metrics.ctr.benchmark == null
               ? "—"

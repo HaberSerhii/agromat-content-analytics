@@ -537,7 +537,7 @@ async function readCtr(
   syncedAt: string | null,
 ): Promise<CtrSummary> {
   const ranges = monthRanges(today);
-  const key = `${Object.values(ranges).join(":")}:${syncedAt || ""}:${products.length}`;
+  const key = `in-stock-v1:${Object.values(ranges).join(":")}:${syncedAt || ""}:${products.length}`;
   if (ctrCache && ctrCache.key === key && ctrCache.expiresAt > Date.now())
     return ctrCache.value;
 
@@ -565,7 +565,10 @@ async function readCtr(
       },
     });
     const productByRef = new Map(
-      products.map((product) => [product.goodsRef, product]),
+      // Compare both periods for the same currently in-stock assortment.
+      products
+        .filter((product) => !product.deleted && product.statusId === 5)
+        .map((product) => [product.goodsRef, product]),
     );
     const byRef = new Map<
       number,
