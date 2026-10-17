@@ -20,7 +20,6 @@ const CHANNELS: Array<{ key: WebFunnelChannel; label: string; color: string }> =
   { key: "all", label: "Всі канали", color: "#118dff" },
   { key: "organic", label: "Органіка (всі)", color: "#107c10" },
   { key: "cpc", label: "Google CPC", color: "#f7630c" },
-  { key: "meta_cpc", label: "Meta CPC", color: "#0866ff" },
   { key: "direct", label: "Direct", color: "#744da9" },
 ];
 
@@ -576,7 +575,7 @@ export function PromotionWebFunnelDashboard({
             <div className="mb-1 text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
               Канал
             </div>
-            <div className="grid w-full grid-cols-3 rounded-xl border p-0.5 sm:w-auto sm:grid-cols-5" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
+            <div className="grid w-full grid-cols-2 rounded-xl border p-0.5 sm:w-auto sm:grid-cols-4" style={{ borderColor: "var(--border2)", background: "var(--bg-input)" }}>
               {CHANNELS.map((item) => (
                 <button
                   key={item.key}
