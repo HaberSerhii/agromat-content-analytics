@@ -164,6 +164,8 @@ type SalesDataset = {
     months: Array<{ month: string; docs: number; goods: number; revenue: number }>;
     segments: BucketSummary[];
     shippedSegments: BucketSummary[];
+    otherSalesGroups: Array<{ label: string; revenue: number }>;
+    otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: BucketSummary[];
     categories: BucketSummary[];
     categoryProducts: Record<string, CategoryProductSummary[]>;
@@ -171,7 +173,7 @@ type SalesDataset = {
     availableStates: Array<{ state: string; docs: number; revenue: number }>;
     cancelReasons: CancelReasonSummary[];
     documentStatusesBySegment: Array<{
-      segment: "Плитка" | "Сантехніка";
+      segment: "Плитка" | "Сантехніка" | "Інше";
       states: Array<{ state: string; docs: number; revenue: number }>;
       cancelReasons: CancelReasonSummary[];
     }>;
@@ -319,7 +321,7 @@ type SalesWebshopOrdersDataset = {
 };
 
 type RankingMetric = "goods" | "revenue";
-type DocumentSegment = "Усі" | "Плитка" | "Сантехніка";
+type DocumentSegment = "Усі" | "Плитка" | "Сантехніка" | "Інше";
 type SalesChannel = "all" | "monomarket" | "rozetka";
 
 type SalesDashboardView = "checkout" | "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
@@ -685,7 +687,7 @@ function DocumentStatusOverview({
   title?: string;
   showSegmentFilter?: boolean;
 }) {
-  const [selectedSegment, setSelectedSegment] = useState<"Усі" | "Плитка" | "Сантехніка">("Усі");
+  const [selectedSegment, setSelectedSegment] = useState<"Усі" | "Плитка" | "Сантехніка" | "Інше">("Усі");
   const segmentSummary = selectedSegment === "Усі"
     ? null
     : documentStatusesBySegment.find((item) => item.segment === selectedSegment);
@@ -712,7 +714,7 @@ function DocumentStatusOverview({
           </div>
         </div>
         {showSegmentFilter && <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
-          {(["Усі", "Плитка", "Сантехніка"] as const).map((segment) => {
+          {(["Усі", "Плитка", "Сантехніка", "Інше"] as const).map((segment) => {
             const active = selectedSegment === segment;
             return (
               <button
@@ -824,7 +826,7 @@ function DocumentSegmentFilter({ value, onChange }: { value: DocumentSegment; on
         <div className="mt-1 text-[10px] text-[#8a939c]">Суми, кількість і частки перераховуються всередині вибраного сегмента</div>
       </div>
       <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
-        {(["Усі", "Плитка", "Сантехніка"] as const).map((segment) => (
+        {(["Усі", "Плитка", "Сантехніка", "Інше"] as const).map((segment) => (
           <button key={segment} type="button" onClick={() => onChange(segment)} aria-pressed={value === segment} className="rounded-md px-3 py-1.5 text-[10px] font-bold transition-colors" style={{ background: value === segment ? "#118dff" : "transparent", color: value === segment ? "#fff" : "#687582" }}>
             {segment}
           </button>
@@ -1905,6 +1907,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const selectedManagerData = selectedManager
     ? data.summary.managers.find((manager) => manager.seller === selectedManager)
     : null;
+  const currentOther = data.summary.shippedSegments?.find((segment) => segment.label === "Інше");
   const currentTile = data.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
   const currentPlumbing = data.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
   const previousTile = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
@@ -2064,12 +2067,13 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="text-[10px] font-black uppercase tracking-[.16em] text-[#5882a7]">Загальне виконання плану · {fmtMonth(plan.month)}</div>
-                        <span className="rounded-full bg-white/80 px-2 py-1 text-[9px] font-bold text-[#1771b5]">Повністю відвантажено</span>
+                        <span className="rounded-full bg-white/80 px-2 py-1 text-[9px] font-bold text-[#1771b5]">Усього продажів</span>
                       </div>
                       <div className="mt-3 flex flex-wrap items-end gap-3">
                         <div className="text-3xl font-black tracking-tight text-[#202a35] sm:text-4xl">{fmtMoney(plan.revenue)}</div>
                         <div className="pb-1 text-xs text-[#687784]">{plan.plan ? `із ${fmtMoney(plan.plan)}` : "план ще не заданий"}</div>
                       </div>
+                      <div className="mt-2 text-[10px] text-[#687784]">Після повернень, без послуг</div>
                       <div className="mt-5"><ProgressBar value={planPct} color={planPct >= 100 ? "#20a66a" : "#118dff"} /></div>
                       <div className="mt-4 grid gap-3 sm:grid-cols-3">
                         <div><div className="text-[9px] font-bold uppercase text-[#7f8c97]">Виконання</div><div className="mt-1 text-lg font-black text-[#26313d]">{fmtPct(plan.completionPct)}</div></div>
@@ -2078,11 +2082,11 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                       </div>
                     </div>
                     <div className="grid gap-2">
-                      {plan.segments.filter((segment) => segment.segment !== "Інше").map((segment) => (
+                      {plan.segments.map((segment) => (
                         <div key={segment.segment} className="rounded-xl border border-white/80 bg-white/75 p-3">
-                          <div className="flex items-center justify-between gap-3 text-[10px]"><b className="text-[#33404c]">{segment.segment}</b><span className="font-black text-[#1771b5]">{fmtPct(segment.completionPct)}</span></div>
-                          <div className="mt-1 text-[9px] text-[#7e8994]">{fmtMoney(segment.revenue)} із {fmtMoney(segment.plan)}</div>
-                          <div className="mt-2"><ProgressBar value={segment.completionPct || 0} color="#118dff" /></div>
+                          <div className="flex items-center justify-between gap-3 text-[10px]"><b className="text-[#33404c]">{segment.segment}</b><span className="font-black text-[#1771b5]">{segment.segment === "Інше" ? "" : fmtPct(segment.completionPct)}</span></div>
+                          <div className="mt-1 text-[9px] text-[#7e8994]">{fmtMoney(segment.revenue)}{segment.segment !== "Інше" && ` із ${fmtMoney(segment.plan)}`}</div>
+                          {segment.segment !== "Інше" && <div className="mt-2"><ProgressBar value={segment.completionPct || 0} color="#118dff" /></div>}
                         </div>
                       ))}
                     </div>
@@ -2099,6 +2103,20 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <SalesMetricCard label="Плитка" value={fmtMoney(currentTile?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentTile?.revenue || 0, previousTile?.revenue || 0, fmtMoney)} symbol="P" tone="#e39a25" />
                   <SalesMetricCard label="Сантехніка" value={fmtMoney(currentPlumbing?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentPlumbing?.revenue || 0, previousPlumbing?.revenue || 0, fmtMoney)} symbol="S" tone="#20a66a" />
                 </div>
+                <details className="group rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div><div className="text-xs font-bold text-[#687582]">Інше</div><div className="mt-1 text-2xl font-black text-[#805ad5]">{fmtMoney(currentOther?.revenue || 0)}</div><div className="mt-1 text-[10px] text-[#7e8994]">До повернень, включно з послугами</div></div>
+                  </summary>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {(data.summary.otherSalesGroups || []).map((group) => (
+                      <div key={group.label} className="rounded-xl bg-[#f7f8fc] p-3">
+                        <div className="flex items-center justify-between gap-3 text-xs"><b>{group.label}</b><span>{fmtMoney(group.revenue)}</span></div>
+                        <div className="mt-2"><ProgressBar value={currentOther?.revenue ? group.revenue / currentOther.revenue * 100 : 0} color="#805ad5" /></div>
+                        <div className="mt-1 text-[10px] text-[#7e8994]">{fmtPct(currentOther?.revenue ? group.revenue / currentOther.revenue * 100 : 0)} від загальної суми «Інше»</div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
                 <SalesTrendChart days={data.summary.byDate} previousDays={compareWithPreviousYear && !comparisonLoading ? comparisonData?.summary.byDate : undefined} />
                 <OrdersTrendChart days={data.summary.ordersByDate || []} previousDays={compareWithPreviousYear && !comparisonLoading ? comparisonData?.summary.ordersByDate : undefined} />
               </div>
