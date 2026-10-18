@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import CartProducts from "./CartProducts";
+import { checkoutLabels, fieldValue } from "@/lib/cart-fields";
+import { downloadAbandonedCarts, type CartExportPeriod } from "@/lib/cart-export";
 import type { ApiCart } from "@/lib/cart-types";
 const s = {"funnel": "checkout-funnel", "abandoned": "checkout-abandoned", "active": "checkout-active", "availability": "checkout-availability", "bottom": "checkout-bottom", "cartLink": "checkout-cartLink", "charts": "checkout-charts", "checkbox": "checkout-checkbox", "clickableRow": "checkout-clickableRow", "close": "checkout-close", "contactKpi": "checkout-contactKpi", "context": "checkout-context", "converted": "checkout-converted", "demo": "checkout-demo", "detail": "checkout-detail", "detailGrid": "checkout-detailGrid", "dot": "checkout-dot", "drawer": "checkout-drawer", "empty": "checkout-empty", "eyebrow": "checkout-eyebrow", "filters": "checkout-filters", "funnelLabel": "checkout-funnelLabel", "funnelRow": "checkout-funnelRow", "heading": "checkout-heading", "insight": "checkout-insight", "kpis": "checkout-kpis", "loss": "checkout-loss", "lossMoney": "checkout-lossMoney", "lossSelected": "checkout-lossSelected", "lossTrack": "checkout-lossTrack", "losses": "checkout-losses", "note": "checkout-note", "open": "checkout-open", "overlay": "checkout-overlay", "pagination": "checkout-pagination", "panel": "checkout-panel", "panelHead": "checkout-panelHead", "percent": "checkout-percent", "period": "checkout-period", "productRow": "checkout-productRow", "rank": "checkout-rank", "right": "checkout-right", "root": "checkout-root", "stageBadge": "checkout-stageBadge", "stageHelp": "checkout-stageHelp", "stageSwitch": "checkout-stageSwitch", "status": "checkout-status", "statusSummary": "checkout-statusSummary", "step": "checkout-step", "tableWrap": "checkout-tableWrap", "tag": "checkout-tag", "track": "checkout-track"};
 
@@ -15,19 +17,6 @@ const carts: Cart[] = Array.from({ length: 210 }, (_, i) => {
   const status: Status = bucket < 57 ? "abandoned" : bucket < 75 ? "active" : "converted";
   return { id: 10420 + i, status, stage: status === "converted" ? 4 : (i * 7 % 10 < 4 ? 0 : 1 + i % 3), day: i % 7, hours: status === "active" ? (i % 6 + 1) / 10 : 3 + i % (11 + (i % 7) * 24), total: 450 + (i * 1297 % 34000), contact: i % 5 < 3, name: names[i % names.length], product: products[i % products.length], sku: `DEMO-${1000 + i % products.length}`, qty: 1 + i % 4, delivery: ["Самовивіз AGROMAT", "Нова пошта", "Доставка AGROMAT"][i % 3], payment: ["Карткою онлайн", "При отриманні", "За рахунком"][i % 3], promo_code: i % 4 === 0 ? ["DEMO-WELCOME", "DEMO-AUTUMN", "DEMO-AGROMAT"][(i / 4) % 3] : null, promo_discount: i % 4 === 0 ? 100 + (i * 17 % 1500) : 0 };
 });
-const checkoutLabels: Record<string, string> = {
-  "user-name": "Ім’я", "user-phone": "Телефон", "user-email": "Email", "recipient-name": "Ім’я отримувача", "recipient-phone": "Телефон отримувача",
-  "delivery-type": "Спосіб доставки", "payment-type": "Спосіб оплати", payment_systems_id: "Платіжна система", saved_address_id: "Збережена адреса",
-  "floor-checkbox": "Доставка на поверх", elevator: "Ліфт", date: "Дата доставки", comment: "Коментар",
-  "stock": "ID складу", "delivery-city_agromat-stock": "Склад самовивозу", "delivery-city_np-city-name": "Місто Нової пошти", "delivery-city_np-city": "Код міста Нової пошти",
-  "delivery-city_np-department-name": "Відділення Нової пошти", "delivery-city_np-department": "Код відділення Нової пошти",
-  "delivery-city_np-postomat-city-name": "Місто поштомата", "delivery-city_np-postomat-city": "Код міста поштомата",
-  "delivery-city_np-courier-name": "Місто кур’єрської доставки", "delivery-city_np-courier": "Код міста кур’єрської доставки",
-  "delivery-city_agromat-kyiv_city": "Місто доставки AGROMAT", "delivery-city_agromat-kyiv_street": "Вулиця доставки AGROMAT",
-};
-const deliveryLabels: Record<string, string> = { npDepartment: "Нова пошта · відділення", npCourier: "Нова пошта · кур’єр", agrWarehouse: "Самовивіз AGROMAT", agrCity: "Доставка AGROMAT · місто", agrUkraine: "Доставка AGROMAT · Україна" };
-const paymentLabels: Record<string, string> = {cash: "Готівка", bank: "Безготівкова оплата", online: "Онлайн-оплата", online_full: "Онлайн · повна оплата", online_parts: "Оплата частинами"};
-const fieldValue = (key: string, value: string | number | boolean, cart?: ApiCart) => key === "payment-type" ? paymentLabels[String(value)] || String(value) : key === "delivery-city_agromat-stock" ? cart?.delivery_point?.name ? `${cart.delivery_point.name} · код форми ${value}` : `Код складу у формі: ${value} · назва не передана API` : key === "delivery-type" ? deliveryLabels[String(value)] || String(value) : typeof value === "boolean" ? value ? "Так" : "Ні" : String(value);
 const durationHours = (c: Cart) => c.raw ? Math.max(0, (Date.parse(c.raw.updated_at) - Date.parse(c.raw.created_at)) / 3600000) : 0;
 const durationLabel = (hours: number) => hours >= 24 ? `${(hours / 24).toFixed(1)} дн.` : `${hours.toFixed(1)} год`;
 const dateTime = (value: string) => new Date(value).toLocaleString("uk-UA", {timeZone: "Europe/Kyiv", dateStyle: "medium", timeStyle: "medium"});
@@ -35,7 +24,7 @@ const stageName = (stage: string, step: number | null) => stage === "checkout" ?
 const money = (n: number) => new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 }).format(n) + " ₴";
 const pct = (n: number, d: number) => d ? Math.round(n / d * 100) + "%" : "—";
 
-export default function AbandonedCartsDemo({ apiCarts }: { apiCarts?: ApiCart[] } = {}) {
+export default function AbandonedCartsDemo({ apiCarts, exportPeriod }: { apiCarts?: ApiCart[]; exportPeriod?: CartExportPeriod } = {}) {
   const live = apiCarts !== undefined;
   const liveCarts = useMemo(() => apiCarts?.map(raw => ({
     id: raw.id, status: raw.status, stage: raw.status === "converted" ? 4 : raw.furthest_stage === "checkout" ? Math.max(1, Math.min(3, raw.furthest_checkout_step || 1)) : 0,
@@ -46,6 +35,8 @@ export default function AbandonedCartsDemo({ apiCarts }: { apiCarts?: ApiCart[] 
     delivery: String(raw.checkout_fields?.["delivery-type"] || "Не введено"), payment: String(raw.checkout_fields?.["payment-type"] || "Не введено"),
     promo_code: raw.promo_code, promo_discount: raw.promo_discount, raw,
   } satisfies Cart)), [apiCarts]);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [period, setPeriod] = useState("7");
   const [status, setStatus] = useState(live ? "all" : "abandoned");
   const [stage, setStage] = useState("all");
@@ -136,6 +127,16 @@ export default function AbandonedCartsDemo({ apiCarts }: { apiCarts?: ApiCart[] 
     </div>
     {live && <section className={s.panel}><div className={s.panelHead}><div><h2>Довгі кошики · перевірка роздрібних IP</h2><p>Від створення до останньої зміни, а не час бездіяльності. Ознака для перевірки, не підтвердження роздробу.</p></div><span className={s.tag}>{longCarts.length} довгих / {originalCohort.length} кошиків</span></div><div className={s.filters}><select aria-label="Поріг тривалості" value={longThreshold} onChange={e => { setLongThreshold(e.target.value); resetPage(); }}><option value="24">Від 24 годин</option><option value="72">Від 3 днів</option><option value="168">Від 7 днів</option></select><select aria-label="Довгі кошики" value={longMode} onChange={e => { setLongMode(e.target.value); resetPage(); }}><option value="all">Усі кошики</option><option value="only">Лише довгі</option><option value="exclude">Виключити довгі з аналітики</option></select></div><p className={s.stageHelp}>{longMode === "exclude" ? `Виключено ${longCarts.length} кошиків з усіх показників, воронки та реєстру.` : longMode === "only" ? "Усі показники, воронка та реєстр лише для довгих кошиків." : "Довгі кошики включені в усі показники."} IP відсутній у {originalCohort.filter(c => !c.raw?.ip).length} кошиків.</p>{suspiciousIps.slice(0, 10).map(([ip, g]) => <div className={s.productRow} key={ip}><button className={s.cartLink} onClick={() => { setSearch(ip); setStatus("all"); setStage("all"); resetPage(); }}>{ip}</button><div>{g.long} довгих / {g.count} кошиків<small>Максимальна тривалість: {durationLabel(g.max)}</small></div></div>)}</section>}
     <section className={s.panel}>
+      {live && <div className={s.filters}>
+        <button className="rounded-lg bg-[#118dff] px-4 py-2 text-sm font-bold text-white disabled:opacity-50" disabled={exporting || !rows.some(c => c.status === "abandoned")} onClick={async () => {
+          setExporting(true); setExportError("");
+          try { await downloadAbandonedCarts(rows.flatMap(c => c.status === "abandoned" && c.raw ? [c.raw] : []), exportPeriod); }
+          catch (error) { setExportError(error instanceof Error ? error.message : "Не вдалося сформувати Excel"); }
+          finally { setExporting(false); }
+        }}>{exporting ? "Формування Excel…" : "↓ Excel · покинуті кошики"}</button>
+        <span className={s.stageHelp}>Усі покинуті кошики за поточними фільтрами, з усіх сторінок: {rows.filter(c => c.status === "abandoned").length}. {exportPeriod && `${exportPeriod.from} — ${exportPeriod.to} · дата створення, Київ. `}Одна вибірка для всіх 3 аркушів. IP без значення не включаються у групування.</span>
+      </div>}
+      {exportError && <p role="alert" className="px-4 py-2 text-sm text-red-700">{exportError}</p>}
       <div className={s.panelHead}><div><h2>{live ? "Реєстр кошиків" : "Кошики, що потребують уваги"}</h2><p>Відкрийте рядок, щоб переглянути товари та введені поля</p></div><span className={s.tag}>{rows.length} у вибірці</span></div>
       <div className={s.stageSwitch} role="group" aria-label="Фільтр за максимально досягнутим етапом">{["Усі етапи", ...stages].map((label, i) => {
         const value = i === 0 ? "all" : String(i - 1);
