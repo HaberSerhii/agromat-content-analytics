@@ -1,3 +1,4 @@
+import { isSalesPlanService } from "@/lib/sales-plan-items";
 import { matchesOrderOrigin, summarizeOrderOrigins, type OrderOrigin } from "@/lib/orders-origin";
 import { marketingDailySeries } from "@/lib/marketing-daily-series";
 import { NextResponse } from "next/server";
@@ -192,6 +193,13 @@ function keepOnlyMatchingItems(order: ApiOrder, productCodes: ReadonlySet<number
   };
 }
 
+function goodsOnlyWebshopOrder(order: ApiOrder): ApiOrder | null {
+  const items = order.items.filter((item) => !isSalesPlanService({ code: String(item.code || item.sku || ""), name: item.name, category: "" }));
+  if (order.items.length && !items.length) return null;
+  const goodsSum = items.length ? items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0) : (Number(order.totals.cost) || 0) - (Number(order.totals.delivery) || 0);
+  return { ...order, items, totals: { ...order.totals, delivery: 0, items_sum: goodsSum, cost: goodsSum - (order.return_info?.returnSum || 0) } };
+}
+
 function paymentCategory(order: ApiOrder): Exclude<PaymentFilter, "all"> | "unknown" {
   const type = order.payment?.type;
   if (type === "online") {
@@ -296,7 +304,7 @@ export async function GET(req: Request) {
         readSalesWebshopManagerLookup(),
       ]);
       const returnedWebshopIds = new Set(returnLookup.keys());
-      const order = rawOrder ? enrichOrder(rawOrder, returnLookup, managerLookup, returnedWebshopIds) : null;
+      const order = rawOrder ? goodsOnlyWebshopOrder(enrichOrder(rawOrder, returnLookup, managerLookup, returnedWebshopIds)) : null;
       if (!order) return NextResponse.json({ error: "Замовлення не знайдено" }, { status: 404 });
       return NextResponse.json({ data: order }, {
         headers: { "Cache-Control": "private, no-store", "X-Agromat-Cache": detailResult.status },
@@ -336,7 +344,7 @@ export async function GET(req: Request) {
     const ordersResult = p2Result || baseResult;
     const returnedWebshopIds = new Set(returnLookup.keys());
     const scopedOrders = ordersResult.value.filter((order) => (synced !== "true" && synced !== "false") || order.is_synced === (synced === "true"));
-    const enrichedAllOrders = scopedOrders.map((order) => enrichOrder(order, returnLookup, managerLookup, returnedWebshopIds));
+    const enrichedAllOrders = scopedOrders.map((order) => goodsOnlyWebshopOrder(enrichOrder(order, returnLookup, managerLookup, returnedWebshopIds))).filter((order): order is ApiOrder => order != null);
     const positionedPromotionCodes = promotionPricePosition === "all"
       ? null
       : await readPromotionalPricePositionCodes(promotionPricePosition, dateFrom, dateTo);

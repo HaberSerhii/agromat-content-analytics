@@ -8,7 +8,7 @@ import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s
 import { getMonthlyManagerPlan, getMonthlySalesPlan, normalizeSalesPlanSegment, SALES_DASHBOARD_MANAGER_IDS, SALES_PLAN_SEGMENTS } from "@/lib/sales-plan";
 import { readAllLite } from "@/lib/products-store";
 import { isDeliverySalesItem, isDimensionOrderInPeriod } from "@/lib/sales-dimension-filter";
-import { getSalesPlanAmounts, isSalesPlanService } from "@/lib/sales-plan-items";
+import { getSalesPlanAmounts, goodsOnlySalesRow, netSalesItems, isSalesPlanService } from "@/lib/sales-plan-items";
 import { fillOrderDateSeries, fillSalesDateSeries } from "@/lib/sales-date-series";
 import type {
   PromotionSalesDataset,
@@ -275,6 +275,7 @@ type MutableBucket = SalesBucketSummary & {
 };
 
 type ParsedSalesItem = {
+  ownCost?: number;
   categoryKey?: string;
   code: string;
   name: string;
@@ -867,7 +868,7 @@ function addCategoryProduct(
   current.orderRefs.add(row.docsRef || row.number || `${item.code}:${current.orderRefs.size}`);
   current.orders = current.orderRefs.size;
   current.qty += item.qty || 1;
-  current.revenue += item.revenue || fallbackRevenue;
+  current.revenue += Number.isFinite(item.revenue) ? item.revenue : fallbackRevenue;
   products.set(key, current);
 }
 
@@ -1042,6 +1043,7 @@ function* iterateSalesRows(
       ),
       cartNumber: get(values, "cart_number").trim(),
       items: Array.from({ length: goodsCount }, (_, i) => ({
+        ownCost: ownCosts[i] || 0,
         categoryKey: groupKeyByIdCache.get(categoriesList[i]) || "",
         code: goodsCodes[i] || "",
         name: goodsNamesList[i] || productMetaByCode.get(goodsCodes[i])?.name || "Без назви",
@@ -1064,7 +1066,8 @@ function* iterateSalesRows(
       hasOwnCostData: ownCosts.some((value) => value > 0),
     };
 
-    yield row;
+    const goodsRow = goodsOnlySalesRow(row);
+    if (goodsRow) yield goodsRow;
   }
 
 }
@@ -1170,9 +1173,13 @@ function buildDataset(
 
   for (const sourceRow of rows) {
     if (!matchesSalesChannel(sourceRow, filter.channel)) continue;
-    const row = scopeSalesRowToProductCodes(sourceRow, productCodeSet);
+    const goodsRow = goodsOnlySalesRow(sourceRow);
+    if (!goodsRow) continue;
+    const row = scopeSalesRowToProductCodes(goodsRow, productCodeSet);
     if (!row) continue;
     const goodsCodes = row.goodsCodeNumbers;
+    const netItems = netSalesItems(row);
+    const displayRow = { ...row, docsSum: getNetRevenue(row), items: netItems };
     if (
       matchesProductCodes(goodsCodes, productCodeSet)
       && (statusSet.size === 0 || statusSet.has(row.state || "Без статусу"))
@@ -1183,18 +1190,18 @@ function buildDataset(
       onlineOrdersTotal += 1;
       if (row.webshopId) {
         webshopDocs += 1;
-        webshopRevenue += row.docsSum;
+        webshopRevenue += getNetRevenue(row);
       }
       if (row.webshopId && row.marketingProgram) {
         marketingDocs += 1;
-        marketingRevenue += row.docsSum;
+        marketingRevenue += getNetRevenue(row);
         const program = marketingPrograms.get(row.marketingProgram) || {
           program: row.marketingProgram,
           docs: 0,
           revenue: 0,
         };
         program.docs += 1;
-        program.revenue += row.docsSum;
+        program.revenue += getNetRevenue(row);
         marketingPrograms.set(row.marketingProgram, program);
       }
     }
@@ -1203,11 +1210,11 @@ function buildDataset(
       const statusIgnoresDate = isShipmentAllowed(row.state);
       const matchesStatusDate = statusIgnoresDate || isWithinOptionalFilter(statusDate, filter);
       if (matchesStatusDate) {
-        addState(availableStates, row.state, row.docsSum);
-        addState(states, row.state, row.docsSum);
-        if (isCanceled(row.state)) addCancelReason(cancelReasons, row.cancelReason, row);
+        addState(availableStates, row.state, getNetRevenue(row));
+        addState(states, row.state, getNetRevenue(row));
+        if (isCanceled(row.state)) addCancelReason(cancelReasons, row.cancelReason, displayRow);
 
-        for (const part of splitBusinessSales(row.items, row.docsSum)) {
+        for (const part of splitBusinessSales(netItems, getNetRevenue(row))) {
           const segmentSummary = documentStatusesBySegment.get(part.segment);
           if (segmentSummary) {
             addState(segmentSummary.states, row.state, part.revenue);
@@ -1229,14 +1236,14 @@ function buildDataset(
             cancelReasons: new Map<string, MutableCancelReasonSummary>(),
           };
           manager.orderedDocs += 1;
-          manager.orderedRevenue += row.docsSum;
+          manager.orderedRevenue += getNetRevenue(row);
           if (isShipped(row)) {
             manager.completedDocs += 1;
             manager.completedUnits += row.items.reduce((total, item) => total + item.qty, 0);
-            manager.completedRevenue += row.docsSum;
+            manager.completedRevenue += getNetRevenue(row);
           }
-          addState(manager.states, row.state, row.docsSum);
-          if (isCanceled(row.state)) addCancelReason(manager.cancelReasons, row.cancelReason, row);
+          addState(manager.states, row.state, getNetRevenue(row));
+          if (isCanceled(row.state)) addCancelReason(manager.cancelReasons, row.cancelReason, displayRow);
           managers.set(seller, manager);
         }
       }
@@ -1250,17 +1257,17 @@ function buildDataset(
       && (isWithinOptionalFilter(analysisDate, filter) || selectedStatusIgnoresDate)
       && !isExcludedAnalyticsOrder(row)
     ) {
-      filteredRows.push(row);
+      filteredRows.push(displayRow);
       filteredDocs += 1;
       selectedGoods += row.goodsCount;
-      selectedRevenue += row.docsSum;
+      selectedRevenue += getNetRevenue(row);
       selectedReturnedRevenue += row.returnSum;
       if (isCanceled(row.state)) {
         selectedCanceledDocs += 1;
-        selectedCanceledRevenue += row.docsSum;
+        selectedCanceledRevenue += getNetRevenue(row);
       }
 
-      for (const part of splitBusinessSales(row.items, row.docsSum)) {
+      for (const part of splitBusinessSales(netItems, getNetRevenue(row))) {
         addBucket(segments, part.segment, row, part.revenue, part.goods);
       }
     }
@@ -1280,9 +1287,9 @@ function buildDataset(
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
     if (isDimensionOrderInPeriod(row, filter) && !isExcludedAnalyticsOrder(row)) {
-      for (const item of row.items) {
-        addBucket(brands, item.brand, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
-        addBucket(categories, item.category, row, item.revenue || row.docsSum / row.goodsCount, item.qty || 1);
+      for (const item of netItems) {
+        addBucket(brands, item.brand, row, item.revenue, item.qty || 1);
+        addBucket(categories, item.category, row, item.revenue, item.qty || 1);
         if (categoryProductsMode === "all" || categoryProductsMode === item.category) {
           addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
         }
@@ -1311,24 +1318,6 @@ function buildDataset(
         planMonthSegments = new Map<string, MutableBucket>();
         planSegmentsByMonth.set(shippedMonth, planMonthSegments);
       }
-      // Keep the overall fact and manager plans; split segment completion by goods only.
-      const returnsByCode = new Map<string, number>();
-      row.returnGoodsCodes.forEach((code, index) => {
-        returnsByCode.set(code, (returnsByCode.get(code) || 0) + (row.returnRowSums[index] || 0));
-      });
-      const goodsItems = row.items.filter((item) => !isSalesPlanService(item));
-      const amountsByCode = new Map<string, number>();
-      const countsByCode = new Map<string, number>();
-      for (const item of goodsItems) {
-        amountsByCode.set(item.code, (amountsByCode.get(item.code) || 0) + item.revenue);
-        countsByCode.set(item.code, (countsByCode.get(item.code) || 0) + 1);
-      }
-      const netItems = goodsItems.map((item) => ({
-        ...item,
-        revenue: item.revenue - (returnsByCode.get(item.code) || 0) * (
-          amountsByCode.get(item.code) ? item.revenue / amountsByCode.get(item.code)! : 1 / countsByCode.get(item.code)!
-        ),
-      }));
       for (const part of splitBusinessSales(netItems, getNetRevenue(planRow))) {
         addBucket(planMonthSegments, part.segment, planRow, part.revenue, part.goods);
       }
@@ -1358,7 +1347,7 @@ function buildDataset(
       }
       if (row.hasOwnCostData) {
         costCoveredDocs += 1;
-        revenueWithCost += row.docsSum - row.returnSum;
+        revenueWithCost += getNetRevenue(row);
         ownCost += row.ownCost;
       }
     }
@@ -1367,8 +1356,8 @@ function buildDataset(
 
     shippedDocs += 1;
     shippedGoods += row.goodsCount;
-    shippedRevenue += row.docsSum;
-    for (const part of splitBusinessSales(row.items, row.docsSum)) {
+    shippedRevenue += getNetRevenue(row);
+    for (const part of splitBusinessSales(netItems, getNetRevenue(row))) {
       addBucket(shippedSegments, part.segment, row, part.revenue, part.goods);
       for (const [label, revenue] of part.remainderCategories) {
         otherSalesRemainder.set(label, (otherSalesRemainder.get(label) || 0) + revenue);
@@ -1380,8 +1369,8 @@ function buildDataset(
     if (!firstShippedDate || row.shippedDate < firstShippedDate) firstShippedDate = row.shippedDate;
     if (!lastShippedDate || row.shippedDate > lastShippedDate) lastShippedDate = row.shippedDate;
 
-    addDate(byDate, row.shippedDate, row);
-    addMonth(months, shippedMonth, row);
+    addDate(byDate, row.shippedDate, displayRow);
+    addMonth(months, shippedMonth, displayRow);
   }
 
   const monthList = [...months.values()].sort((a, b) => a.month.localeCompare(b.month));
@@ -1564,13 +1553,15 @@ function buildDimensionProducts(
 
   for (const sourceRow of rows) {
     if (!matchesSalesChannel(sourceRow, filter.channel)) continue;
-    const row = scopeSalesRowToProductCodes(sourceRow, productCodeSet);
+    const goodsRow = goodsOnlySalesRow(sourceRow);
+    if (!goodsRow) continue;
+    const row = scopeSalesRowToProductCodes(goodsRow, productCodeSet);
     if (!row) continue;
     if (!isDimensionOrderInPeriod(row, filter)) continue;
     if (isExcludedAnalyticsOrder(row)) continue;
 
-    for (const item of row.items) {
-      const revenue = item.revenue || row.docsSum / row.goodsCount;
+    for (const item of netSalesItems(row)) {
+      const revenue = item.revenue;
       const dimensionValue = item[dimension] || (dimension === "brand" ? "Без бренду" : "Без категорії");
       dimensionRevenue.set(dimensionValue, (dimensionRevenue.get(dimensionValue) || 0) + revenue);
       if (dimensionValue === value) {
@@ -1615,7 +1606,7 @@ async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<Cache
   }
 
   const now = Date.now();
-  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-business-segments-v2`;
+  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-goods-net-v3`;
   if (state.cached && state.cached.signature === signature && now < state.cached.expiresAt) {
     state.nextSignatureCheckAt = Math.min(now + revalidateMs, state.cached.expiresAt);
     return { rows: state.cached.rows, source: state.cached.source };
@@ -1633,11 +1624,11 @@ async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<Cache
     nextRefreshAt: nextRefresh.toISOString(),
   };
   const enrichmentKey = createHash("sha256").update(JSON.stringify([bucket, key, [...groupNameById], [...groupKeyByIdCache], [...productMetaByCode]])).digest("hex");
-  const saved = await readPersistentResult<{ signature: string; enrichmentKey: string; rows: ParsedSalesRow[] }>("sales-rows-v2", 24 * 60 * 60_000);
+  const saved = await readPersistentResult<{ signature: string; enrichmentKey: string; rows: ParsedSalesRow[] }>("sales-rows-v3", 24 * 60 * 60_000);
   const rows = saved?.value.signature === signature && saved.value.enrichmentKey === enrichmentKey
     ? saved.value.rows
     : await parseSalesRowsBatched(await readS3Text(getSalesS3Url()), groupNameById, productMetaByCode);
-  if (rows !== saved?.value.rows) await writePersistentResult("sales-rows-v2", { signature, enrichmentKey, rows });
+  if (rows !== saved?.value.rows) await writePersistentResult("sales-rows-v3", { signature, enrichmentKey, rows });
   state.cached = { signature, rows, source, expiresAt: nextRefresh.getTime() };
   state.nextSignatureCheckAt = Math.min(Date.now() + revalidateMs, nextRefresh.getTime());
   return { rows, source };
@@ -1710,7 +1701,7 @@ export async function readSalesWebshopOrders(filter?: SalesDateFilter): Promise<
         shippedDate: row.shippedDate,
         seller: managerLabel(row.seller),
         state: row.state || "Без статусу",
-        docsSum: row.docsSum,
+        docsSum: netRevenue,
         returnSum: row.returnSum,
         marketingProgram: row.marketingProgram,
         stockm: row.stockm,
@@ -1719,7 +1710,7 @@ export async function readSalesWebshopOrders(filter?: SalesDateFilter): Promise<
         estimatedGrossMarginPct: estimatedGrossProfit != null && netRevenue
           ? (estimatedGrossProfit / netRevenue) * 100
           : null,
-        items: row.items.map((item) => ({
+        items: netSalesItems(row).map((item) => ({
           code: item.code,
           name: item.name,
           brand: item.brand,
@@ -2100,7 +2091,7 @@ export async function readPromotionSalesDataset(input: {
     let hasSelectedProduct = false;
     const selectedRowSegments = new Set<"tile" | "plumbing">();
 
-    for (const item of row.items) {
+    for (const item of netSalesItems(row)) {
       const code = parseInt(item.code, 10);
       if (!Number.isFinite(code)) continue;
       const itemRevenue = promotionSalesItemRevenue(item);

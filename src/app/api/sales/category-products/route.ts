@@ -27,7 +27,7 @@ async function categoryProductsResponse(
       channel: filter.channel || "all",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-category-products-json-v3",
+      namespace: "sales-category-products-json-v4",
       key,
       ttlMs: 60_000,
       maxEntries: 32,

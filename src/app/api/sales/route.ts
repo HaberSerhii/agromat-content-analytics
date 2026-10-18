@@ -44,7 +44,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean, refresh 
       channel: filter.channel || "all",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-json-v12",
+      namespace: "sales-json-v13",
       key,
       ttlMs: compact ? SALES_AUTO_REFRESH_MS : 5 * 60_000,
       maxEntries: 16,
