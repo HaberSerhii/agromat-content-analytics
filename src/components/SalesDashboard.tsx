@@ -1908,6 +1908,13 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     ? data.summary.managers.find((manager) => manager.seller === selectedManager)
     : null;
   const currentOther = data.summary.shippedSegments?.find((segment) => segment.label === "Інше");
+  const previousOther = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Інше");
+  const previousOtherGroups = new Map((comparisonData?.summary.otherSalesGroups || []).map((group) => [group.label, group.revenue]));
+  const otherYearComparison = (current: number, previous: number) => !compareWithPreviousYear
+    ? "Порівняння вимкнено"
+    : comparisonLoading ? "Завантаження порівняння…"
+    : !comparisonData ? "Немає даних для порівняння"
+    : yearComparisonHint(current, previous, fmtMoney);
   const currentTile = data.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
   const currentPlumbing = data.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
   const previousTile = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
@@ -2105,12 +2112,13 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                 </div>
                 <details className="group rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                    <div><div className="text-xs font-bold text-[#687582]">Інше</div><div className="mt-1 text-2xl font-black text-[#805ad5]">{fmtMoney(currentOther?.revenue || 0)}</div></div>
+                    <div><div className="text-xs font-bold text-[#687582]">Інше</div><div className="mt-1 text-2xl font-black text-[#805ad5]">{fmtMoney(currentOther?.revenue || 0)}</div><div className="mt-1 text-[10px] text-[#7e8994]">{otherYearComparison(currentOther?.revenue || 0, previousOther?.revenue || 0)}</div></div>
                   </summary>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     {(data.summary.otherSalesGroups || []).map((group) => (
                       <div key={group.label} className="rounded-xl bg-[#f7f8fc] p-3">
                         <div className="flex items-center justify-between gap-3 text-xs"><b>{group.label}</b><span>{fmtMoney(group.revenue)}</span></div>
+                        <div className="mt-1 text-[10px] text-[#7e8994]">{otherYearComparison(group.revenue, previousOtherGroups.get(group.label) || 0)}</div>
                         <div className="mt-2"><ProgressBar value={currentOther?.revenue ? group.revenue / currentOther.revenue * 100 : 0} color="#805ad5" /></div>
                         <div className="mt-1 text-[10px] text-[#7e8994]">{fmtPct(currentOther?.revenue ? group.revenue / currentOther.revenue * 100 : 0)} від загальної суми «Інше»</div>
                       </div>
