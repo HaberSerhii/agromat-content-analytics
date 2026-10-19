@@ -1,3 +1,4 @@
+import { normalizePromotionCodes } from "@/lib/promotion-product-selection";
 import { isInactiveProduct, readInactiveTracking } from "@/lib/product-inactive-tracking";
 import { compareProductAnalysisRows, normalizeProductSortKey, type ProductSortKey } from "@/lib/product-analysis-sort";
 import {
@@ -47,6 +48,7 @@ type DashboardFilters = {
   exportAll?: boolean;
   search?: string;
   bulkIds?: number[];
+  promotionCodes?: number[] | null;
   categoryId?: number | null;
   brandId?: number | null;
   statusId?: number | null;
@@ -727,6 +729,7 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
     exportAll,
     includeAnalytics: input.includeAnalytics !== false,
     search: String(input.search || "").trim(),
+    promotionCodes: normalizePromotionCodes(input.promotionCodes),
     bulkIds: Array.isArray(input.bulkIds)
       ? input.bulkIds.filter(Number.isFinite).slice(0, 5000)
       : [],
@@ -932,11 +935,13 @@ async function buildDashboard(input: DashboardFilters) {
   } : null;
 
   const search = filters.search.toLocaleLowerCase("uk");
+  const promotionCodes = filters.promotionCodes === null ? null : new Set(filters.promotionCodes);
   const bulkIds = new Set(filters.bulkIds);
   const matchesFacetFilters = (
     product: ProductLite,
     ignoredFacet?: "category" | "brand" | "status",
   ) => {
+    if (promotionCodes && !promotionCodes.has(product.code)) return false;
     if (
       ignoredFacet !== "category" &&
       filters.categoryId != null &&

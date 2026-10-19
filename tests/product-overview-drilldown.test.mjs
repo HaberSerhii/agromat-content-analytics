@@ -198,3 +198,19 @@ test("segment moves contribute to both segment balances", () => {
   const cohorts = buildOverviewCohorts([product(1, sanitary)], [product(1)]);
   assert.deepEqual(plain(overviewMetric(cohorts)), { tile: 0, sanitary: 1, deltaTile: -1, deltaSanitary: 1 });
 });
+
+test("promotion drilldown uses exact product codes, preserves empty selections, and exports the complete filtered list", async () => {
+  const products = [product(1), product(2, { id: 1001, goodsRef: 1001 }), product(3, { brandId: 2 }), product(4)];
+  const { dashboard, route } = setup({ products });
+  const listed = await dashboard(null, 'tile', 'current', { promotionCodes: [1001, 1003], limit: 1 });
+  assert.equal(listed.total, 2);
+  assert.equal(listed.rows.length, 1);
+  assert.equal(listed.rows[0].code, 1001);
+  const exported = await dashboard(null, 'tile', 'current', { promotionCodes: [1001, 1003], exportAll: true, limit: 250000 });
+  assert.deepEqual(exported.rows.map(row => row.code).sort(), [1001, 1003]);
+  const narrowed = await dashboard(null, 'tile', 'current', { promotionCodes: [1001, 1003], brandId: 2, exportAll: true });
+  assert.deepEqual(narrowed.rows.map(row => row.code), [1003]);
+  assert.equal((await dashboard(null, 'tile', 'current', { promotionCodes: [] })).total, 0);
+  const posted = await route.POST({ json: async () => ({ view: 'overview', includeAnalytics: false, promotionCodes: [1003] }) });
+  assert.deepEqual(posted.value.rows.map(row => row.code), [1003]);
+});

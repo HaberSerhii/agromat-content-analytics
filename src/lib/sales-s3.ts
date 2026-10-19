@@ -1,4 +1,4 @@
-import { promotionSalesSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
+import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import { splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
@@ -1917,6 +1917,24 @@ export async function readUniqueSalesDocumentsForProductGroups(input: {
       [...documentsByKey].map(([key, documents]) => [key, documents.size]),
     ),
   };
+}
+
+export async function readPromotionProductSegments(): Promise<Map<number, PromotionSalesSegment>> {
+  const [{ rows }, products] = await Promise.all([readCachedSalesRows(), readAllLite()]);
+  const segments = new Map<number, PromotionSalesSegment>();
+  for (const row of rows) {
+    for (const item of row.items) {
+      const segment = promotionSalesSegment(item.categoryKey || "");
+      const code = Number(item.code);
+      if (segment && Number.isFinite(code)) segments.set(code, segment);
+    }
+  }
+  for (const product of products) {
+    if (segments.has(product.code)) continue;
+    const segment = promotionCatalogSegment(product.categoryPath, product.categoryName);
+    if (segment) segments.set(product.code, segment);
+  }
+  return segments;
 }
 
 function canonicalPromotionSalesStatus(value: string): PromotionSalesStatus | null {

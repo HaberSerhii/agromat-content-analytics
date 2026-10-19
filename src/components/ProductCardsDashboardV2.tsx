@@ -1,6 +1,9 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- product images come from the Agromat CDN */
 
+import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { parsePromotionProductSelection, type PromotionProductSelection } from "@/lib/promotion-product-selection";
+
 import { PRODUCT_SORT_COLUMNS, type ProductSortKey } from "@/lib/product-analysis-sort";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -2083,6 +2086,13 @@ function NewProductsAnalysisPanel({
 }
 
 export function ProductCardsDashboardV2() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const promotionSelectionKey = searchParams.get("promotion_selection");
+  const appliedPromotionSelection = useRef<string | null>(null);
+  const [promotionSelection, setPromotionSelection] = useState<PromotionProductSelection | null>(null);
+  const [promotionSelectionError, setPromotionSelectionError] = useState("");
   const [view, setView] = useState<DashboardView>("overview");
   const [overviewSelection, setOverviewSelection] = useState<OverviewSelection | null>(null);
   const overviewCatalogRef = useRef<HTMLElement>(null);
@@ -2175,6 +2185,7 @@ export function ProductCardsDashboardV2() {
   const newAssignmentsLoadedRef = useRef(false);
   const loadScopeKey = JSON.stringify([
     overviewSelection,
+    promotionSelection,
     view,
     search,
     bulkIds,
@@ -2206,6 +2217,7 @@ export function ProductCardsDashboardV2() {
         const progressive = view === "overview" && !overviewAnalyticsLoadedRef.current;
         const requestBody = {
             overviewSelection,
+            promotionCodes: promotionSelection?.productCodes ?? null,
             view,
             page,
             limit: PAGE_SIZE,
@@ -2257,6 +2269,7 @@ export function ProductCardsDashboardV2() {
     },
     [
       overviewSelection,
+      promotionSelection,
       view,
       page,
       search,
@@ -2356,6 +2369,9 @@ export function ProductCardsDashboardV2() {
       void loadNewAssignments();
   }, [loadNewAssignments, resultMode, view]);
   const resetFilters = () => {
+    if (promotionSelectionKey) router.replace("/catalog", { scroll: false });
+    setPromotionSelection(null);
+    setPromotionSelectionError("");
     setOverviewSelection(null);
     setSearchDraft("");
     setSearch("");
@@ -2376,6 +2392,20 @@ export function ProductCardsDashboardV2() {
     setPagePickerDraft("");
     setBulkActionError("");
   };
+  useEffect(() => {
+    if (pathname !== "/catalog" || !promotionSelectionKey || appliedPromotionSelection.current === promotionSelectionKey) return;
+    appliedPromotionSelection.current = promotionSelectionKey;
+    let selection: PromotionProductSelection | null = null;
+    try { selection = parsePromotionProductSelection(sessionStorage.getItem(`promotion-products:${promotionSelectionKey}`)); } catch { /* Show a recoverable message below. */ }
+    setOverviewSelection(null);
+    setSearchDraft(""); setSearch(""); setBulkIds([]);
+    setCategoryId(""); setBrandId(""); setStatusId(""); setProcessingStatus("all");
+    setMinPrice(""); setMaxPrice(""); setMinStock(""); setMaxStock("");
+    setProductSignal(""); setProductSortKey(null); setProductSortDirection("desc");
+    setPage(1); setView("products");
+    setPromotionSelection(selection ?? { date: "", label: "Акційні товари", productCodes: [] });
+    setPromotionSelectionError(selection ? "" : "Не вдалося відновити список. Поверніться до акцій і відкрийте товари повторно.");
+  }, [pathname, promotionSelectionKey]);
   const changeView = (next: DashboardView) => {
     setView(next);
     resetFilters();
@@ -2391,6 +2421,7 @@ export function ProductCardsDashboardV2() {
   };
   const hasFilters = Boolean(
     overviewSelection ||
+    promotionSelection ||
     search ||
     bulkIds.length ||
     categoryId ||
@@ -2415,6 +2446,7 @@ export function ProductCardsDashboardV2() {
     (item) => item.id === productSignal,
   );
   const productScopeLabel = [
+    promotionSelection?.label,
     activeFilterLabel,
     search ? `пошук: ${search}` : "",
     bulkIds.length === 1
@@ -2709,6 +2741,9 @@ export function ProductCardsDashboardV2() {
         exportAll: true,
         search,
         bulkIds,
+        promotionCodes: promotionSelection?.productCodes ?? null,
+        minPrice: minPrice ? Number(minPrice) : null,
+        maxPrice: maxPrice ? Number(maxPrice) : null,
         categoryId: categoryId ? Number(categoryId) : null,
         brandId: brandId ? Number(brandId) : null,
         statusId: statusId ? Number(statusId) : null,
@@ -3119,6 +3154,8 @@ export function ProductCardsDashboardV2() {
 
   const filterBar = (compact = false) => (
     <div className="border-b border-[#e5e8eb] px-4 py-4">
+      {promotionSelection && <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#bcd8f1] bg-[#edf6ff] px-3 py-2 text-[11px] text-[#236798]"><span>{promotionSelection.label} · {promotionSelection.productCodes.length} товарів у вибірці</span><button type="button" onClick={() => { router.replace("/catalog", { scroll: false }); setPromotionSelection(null); setPromotionSelectionError(""); setPage(1); }} className="font-bold underline">Зняти фільтр акцій</button></div>}
+      {promotionSelectionError && <p role="alert" className="mb-3 text-xs text-[#b73535]">{promotionSelectionError}</p>}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-black text-[#26313d]">

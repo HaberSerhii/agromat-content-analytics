@@ -93,3 +93,13 @@ test('returns never change marketing totals, segment charts or promotion/product
     assert.equal(expected.summary.products.find(product => product.code === '3').revenue, 300);
   }
 });
+
+
+test('unsold catalogue goods use explicit category roots and never default to plumbing', () => {
+  const { promotionCatalogSegment } = loadSegments();
+  assert.equal(promotionCatalogSegment('Будівельна хімія / Клеї для плитки', 'Клей'), 'chemicals');
+  assert.equal(promotionCatalogSegment('Меблі / Меблі для ванної', 'Тумба'), 'furniture');
+  assert.equal(promotionCatalogSegment('Джерела живлення > Зарядні станції', 'Станція'), 'power');
+  assert.equal(promotionCatalogSegment('Підлогові покриття / Ламінат', 'Ламінат'), 'flooring');
+  assert.equal(promotionCatalogSegment('', 'Послуги'), null);
+});

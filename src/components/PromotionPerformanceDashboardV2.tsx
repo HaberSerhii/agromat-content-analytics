@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { PromotionInventoryCards } from "@/components/PromotionInventoryCards";
 import type {
   PromotionSalesBucket,
   PromotionSalesDailySummary,
@@ -84,11 +85,11 @@ function DateToolbar({ from, to, onFrom, onTo }: { from: string; to: string; onF
   </section>;
 }
 
-function Kpi({ eyebrow, value, meta, delta, color }: { eyebrow: string; value: string; meta: string; delta?: number | null; color: string }) {
+function Kpi({ eyebrow, value, meta, color }: { eyebrow: string; value: string; meta: string; color: string }) {
   return <article className="relative overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white p-5 shadow-[0_1px_2px_rgba(20,32,50,.04)]">
     <span className="absolute inset-y-0 left-0 w-1" style={{ background: color }} />
     <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#8a949e]">{eyebrow}</div>
-    <div className="mt-3 flex items-end justify-between gap-3"><strong className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">{value}</strong>{delta != null && <span className={`rounded-full px-2 py-1 text-[10px] font-black ${delta >= 0 ? "bg-[#e6f6ef] text-[#087a55]" : "bg-[#fcebea] text-[#c63f3f]"}`}>{delta >= 0 ? "+" : ""}{numberFmt.format(delta)} за день</span>}</div>
+    <div className="mt-3 flex items-end justify-between gap-3"><strong className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">{value}</strong></div>
     <div className="mt-2 text-[10px] text-[#78838e]">{meta}</div>
   </article>;
 }
@@ -149,7 +150,6 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
   const [query, setQuery] = useState("");
   const [data, setData] = useState<PromotionSalesDataset | null>(null);
   const [previous, setPrevious] = useState<PromotionSalesDataset | null>(null);
-  const [deltas, setDeltas] = useState<{ promotions: number; products: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -168,10 +168,6 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
     return () => controller.abort();
   }, [from, pricePosition, to]);
 
-  useEffect(() => {
-    fetch("/api/promotions/snapshots").then((response) => response.json()).then(async (payload: { dates?: string[] }) => { const dates = payload.dates ?? []; if (dates.length < 2) return; const response = await fetch(`/api/promotions/catalog?${new URLSearchParams({ view: "compact", from: dates.at(-2) ?? "", to: dates.at(-1) ?? "", page: "1", limit: "1" })}`); const catalog = await response.json() as { summary?: { newPromotions: number; disabledPromotions: number; addedProducts: number; deletedProducts: number } }; if (catalog.summary) setDeltas({ promotions: catalog.summary.newPromotions - catalog.summary.disabledPromotions, products: catalog.summary.addedProducts - catalog.summary.deletedProducts }); }).catch(() => undefined);
-  }, []);
-
   if (loading && !data) return <div className="rounded-2xl border border-[#dfe4ea] bg-white px-6 py-20 text-center text-xs font-bold text-[#7f8993]">Завантаження нового дашборда…</div>;
   if (!data) return <div className="rounded-2xl border border-[#f0b6b6] bg-[#fff1f1] p-5 text-xs font-bold text-[#b73535]">{error || "Дані недоступні"}</div>;
   const selectedDaily = data.summary.daily.map((day) => ({ ...day }));
@@ -181,7 +177,7 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
 
   return <div className="space-y-4">
     <DateToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} />
-    {view === "overview" && <><div className="flex justify-end"><SegmentControl value={segment} onChange={setSegment} /></div><div className="grid gap-3 md:grid-cols-3"><Kpi eyebrow="Активні акції на сайті" value={numberFmt.format(data.summary.activePromotions)} meta="Акційні програми з товарами у вибраній ціновій позиції" delta={pricePosition === "all" ? deltas?.promotions : null} color="#118dff" /><Kpi eyebrow="Унікальні акційні товари" value={numberFmt.format(data.summary.productCount)} meta="Без повторів між програмами" delta={pricePosition === "all" ? deltas?.products : null} color="#6d5bd0" /><Kpi eyebrow="Продажі акційних товарів" value={fmtMoney(revenue)} meta={`${numberFmt.format(qty)} шт. · ${numberFmt.format(docs)} замовлень`} color="#0f9d72" /></div><SalesChart current={selectedDaily} previous={previous?.summary.daily ?? []} segment={segment} /></>}
+    {view === "overview" && <><div className="flex justify-end"><SegmentControl value={segment} onChange={setSegment} /></div><div className="grid gap-3 md:grid-cols-3"><PromotionInventoryCards date={to} segment={segment} pricePosition={pricePosition} /><Kpi eyebrow="Продажі акційних товарів" value={fmtMoney(revenue)} meta={`${numberFmt.format(qty)} шт. · ${numberFmt.format(docs)} замовлень`} color="#0f9d72" /></div><SalesChart current={selectedDaily} previous={previous?.summary.daily ?? []} segment={segment} /></>}
     {view === "promotions" && <><section className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm"><div className="flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Пошук акції</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID або назва акційної програми" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none" /></label><SegmentControl value={segment} onChange={setSegment} /></div></section><PromotionTable items={data.summary.promotions} query={query} segment={segment} /></>}
     {view === "brands" && <DimensionTable type="brand" items={data.summary.brands} from={from} to={to} pricePosition={pricePosition} />}
     {view === "categories" && <DimensionTable type="category" items={data.summary.categories} from={from} to={to} pricePosition={pricePosition} />}
