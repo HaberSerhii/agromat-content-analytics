@@ -64,7 +64,7 @@ type ApiOrder = {
     goods_ref: number | null;
     code: number | string | null;
     sku: string | null;
-    name: string;
+    name: string | null;
     url: string | null;
     quantity: number;
     number_pieces: number | null;

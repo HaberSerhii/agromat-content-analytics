@@ -28,6 +28,16 @@ test("services are detected by category or name even without delivery code", () 
   assert.equal(isSalesPlanService({ ...delivery, code: "999", category: "" }), true);
 });
 
+test("nullable service labels retain goods and use the available service identifiers", () => {
+  for (const missing of [null, undefined, ""]) {
+    assert.equal(isSalesPlanService({ ...goods, name: missing, category: missing }), false);
+    assert.equal(isSalesPlanService({ ...delivery, name: missing, category: missing }), true);
+    assert.equal(isSalesPlanService({ ...goods, name: missing, category: missing, categoryKey: "012.011" }), true);
+    assert.equal(isSalesPlanService({ ...lifting, name: missing }), true);
+    assert.equal(isSalesPlanService({ ...lifting, category: missing }), true);
+  }
+});
+
 
 test("service exclusion removes service returns and costs and is idempotent", () => {
   const input = { ...row, ownCost: 750, items: [{ ...goods, ownCost: 700 }, { ...delivery, ownCost: 30 }, { ...lifting, ownCost: 20 }] };

@@ -1,9 +1,14 @@
 type PlanItem = { code: string; name: string; category: string; categoryKey?: string; brand?: string; qty: number; revenue: number; ownCost?: number };
 
-export function isSalesPlanService(item: Pick<PlanItem, "code" | "name" | "category" | "categoryKey">) {
+export function isSalesPlanService(item: {
+  code: string;
+  name?: string | null;
+  category?: string | null;
+  categoryKey?: string | null;
+}) {
   if (item.code.trim() === "18385" || item.categoryKey?.split(".")[0] === "012") return true;
-  const category = item.category.toLocaleLowerCase("uk").trim();
-  const name = item.name.toLocaleLowerCase("uk").trim();
+  const category = (item.category ?? "").toLocaleLowerCase("uk").trim();
+  const name = (item.name ?? "").toLocaleLowerCase("uk").trim();
   return /послуг|услуг/u.test(category)
     || /^(?:послуг|услуг|транспортні послуги|транспортные услуги|підйом та занос|подъем|доставк|delivery\b|shipping\b)/u.test(name);
 }

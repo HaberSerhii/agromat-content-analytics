@@ -26,3 +26,17 @@ test("service-only orders disappear; unknown goods retain their amount less a se
   assert.equal(goodsOnlyWebshopOrder({ items: [delivery, service], totals: { cost: 130, delivery: 0 } }), null);
   assert.equal(goodsOnlyWebshopOrder({ items: [], totals: { cost: 120, delivery: 20 } }).totals.cost, 100);
 });
+
+test("missing upstream product names preserve goods and still exclude delivery by code", () => {
+  for (const name of [null, undefined, ""]) {
+    const unnamedGoods = { ...goods, name };
+    const unnamedDelivery = { ...delivery, name };
+    const order = { items: [unnamedGoods, unnamedDelivery, service], totals: { cost: 1130, delivery: 0 }, return_info: { returnSum: 200 } };
+    const actual = goodsOnlyWebshopOrder(order);
+    assert.equal(actual.items.length, 1);
+    assert.equal(actual.items[0], unnamedGoods);
+    assert.equal(actual.totals.cost, 800);
+    assert.equal(actual.totals.items_sum, 1000);
+    assert.equal(goodsOnlyWebshopOrder({ ...order, items: [unnamedDelivery] }), null);
+  }
+});
