@@ -1,3 +1,5 @@
+import type { PromotionSalesSegment } from "./promotion-sales-segments";
+
 export type PromotionSalesStatus =
   | "Повністю відвантажений"
   | "відвантаження дозволено";
@@ -18,24 +20,16 @@ export type PromotionSalesBucket = {
   productCount: number;
 };
 
+export type PromotionSalesDailyMetrics = {
+  revenue: number;
+  qty: number;
+  docs: number;
+};
+
 export type PromotionSalesDailySummary = {
   date: string;
-  total: {
-    revenue: number;
-    qty: number;
-    docs: number;
-  };
-  tile: {
-    revenue: number;
-    qty: number;
-    docs: number;
-  };
-  plumbing: {
-    revenue: number;
-    qty: number;
-    docs: number;
-  };
-};
+  total: PromotionSalesDailyMetrics;
+} & Record<PromotionSalesSegment, PromotionSalesDailyMetrics>;
 
 export type PromotionSalesProductSummary = {
   code: string;
@@ -65,7 +59,7 @@ export type PromotionSalesPromotionSummary = {
   docs: number;
   revenue: number;
   publicUrl: string | null;
-  segments: Array<"tile" | "plumbing">;
+  segments: PromotionSalesSegment[];
 };
 
 export type PromotionSalesDataset = {

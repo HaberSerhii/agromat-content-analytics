@@ -8,10 +8,11 @@ import type {
   PromotionSalesProductSummary,
   PromotionSalesPromotionSummary,
 } from "@/lib/promotion-sales-types";
+import { PROMOTION_SALES_SEGMENTS, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
 export type PromotionPerformanceView = "overview" | "promotions" | "brands" | "categories";
-type Segment = "all" | "tile" | "plumbing";
+type Segment = "all" | PromotionSalesSegment;
 
 const numberFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
 const moneyFmt = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 0 });
@@ -47,12 +48,12 @@ function fmtDate(value: string | null) {
 }
 
 function segmentBucket(day: PromotionSalesDailySummary, segment: Segment) {
-  return segment === "tile" ? day.tile : segment === "plumbing" ? day.plumbing : day.total;
+  return segment === "all" ? day.total : day[segment];
 }
 
 function SegmentControl({ value, onChange }: { value: Segment; onChange: (value: Segment) => void }) {
-  return <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f2f5f7] p-0.5">
-    {([['all', 'Усі'], ['tile', 'Плитка'], ['plumbing', 'Сантехніка']] as Array<[Segment, string]>).map(([key, label]) => <button key={key} type="button" onClick={() => onChange(key)} className={`rounded-md px-3 py-2 text-[10px] font-black transition ${value === key ? "bg-white text-[#0b6fc2] shadow-sm" : "text-[#68737e]"}`}>{label}</button>)}
+  return <div className="inline-flex flex-wrap gap-0.5 rounded-lg border border-[#d8dde3] bg-[#f2f5f7] p-0.5">
+    {([['all', 'Усі'], ...Object.entries(PROMOTION_SALES_SEGMENTS)] as Array<[Segment, string]>).map(([key, label]) => <button key={key} type="button" onClick={() => onChange(key)} aria-pressed={value === key} className={`rounded-md px-3 py-2 text-[10px] font-black transition ${value === key ? "bg-white text-[#0b6fc2] shadow-sm" : "text-[#68737e]"}`}>{label}</button>)}
   </div>;
 }
 
@@ -118,7 +119,7 @@ function SalesChart({ current, previous, segment }: { current: PromotionSalesDai
 function PromotionTable({ items, query, segment }: { items: PromotionSalesPromotionSummary[]; query: string; segment: Segment }) {
   const visible = items.filter((item) => (!query || `${item.id} ${item.idinc} ${item.name}`.toLowerCase().includes(query.toLowerCase())) && (segment === "all" || item.segments.includes(segment)));
   const maxRevenue = Math.max(1, ...visible.map((item) => item.revenue));
-  return <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[880px] border-collapse"><thead className="bg-[#f7f9fb] text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]"><tr><th className="px-4 py-3 text-left">ID P2</th><th className="px-4 py-3 text-left">Акційна програма</th><th className="px-4 py-3 text-left">Період</th><th className="px-4 py-3 text-right">Товарів</th><th className="px-4 py-3 text-right">Продажів</th><th className="px-4 py-3 text-right">Дохід</th><th className="px-4 py-3 text-left">Внесок</th></tr></thead><tbody>{visible.map((item) => <tr key={item.idinc} className="border-t border-[#edf0f2] hover:bg-[#fbfcfd]"><td className="px-4 py-3 text-xs font-black text-[#118dff]">{item.idinc}<div className="text-[8px] font-semibold text-[#9aa2ab]">ID {item.id}</div></td><td className="max-w-[320px] px-4 py-3"><div className="truncate text-[11px] font-bold text-[#34404c]" title={item.name}>{item.name}</div><div className="mt-1 text-[8px] text-[#8b949e]">{item.segments.map((value) => value === "tile" ? "Плитка" : "Сантехніка").join(" · ") || "Без сегмента"}</div></td><td className="whitespace-nowrap px-4 py-3 text-[10px] text-[#596571]">{fmtDate(item.startDate)} — {fmtDate(item.endDate)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.productCount)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.docs)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</td><td className="w-40 px-4 py-3"><div className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><div className="h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></div></td></tr>)}</tbody></table></div>{!visible.length && <div className="p-12 text-center text-xs text-[#82909d]">Акцій за вибраними умовами не знайдено</div>}</section>;
+  return <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[880px] border-collapse"><thead className="bg-[#f7f9fb] text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]"><tr><th className="px-4 py-3 text-left">ID P2</th><th className="px-4 py-3 text-left">Акційна програма</th><th className="px-4 py-3 text-left">Період</th><th className="px-4 py-3 text-right">Товарів</th><th className="px-4 py-3 text-right">Продажів</th><th className="px-4 py-3 text-right">Дохід</th><th className="px-4 py-3 text-left">Внесок</th></tr></thead><tbody>{visible.map((item) => <tr key={item.idinc} className="border-t border-[#edf0f2] hover:bg-[#fbfcfd]"><td className="px-4 py-3 text-xs font-black text-[#118dff]">{item.idinc}<div className="text-[8px] font-semibold text-[#9aa2ab]">ID {item.id}</div></td><td className="max-w-[320px] px-4 py-3"><div className="truncate text-[11px] font-bold text-[#34404c]" title={item.name}>{item.name}</div><div className="mt-1 text-[8px] text-[#8b949e]">{item.segments.map((value) => PROMOTION_SALES_SEGMENTS[value]).join(" · ") || "Без сегмента"}</div></td><td className="whitespace-nowrap px-4 py-3 text-[10px] text-[#596571]">{fmtDate(item.startDate)} — {fmtDate(item.endDate)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.productCount)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.docs)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</td><td className="w-40 px-4 py-3"><div className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><div className="h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></div></td></tr>)}</tbody></table></div>{!visible.length && <div className="p-12 text-center text-xs text-[#82909d]">Акцій за вибраними умовами не знайдено</div>}</section>;
 }
 
 function DimensionTable({ type, items, from, to, pricePosition }: { type: "brand" | "category"; items: PromotionSalesBucket[]; from: string; to: string; pricePosition: PromotionPricePosition }) {

@@ -1,3 +1,4 @@
+import { promotionSalesSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import { splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
@@ -1968,6 +1969,10 @@ function emptyPromotionSalesDay(date: string): PromotionSalesDailySummary {
     total: { revenue: 0, qty: 0, docs: 0 },
     tile: { revenue: 0, qty: 0, docs: 0 },
     plumbing: { revenue: 0, qty: 0, docs: 0 },
+    chemicals: { revenue: 0, qty: 0, docs: 0 },
+    furniture: { revenue: 0, qty: 0, docs: 0 },
+    power: { revenue: 0, qty: 0, docs: 0 },
+    flooring: { revenue: 0, qty: 0, docs: 0 },
   };
 }
 
@@ -2056,7 +2061,7 @@ export async function readPromotionSalesDataset(input: {
       docs: 0,
       revenue: 0,
       publicUrl: promotion.publicUrl,
-      segmentSet: new Set<"tile" | "plumbing">(),
+      segmentSet: new Set<PromotionSalesSegment>(),
     },
   ]));
   const brands = new Map<string, { revenue: number; products: Set<string> }>();
@@ -2089,9 +2094,10 @@ export async function readPromotionSalesDataset(input: {
     const promotionDocsSeen = new Set<number>();
     let selectedRowRevenue = 0;
     let hasSelectedProduct = false;
-    const selectedRowSegments = new Set<"tile" | "plumbing">();
+    const selectedRowSegments = new Set<PromotionSalesSegment>();
 
-    for (const item of netSalesItems(row)) {
+    // Marketing performance uses original sale amounts; returns do not reduce activity results.
+    for (const item of row.items) {
       const code = parseInt(item.code, 10);
       if (!Number.isFinite(code)) continue;
       const itemRevenue = promotionSalesItemRevenue(item);
@@ -2132,24 +2138,22 @@ export async function readPromotionSalesDataset(input: {
       hasSelectedProduct = true;
       selectedRowRevenue += itemRevenue;
       const saleDay = daily.get(saleDate);
-      const itemSegment = businessSegmentFromText(`${item.category} ${item.name}`)
-        ?? normalizeSalesPlanSegment(row.planGroup);
-      const segmentKey = itemSegment === "Плитка" ? "tile" : itemSegment === "Сантехніка" ? "plumbing" : null;
+      const segmentKey = promotionSalesSegment(item.categoryKey || "");
+      const itemSegment = segmentKey === "tile" ? "Плитка" : segmentKey === "plumbing" ? "Сантехніка" : "Інше";
       if (segmentKey) {
         selectedRowSegments.add(segmentKey);
         for (const membership of selectedMemberships) {
-          promotionSummaries.get(membership.idinc)?.segmentSet.add(segmentKey);
+          if (isPromotionSaleForStatus(status, createdDate, shippedDate, membership, rangeFrom, rangeTo)) {
+            promotionSummaries.get(membership.idinc)?.segmentSet.add(segmentKey);
+          }
         }
       }
       if (saleDay) {
         saleDay.total.revenue += itemRevenue;
         saleDay.total.qty += item.qty;
-        if (itemSegment === "Плитка") {
-          saleDay.tile.revenue += itemRevenue;
-          saleDay.tile.qty += item.qty;
-        } else if (itemSegment === "Сантехніка") {
-          saleDay.plumbing.revenue += itemRevenue;
-          saleDay.plumbing.qty += item.qty;
+        if (segmentKey) {
+          saleDay[segmentKey].revenue += itemRevenue;
+          saleDay[segmentKey].qty += item.qty;
         }
       }
       const productKeyForBucket = item.code || item.name;
@@ -2196,8 +2200,7 @@ export async function readPromotionSalesDataset(input: {
     const saleDay = daily.get(saleDate);
     if (saleDay) {
       saleDay.total.docs += 1;
-      if (selectedRowSegments.has("tile")) saleDay.tile.docs += 1;
-      if (selectedRowSegments.has("plumbing")) saleDay.plumbing.docs += 1;
+      for (const segment of selectedRowSegments) saleDay[segment].docs += 1;
     }
     const state = states.get(status);
     if (state) {

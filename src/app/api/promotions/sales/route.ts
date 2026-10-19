@@ -128,7 +128,7 @@ export async function GET(request: Request) {
     const pricePosition = normalizePromotionPricePosition(url.searchParams.get("price_position"));
     const cacheKey = canonicalSearchParams(url.searchParams);
     const { value: json, status } = await getServerResult({
-      namespace: "promotion-sales-json-v3",
+      namespace: "promotion-sales-json-v5",
       key: cacheKey,
       ttlMs: compact && !productsView ? COMPACT_CACHE_TTL_MS : DETAIL_CACHE_TTL_MS,
       maxEntries: 16,
