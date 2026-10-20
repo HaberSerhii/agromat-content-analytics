@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Ga4MarketingTraffic } from "@/components/Ga4MarketingTraffic";
 import { MarketingDailyChart } from "@/components/MarketingDailyChart";
 import type { MarketingDay } from "@/lib/marketing-daily-series";
 import type { PromotionPricePosition } from "@/lib/promotion-price-position";
@@ -116,6 +117,8 @@ export function PromotionMarketingDashboard({ pricePosition = "all" }: { pricePo
       {loading && <div className="mt-2 text-[11px] font-semibold" style={{ color: "#118dff" }}>Оновлення кампаній…</div>}
       {error && <div className="mt-2 text-[11px] font-semibold" style={{ color: "#b91c1c" }}>{error}</div>}
     </section>
+
+    <Ga4MarketingTraffic from={from} to={to} />
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <MetricCard label="Транзакції" value={numberFmt.format(summary?.total ?? 0)} hint="фактичні замовлення із сайту" />

@@ -16,7 +16,7 @@ type KpiFilter = PromotionsKpiFilter;
 
 const PROMOTION_VIEWS: Array<{ id: Exclude<Section, "catalog">; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "Продажі та динаміка" },
-  { id: "marketing", label: "Маркетингові кампанії", hint: "UTM та замовлення" },
+  { id: "marketing", label: "Маркетингові кампанії", hint: "GA4, UTM та замовлення" },
   { id: "p2", label: "Акції P2", hint: "Прогрес програм" },
   { id: "brands", label: "Бренди", hint: "Акційні продажі" },
   { id: "categories", label: "Категорії", hint: "Структура продажів" },
@@ -25,7 +25,7 @@ const PROMOTION_VIEWS: Array<{ id: Exclude<Section, "catalog">; label: string; h
 
 const PROMOTION_VIEW_DESCRIPTIONS: Record<Exclude<Section, "catalog">, string> = {
   overview: "Ключові показники акцій, динаміка продажів та порівняння з минулим роком.",
-  marketing: "Ефективність UTM-кампаній і фактичні замовлення, що надійшли із сайту.",
+  marketing: "Канали, джерела та кампанії GA4 і фактичні замовлення, що надійшли із сайту.",
   p2: "Прогрес кожної акційної програми P2 за товарами, продажами та періодом.",
   brands: "Внесок брендів в акційний дохід із деталізацією до товару.",
   categories: "Акційний дохід за категоріями з деталізацією до товару.",
