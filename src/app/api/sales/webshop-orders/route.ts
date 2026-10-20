@@ -1,3 +1,7 @@
+import { validateGa4Dates } from "@/lib/ga4-marketing-report";
+import { isDashboardRequest } from "@/lib/dashboard-auth";
+import { readGa4OrderTransactions } from "@/lib/ga4-order-transactions";
+import { attributeOrder, transactionIndex, matchesMarketing, marketingOrderGroups, type MarketingAttribution } from "@/lib/order-marketing-attribution";
 import { isSalesPlanService } from "@/lib/sales-plan-items";
 import { matchesOrderOrigin, summarizeOrderOrigins, type OrderOrigin } from "@/lib/orders-origin";
 import { marketingDailySeries } from "@/lib/marketing-daily-series";
@@ -24,6 +28,7 @@ export const dynamic = "force-dynamic";
 
 type ApiOrder = {
   origin?: OrderOrigin | null;
+  marketing?: MarketingAttribution;
   id: number;
   order_num: number | string | null;
   order_doc_id: number | string | null;
@@ -311,6 +316,32 @@ export async function GET(req: Request) {
       });
     }
 
+    const includeMarketing = url.searchParams.get("attribution") === "ga4";
+    if (includeMarketing && !isDashboardRequest(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (includeMarketing) {
+      try { validateGa4Dates(dateFrom, dateTo); }
+      catch (error) { return NextResponse.json({error: (error as Error).message}, {status: 400}); }
+    }
+    const trafficChannel = includeMarketing ? url.searchParams.get("traffic_channel") || "" : "";
+    const trafficMedium = includeMarketing ? url.searchParams.get("traffic_medium") || "" : "";
+    let attributionMeta: { availability: "ready" | "unavailable"; fetchedAt?: string; limited?: boolean; notice?: string } | undefined;
+    let ga4Index = transactionIndex([]);
+    if (includeMarketing) {
+      try {
+        const report = await readGa4OrderTransactions(dateFrom, dateTo);
+        ga4Index = transactionIndex(report.rows);
+        attributionMeta = {availability: "ready", fetchedAt: report.fetchedAt, limited: report.limited};
+      } catch {
+        attributionMeta = {availability: "unavailable", notice: "GA4 тимчасово недоступний. Показано збережені UTM та походження замовлень; зіставлення GA4 не виконано."};
+      }
+    }
+    const matchesTraffic = (order: ApiOrder, source: string, campaign: string, channel = trafficChannel) => includeMarketing
+      ? matchesMarketing(order, source, campaign, channel, trafficMedium)
+      : matchesUtm(order, source, campaign);
+    const trafficOptions = (orders: ApiOrder[], field: "utm_source" | "utm_campaign") => utmOptions(includeMarketing ? orders.map(order => ({source: {
+      utm_source: order.marketing?.source === "(not set)" ? null : order.marketing?.source,
+      utm_campaign: order.marketing?.campaign === "(not set)" ? null : order.marketing?.campaign,
+    }})) : orders, field);
     const originSource = url.searchParams.get("origin_source") || "all";
     const requestedPayment = url.searchParams.get("payment");
     const payment: PaymentFilter = isPaymentFilter(requestedPayment) ? requestedPayment : "all";
@@ -356,7 +387,7 @@ export async function GET(req: Request) {
           positionedPromotionCodes as ReadonlySet<number>,
         ))
         .filter((order): order is ApiOrder => order != null);
-    const allOrders = originOrders.filter((order) => matchesOrderOrigin(order, originSource));
+    const allOrders = originOrders.filter((order) => matchesOrderOrigin(order, originSource)).map(order => includeMarketing ? attributeOrder(order, ga4Index) : order);
     const mapping = process.env.LIQPAY_ORDER_ID_FIELD;
     const paymentIndex = indexOrderPayments(onlinePayments.payments);
     for (const order of allOrders) {
@@ -368,10 +399,10 @@ export async function GET(req: Request) {
       && (orderStatus === "all" || fulfillmentStatus(order) === orderStatus)
     ));
     const utm = {
-      sources: utmOptions(facetOrders.filter((order) => matchesUtm(order, "", utmCampaign)), "utm_source"),
-      campaigns: utmOptions(facetOrders.filter((order) => matchesUtm(order, utmSource, "")), "utm_campaign"),
+      sources: trafficOptions(facetOrders.filter((order) => matchesTraffic(order, "", utmCampaign)), "utm_source"),
+      campaigns: trafficOptions(facetOrders.filter((order) => matchesTraffic(order, utmSource, "")), "utm_campaign"),
     };
-    const enrichedOrders = allOrders.filter((order) => matchesUtm(order, utmSource, utmCampaign));
+    const enrichedOrders = allOrders.filter((order) => matchesTraffic(order, utmSource, utmCampaign));
     const paymentStateFilter = url.searchParams.get("payment_state") || "all";
     const paymentScopeOrders = enrichedOrders.filter((order) => (
       (payment === "all" || paymentCategory(order) === payment)
@@ -414,12 +445,25 @@ export async function GET(req: Request) {
         mappingConfigured: true,
       },
       origins: summarizeOrderOrigins(originOrders.filter((order) =>
-        matchesUtm(order, utmSource, utmCampaign)
+        matchesTraffic(order, utmSource, utmCampaign)
         && (payment === "all" || paymentCategory(order) === payment)
         && (delivery === "all" || order.delivery?.type === delivery)
         && (orderStatus === "all" || fulfillmentStatus(order) === orderStatus)
       )),
       utm,
+      ...(includeMarketing ? {
+        marketing: {
+          ...attributionMeta,
+          total: filteredOrders.length,
+          matched: filteredOrders.filter(order => order.marketing?.method === "ga4").length,
+          utmOnly: filteredOrders.filter(order => order.marketing?.method === "utm").length,
+          marketplace: filteredOrders.filter(order => order.marketing?.method === "marketplace").length,
+          unknown: filteredOrders.filter(order => order.marketing?.method === "unknown").length,
+          ambiguous: filteredOrders.filter(order => order.marketing?.reason === "ambiguous").length,
+          channels: [...new Set(facetOrders.filter(order => matchesTraffic(order, utmSource, utmCampaign, "")).map(order => order.marketing?.channel || ""))].filter(Boolean).sort(),
+          groups: marketingOrderGroups(filteredOrders),
+        },
+      } : {}),
     }, {
       headers: {
         "Cache-Control": "private, no-store",
