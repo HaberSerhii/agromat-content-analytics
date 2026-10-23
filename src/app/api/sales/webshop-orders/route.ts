@@ -1,3 +1,5 @@
+import { readAllLite } from "@/lib/products-store";
+import { webshopCategoryRevenue } from "@/lib/webshop-category-revenue";
 import { validateGa4Dates } from "@/lib/ga4-marketing-report";
 import { isDashboardRequest } from "@/lib/dashboard-auth";
 import { readGa4OrderTransactions } from "@/lib/ga4-order-transactions";
@@ -8,6 +10,7 @@ import { marketingDailySeries } from "@/lib/marketing-daily-series";
 import { NextResponse } from "next/server";
 import { getServerResult, peekServerResult } from "@/lib/server-result-cache";
 import {
+  readSalesProductCategoryLookup,
   readSalesWebshopManagerLookup,
   readSalesWebshopReturnLookup,
   type SalesWebshopReturnInfo,
@@ -427,6 +430,7 @@ export async function GET(req: Request) {
     summary.deliveryTypes = summarizeOrders(deliveryFacet).deliveryTypes;
     summary.statuses = summarizeOrders(statusFacet).statuses;
     summary.statusesTotal = statusFacet.length;
+    const categoryRevenue = await Promise.all([readAllLite(), readSalesProductCategoryLookup()]).then(([products, categories]) => webshopCategoryRevenue(filteredOrders, products, categories)).catch(() => null);
     const totalPages = Math.max(1, Math.ceil(filteredOrders.length / DETAIL_PAGE_SIZE));
     const effectivePage = Math.min(page, totalPages);
     const start = (effectivePage - 1) * DETAIL_PAGE_SIZE;
@@ -434,7 +438,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       data: filteredOrders.slice(start, start + DETAIL_PAGE_SIZE),
       meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: Boolean(p2Result) },
-      summary,
+      summary: { ...summary, categoryRevenue },
       daily: marketingDailySeries(filteredOrders, dateFrom, dateTo),
       onlinePayments: {
         ...onlinePayments,

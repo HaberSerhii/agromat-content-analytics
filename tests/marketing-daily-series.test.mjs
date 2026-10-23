@@ -33,7 +33,8 @@ test("orders API daily series follows campaign filtering and is independent of r
  }, mocks: {
   "next/server": {NextResponse: {json: body => ({body})}},
   "@/lib/server-result-cache": {peekServerResult: () => null, getServerResult: async ({load}) => ({value: await load()})},
-  "@/lib/sales-s3": {readSalesWebshopReturnLookup: async () => new Map(), readSalesWebshopManagerLookup: async () => new Map()},
+  "@/lib/products-store": { readAllLite: async () => [] },
+    "@/lib/sales-s3": { readSalesProductCategoryLookup: async () => new Map(),readSalesWebshopReturnLookup: async () => new Map(), readSalesWebshopManagerLookup: async () => new Map()},
   "@/lib/promotion-price-position": {normalizePromotionPricePosition: () => "all"},
   "@/lib/liqpay": {readOnlinePayments: async () => ({availability: "ready", payments: []})},
  }})("@/app/api/sales/webshop-orders/route");

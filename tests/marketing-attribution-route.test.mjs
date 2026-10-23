@@ -11,7 +11,8 @@ function loadRoute({unavailable=false,authorized=true}={}) {
   "@/lib/dashboard-auth":{isDashboardRequest:()=>authorized},
   "@/lib/ga4-order-transactions":{readGa4OrderTransactions:async()=>{ga4Calls++;if(unavailable)throw Error("token=must-not-leak");return {rows:Array.from({length:60},(_,i)=>({transactionId:String(i+1),channel:"Paid Search",source:"google",medium:"cpc",campaign:"brand"})),fetchedAt:"2026-10-03T10:00:00Z",limited:false};}},
   "@/lib/server-result-cache":{peekServerResult:()=>null,getServerResult:async({load})=>({value:await load()})},
-  "@/lib/sales-s3":{readSalesWebshopReturnLookup:async()=>new Map(),readSalesWebshopManagerLookup:async()=>new Map()},
+  "@/lib/products-store":{readAllLite:async()=>[]},
+  "@/lib/sales-s3":{readSalesProductCategoryLookup:async()=>new Map(),readSalesWebshopReturnLookup:async()=>new Map(),readSalesWebshopManagerLookup:async()=>new Map()},
   "@/lib/promotion-price-position":{normalizePromotionPricePosition:()=>"all"},
   "@/lib/liqpay":{readOnlinePayments:async()=>({availability:"ready",payments:[]})},
  }})("@/app/api/sales/webshop-orders/route").GET;

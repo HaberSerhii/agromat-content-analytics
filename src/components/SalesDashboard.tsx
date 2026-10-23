@@ -317,6 +317,7 @@ type SalesWebshopOrdersDataset = {
     deliveryTypes: Array<{ key: string; docs: number }>;
     statuses: Array<{ key: string; docs: number }>;
     statusesTotal?: number;
+    categoryRevenue?: Array<{ label: string; revenue: number; share: number }> | null;
   };
 };
 
@@ -1310,6 +1311,18 @@ function WebshopOrdersRegister({ originSource, onOriginSourceChange, dataset, pa
           <SalesMetricCard label="СИНХРОНІЗОВАНО З P2" value={fmtPct(summary.syncedPct)} hint={<><span className="block">{fmtNum(summary.synced)} із {fmtNum(summary.basedOn)} замовлень</span><button type="button" aria-pressed={syncFilter === "unsynced"} onClick={() => onSyncFilterChange(syncFilter === "unsynced" ? "all" : "unsynced")} className="mt-1 rounded text-[10px] font-bold text-[#c54848] underline decoration-dotted underline-offset-2 hover:text-[#9b2929] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#176aa8]">Не синхронізовано: {fmtNum(Math.max(0, summary.basedOn - summary.synced))}</button></>} symbol="P2" tone="#20a66a" />
           <SalesMetricCard label="ОБРАЛИ ОНЛАЙН-ОПЛАТУ" value={fmtPct(summary.onlinePaidPct)} hint={`${fmtNum(summary.onlinePaid)} із ${fmtNum(summary.basedOn)} замовлень`} symbol="%" tone="#e39a25" />
         </div>
+        <section className="overflow-hidden rounded-2xl border border-[#dce4ea] bg-white">
+          <div className="border-b border-[#edf0f2] bg-[#f7f9fb] px-5 py-4">
+            <h3 className="text-sm font-black text-[#33404c]">Сума замовлень за категоріями</h3>
+            <p className="mt-1 text-xs text-[#75808b]">За обраний період і фільтри · без доставки та послуг · з урахуванням повернень</p>
+          </div>
+          {summary.categoryRevenue ? <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">{summary.categoryRevenue.map((category, index) => <div key={category.label} className="rounded-xl bg-[#f7f9fb] p-4">
+            <div className="flex items-center justify-between gap-2 text-xs font-bold text-[#687582]"><span>{category.label}</span><span>{fmtPct(category.share)}</span></div>
+            <div className="mt-2 text-xl font-black tabular-nums text-[#202b36]">{fmtMoney(category.revenue)}</div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e5ebf0]"><div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, category.share))}%`, backgroundColor: ["#118dff", "#168b9b", "#805ad5", "#e39a25", "#20a66a", "#8a949e"][index] }} /></div>
+          </div>)}</div> : <p className="p-5 text-sm text-[#75808b]">Дані категорій тимчасово недоступні.</p>}
+          <p className="px-5 pb-4 text-xs text-[#75808b]">Сума змішаних замовлень і повернень розподіляється пропорційно вартості товарів. «Інше» включає товари без визначеної категорії.</p>
+        </section>
         <div className="grid items-start gap-3 xl:grid-cols-3"><DistributionList title="Способи оплати" rows={summary.paymentTypes} label={paymentLabel} selectedKey={paymentFilter === "all" ? undefined : paymentFilter} onSelect={(key) => onPaymentFilterChange(paymentFilter === key ? "all" : key as WebshopPaymentFilter)} /><DistributionList title="Способи доставки" rows={summary.deliveryTypes} label={deliveryLabel} selectedKey={deliveryFilter === "all" ? undefined : deliveryFilter} onSelect={(key) => onDeliveryFilterChange(deliveryFilter === key ? "all" : key as WebshopDeliveryFilter)} /><DistributionList title="Фінальні статуси замовлень P2" rows={summary.statuses} label={(value) => value === "unknown" ? "Не вказано" : value} selectedKey={statusFilter === "all" ? undefined : statusFilter} totalOverride={summary.statusesTotal} onSelect={(key) => onStatusFilterChange(statusFilter === key ? "all" : key)} /></div>
       </>}
 

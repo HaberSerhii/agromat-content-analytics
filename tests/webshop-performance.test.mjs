@@ -49,7 +49,8 @@ test("orders and payments start concurrently; sync and payment filters reuse ups
     },
   }, mocks: {
     "next/server": { NextResponse: { json: (body, init) => ({ body, status: init?.status || 200 }) } },
-    "@/lib/sales-s3": { readSalesWebshopReturnLookup: async () => new Map(), readSalesWebshopManagerLookup: async () => new Map() },
+    "@/lib/products-store": { readAllLite: async () => [] },
+    "@/lib/sales-s3": { readSalesProductCategoryLookup: async () => new Map(), readSalesWebshopReturnLookup: async () => new Map(), readSalesWebshopManagerLookup: async () => new Map() },
     "@/lib/promotion-price-position": { normalizePromotionPricePosition: () => "all" },
     "@/lib/liqpay": { readOnlinePayments: async () => {
       startedPayments = true;
@@ -82,7 +83,8 @@ test("slow P2 never blocks the registry; completed P2 updates status filters", a
     },
   }, mocks: {
     "next/server": { NextResponse: { json: (body, init) => ({ body, status: init?.status || 200 }) } },
-    "@/lib/sales-s3": { readSalesWebshopReturnLookup: async () => new Map(), readSalesWebshopManagerLookup: async () => new Map() },
+    "@/lib/products-store": { readAllLite: async () => [] },
+    "@/lib/sales-s3": { readSalesProductCategoryLookup: async () => new Map(), readSalesWebshopReturnLookup: async () => new Map(), readSalesWebshopManagerLookup: async () => new Map() },
     "@/lib/promotion-price-position": { normalizePromotionPricePosition: () => "all" },
     "@/lib/liqpay": { readOnlinePayments: async () => ({ availability: "ready", payments: [] }) },
   } })("@/app/api/sales/webshop-orders/route");

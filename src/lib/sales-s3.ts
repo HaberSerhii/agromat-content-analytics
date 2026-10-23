@@ -1726,6 +1726,16 @@ export async function readSalesWebshopOrders(filter?: SalesDateFilter): Promise<
   };
 }
 
+/** ERP classification is authoritative; include all cached documents, regardless of date or shipment. */
+export async function readSalesProductCategoryLookup(): Promise<Map<string, string>> {
+  const { rows } = await readCachedSalesRows();
+  const lookup = new Map<string, string>();
+  for (const row of rows) for (const item of row.items) {
+    if (item.code && item.categoryKey) lookup.set(String(item.code), item.categoryKey);
+  }
+  return lookup;
+}
+
 export async function readSalesWebshopReturnLookup(): Promise<Map<string, SalesWebshopReturnInfo>> {
   const { rows } = await readCachedSalesRows();
   const returns = new Map<string, SalesWebshopReturnInfo>();
