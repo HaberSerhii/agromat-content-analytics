@@ -2,10 +2,10 @@ import { getServerResult } from "@/lib/server-result-cache";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
 import { orderOriginSource, type OrderOrigin } from "@/lib/orders-origin";
 
-export type SalesChannel = "all" | "monomarket" | "rozetka";
+export type SalesChannel = "all" | "site" | "monomarket" | "rozetka";
 
 export function normalizeSalesChannel(value: unknown): SalesChannel {
-  return value === "monomarket" || value === "rozetka" ? value : "all";
+  return value === "site" || value === "monomarket" || value === "rozetka" ? value : "all";
 }
 
 type OriginApiOrder = { id: string | number; origin?: OrderOrigin | null };
@@ -63,10 +63,10 @@ export function filterRozetkaSalesRows<T extends { webshopId: string }>(rows: T[
   return rows.filter((row) => Boolean(row.webshopId) && ids.has(row.webshopId));
 }
 
-export type PromotionSalesChannel = SalesChannel | "site";
+export type PromotionSalesChannel = SalesChannel;
 
 export function normalizePromotionSalesChannel(value: unknown): PromotionSalesChannel {
-  return value === "site" ? "site" : normalizeSalesChannel(value);
+  return normalizeSalesChannel(value);
 }
 
 export async function filterPromotionSalesRows<T extends { webshopId: string; cartNumber: string }>(

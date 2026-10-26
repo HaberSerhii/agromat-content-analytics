@@ -1653,6 +1653,7 @@ async function readCachedSalesRows(): Promise<CachedSalesRows> {
 }
 
 async function scopeRowsToChannel(rows: ParsedSalesRow[], filter?: SalesDateFilter) {
+  if (filter?.channel === "site") return filterPromotionSalesRows(rows, "site");
   if (filter?.channel !== "rozetka") return rows;
   return filterRozetkaSalesRows(rows, await readRozetkaOrderIds());
 }

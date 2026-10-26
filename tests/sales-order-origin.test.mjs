@@ -66,3 +66,39 @@ test("upstream failure fails Rozetka analytics instead of showing all-channel to
   } })("@/lib/sales-order-origin");
   await assert.rejects(origins.readRozetkaOrderIds(), /503/);
 });
+
+test("site sales exclude Monomarket, Rozetka and unattributed ERP orders in totals and product details", async () => {
+  const origins = sourceLoader({ globals: {
+    AbortSignal, process: { env: { AGROMAT_API_KEY: "test" } },
+    fetch: async () => ({ ok: true, json: async () => ({
+      data: [{ id: 22, origin: { source: "rozetka" } }], meta: { total_pages: 1 },
+    }) }),
+  } })("@/lib/sales-order-origin");
+  assert.equal(origins.normalizeSalesChannel("site"), "site");
+  const sales = sourceLoader({ mocks: {
+    "@/lib/products-store": {}, "@/lib/persistent-result-cache": {}, "@aws-sdk/client-s3": {},
+    "@/lib/sales-order-origin": origins,
+  }, append: { "@/lib/sales-s3": "\nexport { parseSalesRows, buildDataset, scopeRowsToChannel, buildDimensionProducts };" } })("@/lib/sales-s3");
+  const rows = sales.parseSalesRows(
+    "docs_ref,number,goods_codes,docs_sum,rows_sums,datecreation,fullyshipped_datetime,state,webshop_id,cart_number\n" +
+    "site,1,101,100,100,2026-10-01,2026-10-02,Повністю відвантажений,11,\n" +
+    "mono,2,102,200,200,2026-10-01,2026-10-02,Повністю відвантажений,12,mono-1\n" +
+    "rozetka,3,103,300,300,2026-10-01,2026-10-02,Повністю відвантажений,22,\n" +
+    "unknown,4,104,400,400,2026-10-01,2026-10-02,Повністю відвантажений,,\n" +
+    "previous,5,105,50,50,2025-10-01,2025-10-02,Повністю відвантажений,15,",
+    new Map(), new Map(),
+  );
+  const filter = { from: "2026-10-01", to: "2026-10-08", channel: "site" };
+  const scoped = await sales.scopeRowsToChannel(rows, filter);
+  const data = sales.buildDataset(scoped, {}, filter, { categoryProducts: false });
+  assert.equal(data.filter.channel, "site");
+  assert.equal(data.summary.shippedRevenue, 100);
+  assert.equal(data.summary.shippedDocs, 1);
+  for (const dimension of ["category", "brand"]) {
+    const products = sales.buildDimensionProducts(scoped, dimension, dimension === "brand" ? "Без бренда" : "Без категорії", filter);
+    assert.equal(products.length, 1);
+    assert.equal(products[0].code, "101");
+  }
+  const previous = sales.buildDataset(scoped, {}, { ...filter, from: "2025-10-01", to: "2025-10-08" }, { categoryProducts: false });
+  assert.equal(previous.summary.shippedRevenue, 50);
+});

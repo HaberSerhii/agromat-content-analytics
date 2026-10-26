@@ -1,5 +1,6 @@
 "use client";
 
+import type { SalesChannel } from "@/lib/sales-order-origin";
 import { orderOriginSource, orderOriginLabel, type OrderOrigin } from "@/lib/orders-origin";
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -323,7 +324,6 @@ type SalesWebshopOrdersDataset = {
 
 type RankingMetric = "goods" | "revenue";
 type DocumentSegment = "Усі" | "Плитка" | "Сантехніка" | "Інше";
-type SalesChannel = "all" | "monomarket" | "rozetka";
 
 type SalesDashboardView = "checkout" | "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
 type WebshopSyncFilter = "all" | "synced" | "unsynced";
@@ -2027,9 +2027,10 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               <div className="flex flex-wrap items-end gap-2">
                 {supportsSalesChannel && <div className="min-w-[250px]">
                   <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Канал продажів</span>
-                  <div className="flex h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5" role="group" aria-label="Канал продажів">
+                  <div className="flex min-h-9 flex-wrap rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5" role="group" aria-label="Канал продажів">
                     {([
                       ["all", "Усі продажі ІМ Агромат"],
+                      ["site", "Сайт Агромат"],
                       ["monomarket", "Мономаркет"],
                       ["rozetka", "Розетка"],
                     ] as const).map(([channel, label]) => (
@@ -2038,7 +2039,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                         type="button"
                         aria-pressed={salesChannel === channel}
                         onClick={() => setSalesChannel(channel)}
-                        className="rounded-md px-3 text-[10px] font-bold transition"
+                        className="min-h-8 rounded-md px-3 text-[10px] font-bold transition"
                         style={{
                           background: salesChannel === channel ? "#118dff" : "transparent",
                           color: salesChannel === channel ? "#fff" : "#586572",
@@ -2076,7 +2077,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                   <span className="flex h-4 w-4 items-center justify-center rounded border text-[9px]" style={{ borderColor: compareWithPreviousYear ? "#118dff" : "#aeb7c0", background: compareWithPreviousYear ? "#118dff" : "#fff", color: "#fff" }}>{compareWithPreviousYear ? "✓" : ""}</span>
                   Порівняти з минулим роком
                 </button>}
-                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{view === "webshop" || view === "checkout" ? `${dateFrom} — ${dateTo}` : data.filter.label}{supportsSalesChannel ? ` · ${salesChannel === "rozetka" ? "Розетка" : salesChannel === "monomarket" ? "Мономаркет" : "усі продажі ІМ Агромат"}` : ""}</b></div>
+                <div className="ml-auto pb-2 text-[10px] text-[#7f8993]">Обрано: <b className="text-[#33404c]">{view === "webshop" || view === "checkout" ? `${dateFrom} — ${dateTo}` : data.filter.label}{supportsSalesChannel ? ` · ${salesChannel === "site" ? "Сайт Агромат" : salesChannel === "rozetka" ? "Розетка" : salesChannel === "monomarket" ? "Мономаркет" : "усі продажі ІМ Агромат"}` : ""}</b></div>
               </div>
             </section>
 
