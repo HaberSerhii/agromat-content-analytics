@@ -62,3 +62,19 @@ export async function readRozetkaOrderIds(): Promise<ReadonlySet<string>> {
 export function filterRozetkaSalesRows<T extends { webshopId: string }>(rows: T[], ids: ReadonlySet<string>): T[] {
   return rows.filter((row) => Boolean(row.webshopId) && ids.has(row.webshopId));
 }
+
+export type PromotionSalesChannel = SalesChannel | "site";
+
+export function normalizePromotionSalesChannel(value: unknown): PromotionSalesChannel {
+  return value === "site" ? "site" : normalizeSalesChannel(value);
+}
+
+export async function filterPromotionSalesRows<T extends { webshopId: string; cartNumber: string }>(
+  rows: T[], channel: PromotionSalesChannel,
+): Promise<T[]> {
+  if (channel === "all") return rows;
+  if (channel === "monomarket") return rows.filter((row) => Boolean(row.cartNumber));
+  const rozetkaIds = await readRozetkaOrderIds();
+  if (channel === "rozetka") return filterRozetkaSalesRows(rows, rozetkaIds);
+  return rows.filter((row) => Boolean(row.webshopId) && !row.cartNumber && !rozetkaIds.has(row.webshopId));
+}

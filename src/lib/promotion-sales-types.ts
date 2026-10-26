@@ -64,6 +64,7 @@ export type PromotionSalesPromotionSummary = {
 
 export type PromotionSalesDataset = {
   filter: {
+    channel?: import("./sales-order-origin").PromotionSalesChannel;
     from: string;
     to: string;
     selectedPromotionIdincs: number[];

@@ -12,6 +12,8 @@ import type {
 import { PROMOTION_SALES_SEGMENTS, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
+import type { PromotionSalesChannel } from "@/lib/sales-order-origin";
+
 export type PromotionPerformanceView = "overview" | "promotions" | "brands" | "categories";
 type Segment = "all" | PromotionSalesSegment;
 
@@ -58,7 +60,7 @@ function SegmentControl({ value, onChange }: { value: Segment; onChange: (value:
   </div>;
 }
 
-function DateToolbar({ from, to, onFrom, onTo }: { from: string; to: string; onFrom: (value: string) => void; onTo: (value: string) => void }) {
+function DateToolbar({ from, to, onFrom, onTo, channel, onChannel }: { from: string; to: string; onFrom: (value: string) => void; onTo: (value: string) => void; channel: PromotionSalesChannel; onChannel: (value: PromotionSalesChannel) => void }) {
   const setDay = (value: string) => { onFrom(value); onTo(value); };
   const currentMonth = () => { const range = monthRange(); onFrom(range.from); onTo(range.to); };
   const shiftMonth = (direction: number) => {
@@ -73,6 +75,12 @@ function DateToolbar({ from, to, onFrom, onTo }: { from: string; to: string; onF
   const today = isoDate(new Date());
   return <section className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
     <div className="flex flex-wrap items-end gap-2">
+      <label className="w-full sm:w-auto sm:min-w-[190px]"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Канал продажів</span><select value={channel} onChange={(event) => onChannel(event.target.value as PromotionSalesChannel)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]">
+        <option value="all">Всі канали продаж</option>
+        <option value="site">Сайт Агромат</option>
+        <option value="monomarket">Мономаркет</option>
+        <option value="rozetka">Розетка</option>
+      </select></label>
       <button type="button" aria-label="Попередній місяць" onClick={() => shiftMonth(-1)} className="h-9 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-sm font-black text-[#586572]">←</button>
       <label className="min-w-[145px] flex-1 sm:max-w-[190px]"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата від</span><input type="date" value={from} max={to} onChange={(event) => onFrom(event.target.value)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none" /></label>
       <label className="min-w-[145px] flex-1 sm:max-w-[190px]"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Дата до</span><input type="date" value={to} min={from} onChange={(event) => onTo(event.target.value)} className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none" /></label>
@@ -123,7 +131,7 @@ function PromotionTable({ items, query, segment }: { items: PromotionSalesPromot
   return <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[880px] border-collapse"><thead className="bg-[#f7f9fb] text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]"><tr><th className="px-4 py-3 text-left">ID P2</th><th className="px-4 py-3 text-left">Акційна програма</th><th className="px-4 py-3 text-left">Період</th><th className="px-4 py-3 text-right">Товарів</th><th className="px-4 py-3 text-right">Продажів</th><th className="px-4 py-3 text-right">Дохід</th><th className="px-4 py-3 text-left">Внесок</th></tr></thead><tbody>{visible.map((item) => <tr key={item.idinc} className="border-t border-[#edf0f2] hover:bg-[#fbfcfd]"><td className="px-4 py-3 text-xs font-black text-[#118dff]">{item.idinc}<div className="text-[8px] font-semibold text-[#9aa2ab]">ID {item.id}</div></td><td className="max-w-[320px] px-4 py-3"><div className="truncate text-[11px] font-bold text-[#34404c]" title={item.name}>{item.name}</div><div className="mt-1 text-[8px] text-[#8b949e]">{item.segments.map((value) => PROMOTION_SALES_SEGMENTS[value]).join(" · ") || "Без сегмента"}</div></td><td className="whitespace-nowrap px-4 py-3 text-[10px] text-[#596571]">{fmtDate(item.startDate)} — {fmtDate(item.endDate)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.productCount)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.docs)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</td><td className="w-40 px-4 py-3"><div className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><div className="h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></div></td></tr>)}</tbody></table></div>{!visible.length && <div className="p-12 text-center text-xs text-[#82909d]">Акцій за вибраними умовами не знайдено</div>}</section>;
 }
 
-function DimensionTable({ type, items, from, to, pricePosition }: { type: "brand" | "category"; items: PromotionSalesBucket[]; from: string; to: string; pricePosition: PromotionPricePosition }) {
+function DimensionTable({ type, items, from, to, pricePosition, channel }: { type: "brand" | "category"; items: PromotionSalesBucket[]; from: string; to: string; pricePosition: PromotionPricePosition; channel: PromotionSalesChannel }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [products, setProducts] = useState<PromotionSalesProductSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -132,13 +140,13 @@ function DimensionTable({ type, items, from, to, pricePosition }: { type: "brand
     if (!expanded) { setProducts([]); return; }
     const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/promotions/sales?${new URLSearchParams({ from, to, view: "products", price_position: pricePosition })}`, { signal: controller.signal })
+    fetch(`/api/promotions/sales?${new URLSearchParams({ from, to, view: "products", price_position: pricePosition, channel })}`, { signal: controller.signal })
       .then((response) => response.json() as Promise<{ products: PromotionSalesProductSummary[] }>)
       .then((payload) => setProducts(payload.products.filter((product) => type === "brand" ? product.brand === expanded : product.category === expanded)))
       .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setProducts([]); })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [expanded, from, pricePosition, to, type]);
+  }, [expanded, from, pricePosition, to, type, channel]);
   return <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm"><div className="border-b border-[#e5e8eb] px-5 py-4"><h2 className="text-sm font-black text-[#26313d]">{type === "brand" ? "Акційний брендовий аналіз" : "Акційний категорійний аналіз"}</h2><p className="mt-1 text-[10px] text-[#8a939c]">Натисніть на рядок, щоб побачити товари</p></div><div>{items.map((item) => <div key={item.label} className="border-b border-[#edf0f2] last:border-0"><button type="button" onClick={() => setExpanded((value) => value === item.label ? null : item.label)} className="grid w-full items-center gap-3 px-5 py-3 text-left hover:bg-[#fbfcfd] sm:grid-cols-[minmax(180px,1fr)_110px_150px_1fr_24px]"><b className="truncate text-[11px] text-[#34404c]">{item.label}</b><span className="text-right text-[10px] font-bold text-[#68737e]">{numberFmt.format(item.productCount)} товарів</span><span className="text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</span><span className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><span className="block h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></span><span className="text-center font-black text-[#118dff]">{expanded === item.label ? "−" : "+"}</span></button>{expanded === item.label && <div className="bg-[#f7f9fb] px-5 py-3">{loading ? <div className="py-4 text-center text-[10px] text-[#7f8993]">Завантаження товарів…</div> : <div className="grid gap-2">{products.map((product) => <a key={`${product.code}-${product.name}`} href={product.url} target="_blank" rel="noreferrer" className="grid gap-2 rounded-lg border border-[#dfe4ea] bg-white px-3 py-2 no-underline sm:grid-cols-[90px_1fr_90px_140px]"><b className="text-[10px] text-[#118dff]">{product.code}</b><span className="truncate text-[10px] font-semibold text-[#45515d]">{product.name}</span><span className="text-right text-[10px] text-[#68737e]">{numberFmt.format(product.qty)} шт.</span><b className="text-right text-[10px] text-[#087a55]">{fmtMoney(product.revenue)}</b></a>)}</div>}</div>}</div>)}</div></section>;
 }
 
@@ -147,6 +155,7 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [segment, setSegment] = useState<Segment>("all");
+  const [channel, setChannel] = useState<PromotionSalesChannel>("all");
   const [query, setQuery] = useState("");
   const [data, setData] = useState<PromotionSalesDataset | null>(null);
   const [previous, setPrevious] = useState<PromotionSalesDataset | null>(null);
@@ -157,8 +166,8 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
     const controller = new AbortController();
     setLoading(true);
     Promise.all([
-      fetch(`/api/promotions/sales?${new URLSearchParams({ from, to, compact: "1", price_position: pricePosition })}`, { signal: controller.signal }),
-      fetch(`/api/promotions/sales?${new URLSearchParams({ from: shiftYear(from), to: shiftYear(to), compact: "1", price_position: pricePosition })}`, { signal: controller.signal }),
+      fetch(`/api/promotions/sales?${new URLSearchParams({ from, to, compact: "1", price_position: pricePosition, channel })}`, { signal: controller.signal }),
+      fetch(`/api/promotions/sales?${new URLSearchParams({ from: shiftYear(from), to: shiftYear(to), compact: "1", price_position: pricePosition, channel })}`, { signal: controller.signal }),
     ]).then(async ([currentResponse, previousResponse]) => {
       if (!currentResponse.ok) throw new Error((await currentResponse.json()).error || "Не вдалося завантажити акційні продажі");
       setData(await currentResponse.json() as PromotionSalesDataset);
@@ -166,21 +175,23 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
       setError("");
     }).catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Помилка завантаження"); }).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [from, pricePosition, to]);
+  }, [from, pricePosition, to, channel]);
 
-  if (loading && !data) return <div className="rounded-2xl border border-[#dfe4ea] bg-white px-6 py-20 text-center text-xs font-bold text-[#7f8993]">Завантаження нового дашборда…</div>;
-  if (!data) return <div className="rounded-2xl border border-[#f0b6b6] bg-[#fff1f1] p-5 text-xs font-bold text-[#b73535]">{error || "Дані недоступні"}</div>;
+  const toolbar = <DateToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} channel={channel} onChannel={setChannel} />;
+  if (loading || !data || data.filter.channel !== channel) return <div className="space-y-4">{toolbar}{loading
+    ? <div role="status" className="rounded-2xl border border-[#dfe4ea] bg-white px-6 py-20 text-center text-xs font-bold text-[#7f8993]">Завантаження продажів…</div>
+    : <div role="alert" className="rounded-2xl border border-[#f0b6b6] bg-[#fff1f1] p-5 text-xs font-bold text-[#b73535]">{error || "Дані недоступні"}</div>}</div>;
   const selectedDaily = data.summary.daily.map((day) => ({ ...day }));
   const revenue = selectedDaily.reduce((sum, day) => sum + segmentBucket(day, segment).revenue, 0);
   const qty = selectedDaily.reduce((sum, day) => sum + segmentBucket(day, segment).qty, 0);
   const docs = selectedDaily.reduce((sum, day) => sum + segmentBucket(day, segment).docs, 0);
 
   return <div className="space-y-4">
-    <DateToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} />
+    {toolbar}
     {view === "overview" && <><div className="flex justify-end"><SegmentControl value={segment} onChange={setSegment} /></div><div className="grid gap-3 md:grid-cols-3"><PromotionInventoryCards date={to} segment={segment} pricePosition={pricePosition} /><Kpi eyebrow="Продажі акційних товарів" value={fmtMoney(revenue)} meta={`${numberFmt.format(qty)} шт. · ${numberFmt.format(docs)} замовлень`} color="#0f9d72" /></div><SalesChart current={selectedDaily} previous={previous?.summary.daily ?? []} segment={segment} /></>}
     {view === "promotions" && <><section className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm"><div className="flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Пошук акції</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID або назва акційної програми" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none" /></label><SegmentControl value={segment} onChange={setSegment} /></div></section><PromotionTable items={data.summary.promotions} query={query} segment={segment} /></>}
-    {view === "brands" && <DimensionTable type="brand" items={data.summary.brands} from={from} to={to} pricePosition={pricePosition} />}
-    {view === "categories" && <DimensionTable type="category" items={data.summary.categories} from={from} to={to} pricePosition={pricePosition} />}
+    {view === "brands" && <DimensionTable type="brand" items={data.summary.brands} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
+    {view === "categories" && <DimensionTable type="category" items={data.summary.categories} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
     {error && <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
   </div>;
 }

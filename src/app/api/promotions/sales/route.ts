@@ -15,6 +15,8 @@ import {
   readPricePositionCodes,
 } from "@/lib/promotion-price-position";
 
+import { normalizePromotionSalesChannel } from "@/lib/sales-order-origin";
+
 export const dynamic = "force-dynamic";
 
 const COMPACT_CACHE_TTL_MS = 20 * 60_000;
@@ -126,9 +128,10 @@ export async function GET(request: Request) {
     const compact = url.searchParams.get("compact") === "1";
     const productsView = url.searchParams.get("view") === "products";
     const pricePosition = normalizePromotionPricePosition(url.searchParams.get("price_position"));
+    const channel = normalizePromotionSalesChannel(url.searchParams.get("channel"));
     const cacheKey = canonicalSearchParams(url.searchParams);
     const { value: json, status } = await getServerResult({
-      namespace: "promotion-sales-json-v5",
+      namespace: "promotion-sales-json-v6",
       key: cacheKey,
       ttlMs: compact && !productsView ? COMPACT_CACHE_TTL_MS : DETAIL_CACHE_TTL_MS,
       maxEntries: 16,
@@ -151,6 +154,7 @@ export async function GET(request: Request) {
         const dataset = await readPromotionSalesDataset({
           from,
           to,
+          channel,
           selectedPromotionIdincs,
           promotions,
           publicPromotionGroups,

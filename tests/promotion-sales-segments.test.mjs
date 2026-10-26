@@ -16,6 +16,12 @@ test('promotions use the same six category branches as sales analysis', () => {
 });
 
 function loadDataset(rows) {
+  const origins = sourceLoader({ globals: {
+    AbortSignal, process: { env: { AGROMAT_API_KEY: 'test' } },
+    fetch: async () => ({ ok: true, json: async () => ({
+      data: [{ id: 22, origin: { source: 'rozetka' } }], meta: { total_pages: 1 },
+    }) }),
+  } })('@/lib/sales-order-origin');
   return sourceLoader({
     sources: {
       '@/lib/sales-s3': fs.readFileSync('src/lib/sales-s3.ts', 'utf8')
@@ -24,7 +30,7 @@ function loadDataset(rows) {
     },
     globals: { fixtureRows: rows },
     mocks: {
-      '@/lib/sales-order-origin': {},
+      '@/lib/sales-order-origin': origins,
       '@/lib/persistent-result-cache': {},
       '@/lib/products-store': {},
     },
@@ -102,4 +108,27 @@ test('unsold catalogue goods use explicit category roots and never default to pl
   assert.equal(promotionCatalogSegment('Джерела живлення > Зарядні станції', 'Станція'), 'power');
   assert.equal(promotionCatalogSegment('Підлогові покриття / Ламінат', 'Ламінат'), 'flooring');
   assert.equal(promotionCatalogSegment('', 'Послуги'), null);
+});
+
+
+test('promotion channels scope all sales breakdowns and retain the same reporting dates', async () => {
+  const read = loadDataset([
+    { ...base, webshopId: '11', cartNumber: '', items: [item(1, '001', 100)] },
+    { ...base, docsRef: '2', number: '2', webshopId: '', cartNumber: 'mono-1', items: [item(1, '001', 200)] },
+    { ...base, docsRef: '3', number: '3', webshopId: '22', cartNumber: '', items: [item(1, '001', 300)] },
+    { ...base, docsRef: '4', number: '4', webshopId: '', cartNumber: '', items: [item(1, '001', 400)] },
+  ]);
+  for (const [channel, revenue, docs] of [['all', 1000, 4], ['site', 100, 1], ['monomarket', 200, 1], ['rozetka', 300, 1]]) {
+    const result = await read({ from: '2025-10-01', to: '2025-10-03', promotions, publicPromotionGroups: [], channel });
+    assert.equal(result.filter.channel, channel);
+    assert.equal(result.summary.revenue, revenue, channel);
+    assert.equal(result.summary.docs, docs, channel);
+    assert.equal(result.summary.daily.find(day => day.date === '2025-10-02').tile.revenue, revenue);
+    assert.equal(result.summary.products[0].revenue, revenue);
+    assert.equal(result.summary.brands[0].revenue, revenue);
+    assert.equal(result.summary.categories[0].revenue, revenue);
+    assert.equal(result.summary.promotions[0].revenue, revenue);
+    const previous = await read({ from: '2024-10-01', to: '2024-10-03', promotions, publicPromotionGroups: [], channel });
+    assert.equal(previous.summary.revenue, 0);
+  }
 });

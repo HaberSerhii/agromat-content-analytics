@@ -1,6 +1,6 @@
 import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import { splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
-import { normalizeSalesChannel, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
+import { normalizeSalesChannel, filterPromotionSalesRows, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { createHash } from "node:crypto";
@@ -2055,12 +2055,15 @@ export async function readPromotionSalesDataset(input: {
   promotions: PromotionSalesPromotionInput[];
   publicPromotionGroups: PromotionSalesPublicGroup[];
   includeProducts?: boolean;
+  channel?: import("@/lib/sales-order-origin").PromotionSalesChannel;
 }): Promise<PromotionSalesDataset> {
   const { rows } = await readCachedSalesRows();
   const from = normalizeDateFilter(input.from) || input.from;
   const to = normalizeDateFilter(input.to) || input.to;
   const rangeFrom = from <= to ? from : to;
   const rangeTo = from <= to ? to : from;
+  const channel = input.channel ?? "all";
+  const channelRows = channel === "all" ? rows : await filterPromotionSalesRows(rows, channel);
   const dataThrough = promotionSalesDataThrough(rows);
   const dailyRangeTo = dataThrough && dataThrough < rangeTo ? dataThrough : rangeTo;
   const requestedPromotionIds = new Set(input.selectedPromotionIdincs ?? []);
@@ -2111,7 +2114,7 @@ export async function readPromotionSalesDataset(input: {
   let planRevenue = 0;
   const planSegmentRevenue = new Map<"Плитка" | "Сантехніка", number>();
 
-  for (const row of rows) {
+  for (const row of channelRows) {
     const status = canonicalPromotionSalesStatus(row.state);
     if (!status) continue;
     const createdDate = normalizeShippedDate(row.createdDate);
@@ -2248,6 +2251,7 @@ export async function readPromotionSalesDataset(input: {
 
   return {
     filter: {
+      channel,
       from: rangeFrom,
       to: rangeTo,
       selectedPromotionIdincs: selectedPromotions.length === input.promotions.length
