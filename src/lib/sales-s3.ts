@@ -2063,7 +2063,7 @@ export async function readPromotionSalesDataset(input: {
   const rangeFrom = from <= to ? from : to;
   const rangeTo = from <= to ? to : from;
   const channel = input.channel ?? "all";
-  const channelRows = channel === "all" ? rows : await filterPromotionSalesRows(rows, channel);
+  const channelRows = await filterPromotionSalesRows(rows, channel);
   const dataThrough = promotionSalesDataThrough(rows);
   const dailyRangeTo = dataThrough && dataThrough < rangeTo ? dataThrough : rangeTo;
   const requestedPromotionIds = new Set(input.selectedPromotionIdincs ?? []);

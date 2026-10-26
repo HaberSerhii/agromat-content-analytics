@@ -72,7 +72,8 @@ export function normalizePromotionSalesChannel(value: unknown): PromotionSalesCh
 export async function filterPromotionSalesRows<T extends { webshopId: string; cartNumber: string }>(
   rows: T[], channel: PromotionSalesChannel,
 ): Promise<T[]> {
-  if (channel === "all") return rows;
+  // Unattributed ERP sales do not belong to the three reported sales channels.
+  if (channel === "all") return rows.filter((row) => Boolean(row.webshopId || row.cartNumber));
   if (channel === "monomarket") return rows.filter((row) => Boolean(row.cartNumber));
   const rozetkaIds = await readRozetkaOrderIds();
   if (channel === "rozetka") return filterRozetkaSalesRows(rows, rozetkaIds);

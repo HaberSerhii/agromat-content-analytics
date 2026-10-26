@@ -45,6 +45,7 @@ const items = [item(1, '001', 100, 2), item(2, '002', 200), item(3, '003.023', 3
   item(4, '004', 400), item(5, '020', 500), item(6, '009', 600),
   item(7, '003.023', 50), item(8, '012', 70), item(9, '001', 1000)];
 const base = {
+  webshopId: '11', cartNumber: '',
   createdDate: '2025-10-01', shippedDate: '2025-10-02', state: 'Повністю відвантажений',
   docsRef: '1', number: '1', items, docsSum: 3220, returnSum: 50,
   returnGoodsCodes: ['3'], returnRowSums: [50], planGroup: 'Плитка',
@@ -118,7 +119,7 @@ test('promotion channels scope all sales breakdowns and retain the same reportin
     { ...base, docsRef: '3', number: '3', webshopId: '22', cartNumber: '', items: [item(1, '001', 300)] },
     { ...base, docsRef: '4', number: '4', webshopId: '', cartNumber: '', items: [item(1, '001', 400)] },
   ]);
-  for (const [channel, revenue, docs] of [['all', 1000, 4], ['site', 100, 1], ['monomarket', 200, 1], ['rozetka', 300, 1]]) {
+  for (const [channel, revenue, docs] of [['all', 600, 3], ['site', 100, 1], ['monomarket', 200, 1], ['rozetka', 300, 1]]) {
     const result = await read({ from: '2025-10-01', to: '2025-10-03', promotions, publicPromotionGroups: [], channel });
     assert.equal(result.filter.channel, channel);
     assert.equal(result.summary.revenue, revenue, channel);
