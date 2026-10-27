@@ -72,10 +72,11 @@ export function normalizePromotionSalesChannel(value: unknown): PromotionSalesCh
 export async function filterPromotionSalesRows<T extends { webshopId: string; cartNumber: string }>(
   rows: T[], channel: PromotionSalesChannel,
 ): Promise<T[]> {
-  // Unattributed ERP sales do not belong to the three reported sales channels.
-  if (channel === "all") return rows.filter((row) => Boolean(row.webshopId || row.cartNumber));
+  // Reissued website orders lose webshop_id in ERP. They remain site sales;
+  // explicit Monomarket and Rozetka identifiers take precedence.
+  if (channel === "all") return rows;
   if (channel === "monomarket") return rows.filter((row) => Boolean(row.cartNumber));
   const rozetkaIds = await readRozetkaOrderIds();
   if (channel === "rozetka") return filterRozetkaSalesRows(rows, rozetkaIds);
-  return rows.filter((row) => Boolean(row.webshopId) && !row.cartNumber && !rozetkaIds.has(row.webshopId));
+  return rows.filter((row) => !row.cartNumber && !rozetkaIds.has(row.webshopId));
 }

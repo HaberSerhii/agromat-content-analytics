@@ -238,6 +238,7 @@ export type SalesDataset = {
     shippedDocs: number;
     shippedGoods: number;
     shippedRevenue: number;
+    reissuedSiteSales: { docs: number; revenue: number };
     canceledDocs: number;
     returnedRevenue: number;
     firstShippedDate: string | null;
@@ -1149,6 +1150,7 @@ function buildDataset(
   let shippedDocs = 0;
   let shippedGoods = 0;
   let shippedRevenue = 0;
+  const reissuedSiteSales = { docs: 0, revenue: 0 };
   let canceledDocs = 0;
   let returnedRevenue = 0;
   let filteredDocs = 0;
@@ -1358,6 +1360,10 @@ function buildDataset(
     shippedDocs += 1;
     shippedGoods += row.goodsCount;
     shippedRevenue += getNetRevenue(row);
+    if (!row.webshopId && !row.cartNumber) {
+      reissuedSiteSales.docs += 1;
+      reissuedSiteSales.revenue += getNetRevenue(row);
+    }
     for (const part of splitBusinessSales(netItems, getNetRevenue(row))) {
       addBucket(shippedSegments, part.segment, row, part.revenue, part.goods);
       for (const [label, revenue] of part.remainderCategories) {
@@ -1470,6 +1476,7 @@ function buildDataset(
       shippedDocs,
       shippedGoods,
       shippedRevenue,
+      reissuedSiteSales,
       canceledDocs,
       returnedRevenue,
       firstShippedDate,

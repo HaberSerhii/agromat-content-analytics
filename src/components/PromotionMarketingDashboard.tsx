@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Ga4MarketingTraffic } from "@/components/Ga4MarketingTraffic";
 import { MarketingDailyChart } from "@/components/MarketingDailyChart";
+import { MarketingSiteSales } from "@/components/MarketingSiteSales";
 import type { Ga4MarketingReport } from "@/lib/ga4-marketing-report";
 import type { MarketingAttribution, MarketingOrderGroup } from "@/lib/order-marketing-attribution";
 import type { MarketingDay } from "@/lib/marketing-daily-series";
@@ -134,6 +135,8 @@ export function PromotionMarketingDashboard({ pricePosition = "all" }: { pricePo
       {loading && <div className="mt-2 text-[11px] font-semibold" style={{ color: "#118dff" }}>Оновлення кампаній…</div>}
       {error && <div className="mt-2 text-[11px] font-semibold" style={{ color: "#b91c1c" }}>{error}</div>}
     </section>
+
+    <MarketingSiteSales from={from} to={to} pricePosition={pricePosition} />
 
     <div className="rounded-xl border p-4 text-xs" style={{borderColor: "var(--border)", background: "var(--bg-card)"}}>
       <b>Зіставлення замовлень із каналами</b>

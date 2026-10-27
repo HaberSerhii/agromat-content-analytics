@@ -119,7 +119,7 @@ test('promotion channels scope all sales breakdowns and retain the same reportin
     { ...base, docsRef: '3', number: '3', webshopId: '22', cartNumber: '', items: [item(1, '001', 300)] },
     { ...base, docsRef: '4', number: '4', webshopId: '', cartNumber: '', items: [item(1, '001', 400)] },
   ]);
-  for (const [channel, revenue, docs] of [['all', 600, 3], ['site', 100, 1], ['monomarket', 200, 1], ['rozetka', 300, 1]]) {
+  for (const [channel, revenue, docs] of [['all', 1000, 4], ['site', 500, 2], ['monomarket', 200, 1], ['rozetka', 300, 1]]) {
     const result = await read({ from: '2025-10-01', to: '2025-10-03', promotions, publicPromotionGroups: [], channel });
     assert.equal(result.filter.channel, channel);
     assert.equal(result.summary.revenue, revenue, channel);

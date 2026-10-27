@@ -131,7 +131,7 @@ export async function GET(request: Request) {
     const channel = normalizePromotionSalesChannel(url.searchParams.get("channel"));
     const cacheKey = canonicalSearchParams(url.searchParams);
     const { value: json, status } = await getServerResult({
-      namespace: "promotion-sales-json-v7",
+      namespace: "promotion-sales-json-v8",
       key: cacheKey,
       ttlMs: compact && !productsView ? COMPACT_CACHE_TTL_MS : DETAIL_CACHE_TTL_MS,
       maxEntries: 16,

@@ -24,7 +24,7 @@ async function brandProductsResponse(brand: string, filter: SalesDateFilter) {
       channel: filter.channel || "all",
     });
     const { value: json, status } = await getServerResult({
-      namespace: "sales-brand-products-json-v4",
+      namespace: "sales-brand-products-json-v5",
       key,
       ttlMs: 60_000,
       maxEntries: 32,

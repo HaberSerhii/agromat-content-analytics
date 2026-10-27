@@ -67,7 +67,7 @@ test("upstream failure fails Rozetka analytics instead of showing all-channel to
   await assert.rejects(origins.readRozetkaOrderIds(), /503/);
 });
 
-test("site sales exclude Monomarket, Rozetka and unattributed ERP orders in totals and product details", async () => {
+test("site sales retain reissued ERP orders and exclude Monomarket and Rozetka in totals and product details", async () => {
   const origins = sourceLoader({ globals: {
     AbortSignal, process: { env: { AGROMAT_API_KEY: "test" } },
     fetch: async () => ({ ok: true, json: async () => ({
@@ -92,13 +92,23 @@ test("site sales exclude Monomarket, Rozetka and unattributed ERP orders in tota
   const scoped = await sales.scopeRowsToChannel(rows, filter);
   const data = sales.buildDataset(scoped, {}, filter, { categoryProducts: false });
   assert.equal(data.filter.channel, "site");
-  assert.equal(data.summary.shippedRevenue, 100);
-  assert.equal(data.summary.shippedDocs, 1);
+  assert.equal(data.summary.shippedRevenue, 500);
+  assert.equal(data.summary.shippedDocs, 2);
+  assert.equal(data.summary.reissuedSiteSales.docs, 1);
+  assert.equal(data.summary.reissuedSiteSales.revenue, 400);
   for (const dimension of ["category", "brand"]) {
     const products = sales.buildDimensionProducts(scoped, dimension, dimension === "brand" ? "Без бренда" : "Без категорії", filter);
-    assert.equal(products.length, 1);
-    assert.equal(products[0].code, "101");
+    assert.equal(products.length, 2);
+    assert.deepEqual([...products.map(product => product.code)].sort(), ["101", "104"]);
   }
   const previous = sales.buildDataset(scoped, {}, { ...filter, from: "2025-10-01", to: "2025-10-08" }, { categoryProducts: false });
   assert.equal(previous.summary.shippedRevenue, 50);
+  assert.equal(previous.summary.reissuedSiteSales.docs, 0);
+  const all = await origins.filterPromotionSalesRows(rows, "all");
+  const mono = await origins.filterPromotionSalesRows(rows, "monomarket");
+  const rozetka = await origins.filterPromotionSalesRows(rows, "rozetka");
+  assert.equal(all.length, rows.length);
+  const partitions = [...scoped, ...mono, ...rozetka];
+  assert.equal(partitions.length, all.length);
+  assert.equal(new Set(partitions.map(row => row.docsRef)).size, all.length);
 });
