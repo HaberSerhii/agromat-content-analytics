@@ -1263,26 +1263,12 @@ function DistributionList({ title, rows, label, selectedKey, onSelect, totalOver
   );
 }
 
-function WebshopOrdersRegister({ originSource, onOriginSourceChange, dataset, paymentStateFilter, onPaymentStateChange, loading, error, page, syncFilter, paymentFilter, deliveryFilter, statusFilter, utmSource, utmCampaign, onUtmSourceChange, onUtmCampaignChange, onPageChange, onSyncFilterChange, onPaymentFilterChange, onDeliveryFilterChange, onStatusFilterChange }: { originSource: string; onOriginSourceChange: (value: string) => void; paymentStateFilter: string; onPaymentStateChange: (value: string) => void; dataset: SalesWebshopOrdersDataset | null; loading: boolean; error: string | null; page: number; syncFilter: WebshopSyncFilter; paymentFilter: WebshopPaymentFilter; deliveryFilter: WebshopDeliveryFilter; statusFilter: string; utmSource: string; utmCampaign: string; onUtmSourceChange: (value: string) => void; onUtmCampaignChange: (value: string) => void; onPageChange: (page: number) => void; onSyncFilterChange: (filter: WebshopSyncFilter) => void; onPaymentFilterChange: (filter: WebshopPaymentFilter) => void; onDeliveryFilterChange: (filter: WebshopDeliveryFilter) => void; onStatusFilterChange: (filter: string) => void }) {
-  const [query, setQuery] = useState("");
+function WebshopOrdersRegister({ query, onQueryChange, originSource, onOriginSourceChange, dataset, paymentStateFilter, onPaymentStateChange, loading, error, page, syncFilter, paymentFilter, deliveryFilter, statusFilter, utmSource, utmCampaign, onUtmSourceChange, onUtmCampaignChange, onPageChange, onSyncFilterChange, onPaymentFilterChange, onDeliveryFilterChange, onStatusFilterChange }: { query: string; onQueryChange: (value: string) => void; originSource: string; onOriginSourceChange: (value: string) => void; paymentStateFilter: string; onPaymentStateChange: (value: string) => void; dataset: SalesWebshopOrdersDataset | null; loading: boolean; error: string | null; page: number; syncFilter: WebshopSyncFilter; paymentFilter: WebshopPaymentFilter; deliveryFilter: WebshopDeliveryFilter; statusFilter: string; utmSource: string; utmCampaign: string; onUtmSourceChange: (value: string) => void; onUtmCampaignChange: (value: string) => void; onPageChange: (page: number) => void; onSyncFilterChange: (filter: WebshopSyncFilter) => void; onPaymentFilterChange: (filter: WebshopPaymentFilter) => void; onDeliveryFilterChange: (filter: WebshopDeliveryFilter) => void; onStatusFilterChange: (filter: string) => void }) {
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<{ item: SalesWebshopOrderItem; orderId: number } | null>(null);
   const [orderDetails, setOrderDetails] = useState<Record<number, SalesWebshopOrder>>({});
   const [loadingOrderDetail, setLoadingOrderDetail] = useState<number | null>(null);
-  const normalizedQuery = query.trim().toLocaleLowerCase("uk");
-  const orders = (dataset?.data || []).filter((order) => !normalizedQuery || [
-    order.id,
-    order.order_num,
-    order.order_doc_id,
-    order.origin?.external_order_id,
-    orderOriginLabel(orderOriginSource(order)),
-    customerName(order),
-    order.customer.email,
-    order.customer.phone,
-    order.status,
-    order.erp_manager,
-    ...order.items.flatMap((item) => [item.goods_ref, item.code, item.sku, item.name]),
-  ].some((value) => String(value ?? "").toLocaleLowerCase("uk").includes(normalizedQuery)));
+  const orders = dataset?.data || [];
   const summary = dataset?.summary;
   const toggleOrder = async (order: SalesWebshopOrder) => {
     if (expandedOrder === order.id) {
@@ -1351,7 +1337,7 @@ function WebshopOrdersRegister({ originSource, onOriginSourceChange, dataset, pa
           <div><h2 className="text-sm font-black text-[#26313d]">Детальний реєстр замовлень</h2><p className="mt-1 text-[10px] text-[#8a939c]">Клієнт, оплата, доставка, синхронізація, виконання та склад товарів</p></div>
           <div className="flex w-full flex-wrap items-end justify-end gap-3 sm:w-auto">
             <div><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Синхронізація P2</span><div className="flex h-9 overflow-hidden rounded-lg border border-[#d8dde3] bg-white">{([['all', 'Усі'], ['synced', 'Синхронізовані'], ['unsynced', 'Не синхронізовані']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => onSyncFilterChange(value)} className={`border-l border-[#e5e8eb] px-3 text-[10px] font-bold first:border-l-0 ${syncFilter === value ? "bg-[#176aa8] text-white" : "text-[#586572] hover:bg-[#f4f7f9]"}`}>{label}</button>)}</div></div>
-            <label className="w-full sm:w-[340px]"><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Пошук на цій сторінці</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID, документ, клієнт, телефон, товар…" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" /></label>
+            <label className="w-full sm:w-[340px]"><span className="mb-1 block text-[9px] font-black uppercase tracking-[.1em] text-[#84909b]">Пошук серед усіх замовлень</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="ID, документ, клієнт, телефон, товар…" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none focus:border-[#118dff]" /></label>
           </div>
         </div>
         {loading && !dataset && <div className="px-5 py-14 text-center text-xs text-[#8a939c]">Завантаження замовлень…</div>}
@@ -1529,6 +1515,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [webshopOrders, setWebshopOrders] = useState<SalesWebshopOrdersDataset | null>(null);
   const [webshopOrdersError, setWebshopOrdersError] = useState<string | null>(null);
   const [webshopOrdersLoading, setWebshopOrdersLoading] = useState(false);
+  const [webshopQuery, setWebshopQuery] = useState("");
   const [webshopOrdersPage, setWebshopOrdersPage] = useState(1);
   const [webshopSyncFilter, setWebshopSyncFilter] = useState<WebshopSyncFilter>("all");
   const [webshopPaymentStateFilter, setWebshopPaymentStateFilter] = useState("all");
@@ -1688,6 +1675,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     let alive = true;
     const controller = new AbortController();
     const params = new URLSearchParams({ page: String(webshopOrdersPage), origin_source: webshopOriginSource });
+    if (webshopQuery.trim()) params.set("search", webshopQuery.trim());
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
     if (webshopSyncFilter !== "all") params.set("synced", webshopSyncFilter === "synced" ? "true" : "false");
@@ -1696,7 +1684,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     if (webshopStatusFilter !== "all") params.set("order_status", webshopStatusFilter);
     if (utmSource) params.set("utm_source", utmSource);
     if (utmCampaign) params.set("utm_campaign", utmCampaign);
-    const scopeKey = `${webshopOriginSource}|${dateFrom}|${dateTo}|${webshopSyncFilter}|${webshopPaymentFilter}|${webshopDeliveryFilter}|${webshopStatusFilter}|${utmSource}|${utmCampaign}`;
+    const scopeKey = `${webshopQuery}|${webshopOriginSource}|${dateFrom}|${dateTo}|${webshopSyncFilter}|${webshopPaymentFilter}|${webshopDeliveryFilter}|${webshopStatusFilter}|${utmSource}|${utmCampaign}`;
     if (webshopScopeRef.current !== scopeKey) {
       webshopScopeRef.current = scopeKey;
       setWebshopOrders(null);
@@ -1719,7 +1707,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick, webshopEnrichmentTick]);
+  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopQuery, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick, webshopEnrichmentTick]);
 
   useEffect(() => {
     const category = expandedCategory;
@@ -2146,7 +2134,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
 
             {view === "checkout" && <AbandonedCheckout from={dateFrom} to={dateTo} refreshTick={refreshTick} />}
 
-            {view === "webshop" && <WebshopOrdersRegister originSource={webshopOriginSource} onOriginSourceChange={(value) => { setWebshopOriginSource(value); setWebshopOrdersPage(1); }} paymentStateFilter={webshopPaymentStateFilter} onPaymentStateChange={(value) => { setWebshopPaymentStateFilter(value); setWebshopOrdersPage(1); }} dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} utmSource={utmSource} utmCampaign={utmCampaign} onUtmSourceChange={(value) => { setUtmSource(value); setWebshopOrdersPage(1); }} onUtmCampaignChange={(value) => { setUtmCampaign(value); setWebshopOrdersPage(1); }} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
+            {view === "webshop" && <WebshopOrdersRegister query={webshopQuery} onQueryChange={(value) => { setWebshopQuery(value); setWebshopOrdersPage(1); }} originSource={webshopOriginSource} onOriginSourceChange={(value) => { setWebshopOriginSource(value); setWebshopOrdersPage(1); }} paymentStateFilter={webshopPaymentStateFilter} onPaymentStateChange={(value) => { setWebshopPaymentStateFilter(value); setWebshopOrdersPage(1); }} dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} utmSource={utmSource} utmCampaign={utmCampaign} onUtmSourceChange={(value) => { setUtmSource(value); setWebshopOrdersPage(1); }} onUtmCampaignChange={(value) => { setUtmCampaign(value); setWebshopOrdersPage(1); }} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
 
             {view === "web" && (
               <div className="space-y-4">

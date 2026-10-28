@@ -1,3 +1,4 @@
+import { matchesOrderSearch } from "@/lib/orders-search";
 import { readAllLite } from "@/lib/products-store";
 import { webshopCategoryRevenue } from "@/lib/webshop-category-revenue";
 import { validateGa4Dates } from "@/lib/ga4-marketing-report";
@@ -382,9 +383,11 @@ export async function GET(req: Request) {
     const positionedPromotionCodes = promotionPricePosition === "all"
       ? null
       : await readPromotionalPricePositionCodes(promotionPricePosition, dateFrom, dateTo);
+    const search = url.searchParams.get("search") || "";
+    const searchedOrders = enrichedAllOrders.filter(order => matchesOrderSearch(order, search));
     const originOrders = promotionPricePosition === "all"
-      ? enrichedAllOrders
-      : enrichedAllOrders
+      ? searchedOrders
+      : searchedOrders
         .map((order) => keepOnlyMatchingItems(
           order,
           positionedPromotionCodes as ReadonlySet<number>,
