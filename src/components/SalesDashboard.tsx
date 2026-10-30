@@ -165,6 +165,7 @@ type SalesDataset = {
     months: Array<{ month: string; docs: number; goods: number; revenue: number }>;
     segments: BucketSummary[];
     shippedSegments: BucketSummary[];
+    quantityDataComplete: boolean;
     shippedQuantities: { squareMeters: number; pieces: number };
     otherQuantities: { squareMeters: number; pieces: number };
     otherSalesGroups: Array<{ label: string; revenue: number; goods: number }>;
@@ -1944,7 +1945,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     : comparisonLoading ? "Завантаження порівняння…"
     : !comparisonData ? "Немає даних для порівняння"
     : yearComparisonHint(current, previous, fmtMoney);
-  const volume = (current: { squareMeters?: number; pieces?: number }, previous?: { squareMeters?: number; pieces?: number }) => <SalesVolume current={current} previous={previous} compare={compareWithPreviousYear} loading={comparisonLoading} available={!!comparisonData} />;
+  const volume = (current: { squareMeters?: number; pieces?: number }, previous?: { squareMeters?: number; pieces?: number }) => !data.summary.quantityDataComplete ? <div className="text-[10px] text-[#8a939c]">Обсяг: немає кількості у вивантаженні ERP</div> : <SalesVolume current={current} previous={previous} compare={compareWithPreviousYear} loading={comparisonLoading} available={!!comparisonData?.summary.quantityDataComplete} />;
   const currentTile = data.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
   const currentPlumbing = data.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
   const previousTile = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Плитка");

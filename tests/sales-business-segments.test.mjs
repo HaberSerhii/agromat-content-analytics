@@ -48,7 +48,7 @@ function loadBuilder(source) {
     }
     return require(name);
   };
-  const js = ts.transpileModule(source + '\nexports.testBuilder = buildDataset;', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const js = ts.transpileModule(source + '\nexports.testBuilder = buildDataset; exports.testBuilder.parseRows = iterateSalesRows;', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function("require", "exports", js)(localRequire, exports);
   return exports.testBuilder;
 }
@@ -74,11 +74,15 @@ test("overview, statuses and cancellation products split mixed orders while pres
     { ...base, items: volumeItems, docsSum: 1200 },
     { ...base, docsRef: "canceled", items: volumeItems, shippedDate: null, state: "Скасована" },
   ], {}, args[2]);
+  assert.equal(volumeResult.summary.quantityDataComplete, true);
   assert.deepEqual(volumeResult.summary.shippedQuantities, { squareMeters: 18, pieces: 9 });
   assert.deepEqual(volumeResult.summary.otherQuantities, { squareMeters: 5.25, pieces: 6 });
   assert.equal(volumeResult.summary.shippedSegments.find((part) => part.label === "Плитка").goods, 12.75);
   assert.equal(volumeResult.summary.otherSalesGroups.find((part) => part.label === "Підлогові покриття").goods, 5.25);
   assert.equal(volumeResult.summary.otherSalesGroups.find((part) => part.label === "Джерела живлення").goods, 2);
+  const unknownVolume = build([{ ...base, items: products.map((product) => ({ ...product, quantityKnown: false })) }], {}, args[2]);
+  assert.equal(unknownVolume.summary.quantityDataComplete, false);
+  assert.deepEqual(unknownVolume.summary.shippedQuantities, { squareMeters: 0, pieces: 0 });
   assert.equal(result.summary.shippedRevenue, 1000);
   assert.deepEqual(result.summary.shippedSegments.map((part) => part.revenue), [600, 300, 100]);
   assert.equal(result.summary.otherSalesGroups.find((part) => part.label === "Джерела живлення").revenue, 100);
@@ -119,4 +123,20 @@ test("overview, statuses and cancellation products split mixed orders while pres
   const duplicate = build([{ ...base, items: [{ ...products[0], revenue: 200 }, { ...products[0], revenue: 400 }, products[1], products[2]], returnSum: 100, returnGoodsCodes: ["1"], returnRowSums: [100] }], {}, args[2]);
   assert.ok(Math.abs(duplicate.summary.plan.segments.find((part) => part.segment === "Плитка").revenue - 500) < 0.01);
   assert.equal(duplicate.summary.plan.segments.find((part) => part.segment === "Сантехніка").revenue, 300);
+});
+
+
+test("ERP parser distinguishes real quantities from fallback position counts", () => {
+  const build = loadBuilder(fs.readFileSync("src/lib/sales-s3.ts", "utf8"));
+  const parse = (csv) => [...build.parseRows(csv, new Map(), new Map())][0].items[0];
+  const unknown = parse("docs_ref,number,goods_codes,rows_sums\n1,1,123,100");
+  assert.equal(unknown.quantityKnown, false);
+  for (const field of ["rows_qty", "rows_count", "rows_counts", "goods_qty", "goods_count"]) {
+    const known = parse(`docs_ref,number,goods_codes,rows_sums,${field}\n1,1,123,100,12.75`);
+    assert.equal(known.quantityKnown, true);
+    assert.equal(known.qty, 12.75);
+  }
+  const zero = parse("docs_ref,number,goods_codes,rows_sums,rows_qty\n1,1,123,100,0");
+  assert.equal(zero.quantityKnown, true);
+  assert.equal(zero.qty, 0);
 });
