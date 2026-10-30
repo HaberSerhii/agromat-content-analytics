@@ -1,5 +1,5 @@
 import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
-import { classifySalesCategory, splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
+import { splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, filterPromotionSalesRows, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -258,10 +258,7 @@ export type SalesDataset = {
     months: SalesMonthSummary[];
     segments: SalesBucketSummary[];
     shippedSegments: SalesBucketSummary[];
-    quantityDataComplete: boolean;
-    shippedQuantities: { squareMeters: number; pieces: number };
-    otherQuantities: { squareMeters: number; pieces: number };
-    otherSalesGroups: Array<{ label: string; revenue: number; goods: number }>;
+    otherSalesGroups: Array<{ label: string; revenue: number }>;
     otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: SalesBucketSummary[];
     categories: SalesBucketSummary[];
@@ -280,7 +277,6 @@ type MutableBucket = SalesBucketSummary & {
 };
 
 type ParsedSalesItem = {
-  quantityKnown?: boolean;
   ownCost?: number;
   categoryKey?: string;
   code: string;
@@ -1003,14 +999,13 @@ function* iterateSalesRows(
     const ownCosts = splitList(get(values, "rows_owncost")).map(parseNumber);
     const returnGoodsCodes = splitList(get(values, "return_goods"));
     const returnRowSums = splitList(get(values, "returnrow_sum")).map(parseNumber);
-    const rowQtyValues = (
+    const rowQty = (
       splitList(get(values, "rows_qty")).length ? splitList(get(values, "rows_qty")) :
       splitList(get(values, "rows_count")).length ? splitList(get(values, "rows_count")) :
       splitList(get(values, "rows_counts")).length ? splitList(get(values, "rows_counts")) :
       splitList(get(values, "goods_qty")).length ? splitList(get(values, "goods_qty")) :
       splitList(get(values, "goods_count"))
-    );
-    const rowQty = rowQtyValues.map(parseNumber);
+    ).map(parseNumber);
     const goodsCount = Math.max(goodsCodes.length, brandsList.length, categoriesList.length, rowSums.length, rowQty.length, 1);
     const state = get(values, "state");
     const categoryNames = Array.from({ length: goodsCount }, (_, i) => (
@@ -1057,8 +1052,7 @@ function* iterateSalesRows(
         url: productMetaByCode.get(goodsCodes[i])?.url || getProductSearchUrl(goodsCodes[i]),
         brand: brandsList[i] || productMetaByCode.get(goodsCodes[i])?.brand || "Без бренда",
         category: categoryNames[i],
-        quantityKnown: !!rowQtyValues[i]?.trim() && Number.isFinite(Number(rowQtyValues[i].trim().replace(/\s/g, "").replace(",", "."))),
-        qty: rowQty[i] ?? 1,
+        qty: rowQty[i] || 1,
         revenue: rowSums[i] || 0,
       })),
       goodsCodeNumbers: goodsCodes
@@ -1118,10 +1112,6 @@ function buildDataset(
   const shippedSegments = new Map<string, MutableBucket>();
   const otherSalesGroups = new Map<string, number>(OTHER_SALES_GROUPS.map((label) => [label, 0]));
   const otherSalesRemainder = new Map<string, number>();
-  let quantityDataComplete = true;
-  const shippedQuantities = { squareMeters: 0, pieces: 0 };
-  const otherQuantities = { squareMeters: 0, pieces: 0 };
-  const otherGroupGoods = new Map<string, number>();
   const allSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
   const brands = new Map<string, MutableBucket>();
   const categories = new Map<string, MutableBucket>();
@@ -1367,14 +1357,6 @@ function buildDataset(
     returnedRevenue += row.returnSum;
     if (isCanceled(row.state)) canceledDocs += 1;
 
-    for (const item of netItems) {
-      if (item.quantityKnown === false) { quantityDataComplete = false; continue; }
-      const { segment, otherGroup } = classifySalesCategory(item.categoryKey || "");
-      const unit = segment === "Плитка" || otherGroup === "Підлогові покриття" ? "squareMeters" : "pieces";
-      shippedQuantities[unit] += item.qty;
-      if (segment === "Інше") otherQuantities[unit] += item.qty;
-      if (otherGroup) otherGroupGoods.set(otherGroup, (otherGroupGoods.get(otherGroup) || 0) + item.qty);
-    }
     shippedDocs += 1;
     shippedGoods += row.goodsCount;
     shippedRevenue += getNetRevenue(row);
@@ -1548,10 +1530,7 @@ function buildDataset(
       months: monthList,
       segments: segmentList,
       shippedSegments: finishSegmentBuckets(shippedSegments),
-      quantityDataComplete,
-      shippedQuantities,
-      otherQuantities,
-      otherSalesGroups: [...otherSalesGroups].map(([label, revenue]) => ({ label, revenue, goods: otherGroupGoods.get(label) || 0 })),
+      otherSalesGroups: [...otherSalesGroups].map(([label, revenue]) => ({ label, revenue })),
       otherSalesRemainder: [...otherSalesRemainder].map(([label, revenue]) => ({ label, revenue })).sort((a, b) => b.revenue - a.revenue),
       brands: brandList,
       categories: categoryList,
@@ -1635,7 +1614,7 @@ async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<Cache
   }
 
   const now = Date.now();
-  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-goods-net-v4`;
+  const signature = `${head.ETag || ""}:${head.LastModified?.toISOString() || ""}:${head.ContentLength || 0}:sales-goods-net-v3`;
   if (state.cached && state.cached.signature === signature && now < state.cached.expiresAt) {
     state.nextSignatureCheckAt = Math.min(now + revalidateMs, state.cached.expiresAt);
     return { rows: state.cached.rows, source: state.cached.source };
@@ -1653,11 +1632,11 @@ async function refreshCachedSalesRows(state: SalesRowsCacheState): Promise<Cache
     nextRefreshAt: nextRefresh.toISOString(),
   };
   const enrichmentKey = createHash("sha256").update(JSON.stringify([bucket, key, [...groupNameById], [...groupKeyByIdCache], [...productMetaByCode]])).digest("hex");
-  const saved = await readPersistentResult<{ signature: string; enrichmentKey: string; rows: ParsedSalesRow[] }>("sales-rows-v4", 24 * 60 * 60_000);
+  const saved = await readPersistentResult<{ signature: string; enrichmentKey: string; rows: ParsedSalesRow[] }>("sales-rows-v3", 24 * 60 * 60_000);
   const rows = saved?.value.signature === signature && saved.value.enrichmentKey === enrichmentKey
     ? saved.value.rows
     : await parseSalesRowsBatched(await readS3Text(getSalesS3Url()), groupNameById, productMetaByCode);
-  if (rows !== saved?.value.rows) await writePersistentResult("sales-rows-v4", { signature, enrichmentKey, rows });
+  if (rows !== saved?.value.rows) await writePersistentResult("sales-rows-v3", { signature, enrichmentKey, rows });
   state.cached = { signature, rows, source, expiresAt: nextRefresh.getTime() };
   state.nextSignatureCheckAt = Math.min(Date.now() + revalidateMs, nextRefresh.getTime());
   return { rows, source };
