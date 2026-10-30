@@ -1,5 +1,5 @@
 import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
-import { splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
+import { classifySalesCategory, splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, filterPromotionSalesRows, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -258,7 +258,9 @@ export type SalesDataset = {
     months: SalesMonthSummary[];
     segments: SalesBucketSummary[];
     shippedSegments: SalesBucketSummary[];
-    otherSalesGroups: Array<{ label: string; revenue: number }>;
+    shippedQuantities: { squareMeters: number; pieces: number };
+    otherQuantities: { squareMeters: number; pieces: number };
+    otherSalesGroups: Array<{ label: string; revenue: number; goods: number }>;
     otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: SalesBucketSummary[];
     categories: SalesBucketSummary[];
@@ -1112,6 +1114,9 @@ function buildDataset(
   const shippedSegments = new Map<string, MutableBucket>();
   const otherSalesGroups = new Map<string, number>(OTHER_SALES_GROUPS.map((label) => [label, 0]));
   const otherSalesRemainder = new Map<string, number>();
+  const shippedQuantities = { squareMeters: 0, pieces: 0 };
+  const otherQuantities = { squareMeters: 0, pieces: 0 };
+  const otherGroupGoods = new Map<string, number>();
   const allSegmentsByMonth = new Map<string, Map<string, MutableBucket>>();
   const brands = new Map<string, MutableBucket>();
   const categories = new Map<string, MutableBucket>();
@@ -1357,6 +1362,13 @@ function buildDataset(
     returnedRevenue += row.returnSum;
     if (isCanceled(row.state)) canceledDocs += 1;
 
+    for (const item of netItems) {
+      const { segment, otherGroup } = classifySalesCategory(item.categoryKey || "");
+      const unit = segment === "Плитка" || otherGroup === "Підлогові покриття" ? "squareMeters" : "pieces";
+      shippedQuantities[unit] += item.qty;
+      if (segment === "Інше") otherQuantities[unit] += item.qty;
+      if (otherGroup) otherGroupGoods.set(otherGroup, (otherGroupGoods.get(otherGroup) || 0) + item.qty);
+    }
     shippedDocs += 1;
     shippedGoods += row.goodsCount;
     shippedRevenue += getNetRevenue(row);
@@ -1530,7 +1542,9 @@ function buildDataset(
       months: monthList,
       segments: segmentList,
       shippedSegments: finishSegmentBuckets(shippedSegments),
-      otherSalesGroups: [...otherSalesGroups].map(([label, revenue]) => ({ label, revenue })),
+      shippedQuantities,
+      otherQuantities,
+      otherSalesGroups: [...otherSalesGroups].map(([label, revenue]) => ({ label, revenue, goods: otherGroupGoods.get(label) || 0 })),
       otherSalesRemainder: [...otherSalesRemainder].map(([label, revenue]) => ({ label, revenue })).sort((a, b) => b.revenue - a.revenue),
       brands: brandList,
       categories: categoryList,

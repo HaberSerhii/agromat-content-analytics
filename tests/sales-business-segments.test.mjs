@@ -61,6 +61,24 @@ test("overview, statuses and cancellation products split mixed orders while pres
   const rows = [base, { ...base, docsRef: "2", number: "2", shippedDate: null, state: "Скасована" }];
   const args = [rows, {}, { from: "2026-10-01", to: "2026-10-31" }];
   const result = build(...args);
+  // Quantities use item-level units, preserve fractional area and exclude services/canceled orders.
+  const volumeItems = [
+    { ...products[0], qty: 12.75 },
+    { ...products[1], qty: 3 },
+    { ...products[2], code: "4", categoryKey: "009.002", qty: 5.25 },
+    { ...products[2], code: "5", qty: 2 },
+    { ...products[2], code: "6", categoryKey: "", qty: 4 },
+    { ...products[2], code: "18385", categoryKey: "012.008", name: "Послуги доставки", qty: 1 },
+  ];
+  const volumeResult = build([
+    { ...base, items: volumeItems, docsSum: 1200 },
+    { ...base, docsRef: "canceled", items: volumeItems, shippedDate: null, state: "Скасована" },
+  ], {}, args[2]);
+  assert.deepEqual(volumeResult.summary.shippedQuantities, { squareMeters: 18, pieces: 9 });
+  assert.deepEqual(volumeResult.summary.otherQuantities, { squareMeters: 5.25, pieces: 6 });
+  assert.equal(volumeResult.summary.shippedSegments.find((part) => part.label === "Плитка").goods, 12.75);
+  assert.equal(volumeResult.summary.otherSalesGroups.find((part) => part.label === "Підлогові покриття").goods, 5.25);
+  assert.equal(volumeResult.summary.otherSalesGroups.find((part) => part.label === "Джерела живлення").goods, 2);
   assert.equal(result.summary.shippedRevenue, 1000);
   assert.deepEqual(result.summary.shippedSegments.map((part) => part.revenue), [600, 300, 100]);
   assert.equal(result.summary.otherSalesGroups.find((part) => part.label === "Джерела живлення").revenue, 100);

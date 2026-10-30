@@ -165,7 +165,9 @@ type SalesDataset = {
     months: Array<{ month: string; docs: number; goods: number; revenue: number }>;
     segments: BucketSummary[];
     shippedSegments: BucketSummary[];
-    otherSalesGroups: Array<{ label: string; revenue: number }>;
+    shippedQuantities: { squareMeters: number; pieces: number };
+    otherQuantities: { squareMeters: number; pieces: number };
+    otherSalesGroups: Array<{ label: string; revenue: number; goods: number }>;
     otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: BucketSummary[];
     categories: BucketSummary[];
@@ -890,6 +892,29 @@ function yearComparisonHint(current: number, previous: number, formatter: (value
   return `Рік тому: ${formatter(previous)} · ${fmtPct(delta)}`;
 }
 
+function SalesVolume({ current, previous, compare, loading, available }: {
+  current: { squareMeters?: number; pieces?: number };
+  previous?: { squareMeters?: number; pieces?: number };
+  compare: boolean;
+  loading: boolean;
+  available: boolean;
+}) {
+  const formatQuantity = (value: number, unit: string) => `${new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 2 }).format(value)} ${unit}`;
+  return <div className="flex flex-wrap gap-x-5 gap-y-3" title="Кількість відвантажених товарів, без вирахування повернень: джерело містить лише суми повернень.">
+    {(["squareMeters", "pieces"] as const).filter((key) => current[key] !== undefined).map((key) => {
+      const unit = key === "squareMeters" ? "м²" : "шт";
+      const value = current[key] || 0;
+      const old = previous?.[key] || 0;
+      const delta = old > 0 ? (value - old) / old * 100 : null;
+      return <div key={key}>
+        <div className="text-[9px] font-bold uppercase tracking-wide text-[#7b8691]">Обсяг · {unit}</div>
+        <div className="mt-1 text-xl font-black tabular-nums text-[#26313d]">{formatQuantity(value, unit)}</div>
+        <div className="mt-1 text-[10px] text-[#8a939c]">{!compare ? "Порівняння вимкнено" : loading ? "Завантаження порівняння…" : !available ? "Немає даних для порівняння" : <>Рік тому: {formatQuantity(old, unit)} · <span className="font-bold" style={{ color: delta == null ? undefined : delta >= 0 ? "#16865c" : "#d14b4b" }}>{delta != null && delta > 0 ? "+" : ""}{fmtPct(delta)}</span></>}</div>
+      </div>;
+    })}
+  </div>;
+}
+
 function SalesMetricCard({
   label,
   value,
@@ -897,6 +922,7 @@ function SalesMetricCard({
   symbol,
   tone,
   description,
+  volume,
 }: {
   label: string;
   value: string;
@@ -904,6 +930,7 @@ function SalesMetricCard({
   symbol: string;
   tone: string;
   description?: string;
+  volume?: ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm" title={description}>
@@ -917,6 +944,7 @@ function SalesMetricCard({
           {symbol}
         </span>
       </div>
+      {volume && <div className="mt-4 border-t border-[#edf0f2] pt-3">{volume}</div>}
     </div>
   );
 }
@@ -1916,6 +1944,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     : comparisonLoading ? "Завантаження порівняння…"
     : !comparisonData ? "Немає даних для порівняння"
     : yearComparisonHint(current, previous, fmtMoney);
+  const volume = (current: { squareMeters?: number; pieces?: number }, previous?: { squareMeters?: number; pieces?: number }) => <SalesVolume current={current} previous={previous} compare={compareWithPreviousYear} loading={comparisonLoading} available={!!comparisonData} />;
   const currentTile = data.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
   const currentPlumbing = data.summary.shippedSegments?.find((segment) => segment.label === "Сантехніка");
   const previousTile = comparisonData?.summary.shippedSegments?.find((segment) => segment.label === "Плитка");
@@ -2104,23 +2133,25 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                   <SalesMetricCard label={compareWithPreviousYear ? "Продажі · до минулого року" : "Продажі"} value={fmtMoney(data.summary.shippedRevenue)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedRevenue, comparisonData?.summary.shippedRevenue || 0, fmtMoney)} symbol={!comparisonData ? "₴" : data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "↗" : "↘"} tone={!comparisonData ? "#168b9b" : data.summary.shippedRevenue >= comparisonData.summary.shippedRevenue ? "#20a66a" : "#e45858"} />
                   <SalesMetricCard label="Відвантажено документів" value={fmtNum(data.summary.shippedDocs)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedDocs, comparisonData?.summary.shippedDocs || 0, fmtNum)} symbol="D" tone="#118dff" />
-                  <SalesMetricCard label="Відвантажено товарів" value={fmtNum(data.summary.shippedGoods)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(data.summary.shippedGoods, comparisonData?.summary.shippedGoods || 0, (value) => `${fmtNum(value)} шт`)} symbol="#" tone="#805ad5" />
+                  <SalesMetricCard label="Обсяг продажів" value="Відвантажено" hint="м² та штуки окремо" symbol="#" tone="#805ad5" volume={volume(data.summary.shippedQuantities, comparisonData?.summary.shippedQuantities)} />
                   <SalesMetricCard label="Середній чек" value={averageCheck == null ? "—" : fmtMoney(averageCheck)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : averageCheck == null ? "Немає відвантажених документів" : previousAverageCheck == null ? "Немає даних для порівняння" : yearComparisonHint(averageCheck, previousAverageCheck, fmtMoney)} symbol="₴" tone="#168b9b" description="Продажі товарів після повернень / кількість повністю відвантажених документів за обраний період." />
                   <SalesMetricCard label="Повернення" value={fmtMoney(data.summary.returnedRevenue)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : comparisonData ? yearComparisonHint(data.summary.returnedRevenue, comparisonData.summary.returnedRevenue, fmtMoney) : "Немає даних для порівняння"} symbol="↩" tone="#e45858" description="Сума повернень за документами, повністю відвантаженими в обраний період. Відбір за датою відвантаження, не за датою повернення." />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <SalesMetricCard label="Плитка" value={fmtMoney(currentTile?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentTile?.revenue || 0, previousTile?.revenue || 0, fmtMoney)} symbol="P" tone="#e39a25" />
-                  <SalesMetricCard label="Сантехніка" value={fmtMoney(currentPlumbing?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentPlumbing?.revenue || 0, previousPlumbing?.revenue || 0, fmtMoney)} symbol="S" tone="#20a66a" />
+                  <SalesMetricCard label="Плитка" value={fmtMoney(currentTile?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentTile?.revenue || 0, previousTile?.revenue || 0, fmtMoney)} symbol="P" tone="#e39a25" volume={volume({ squareMeters: currentTile?.goods || 0 }, { squareMeters: previousTile?.goods || 0 })} />
+                  <SalesMetricCard label="Сантехніка" value={fmtMoney(currentPlumbing?.revenue || 0)} hint={!compareWithPreviousYear ? "Порівняння вимкнено" : comparisonLoading ? "Завантаження порівняння…" : yearComparisonHint(currentPlumbing?.revenue || 0, previousPlumbing?.revenue || 0, fmtMoney)} symbol="S" tone="#20a66a" volume={volume({ pieces: currentPlumbing?.goods || 0 }, { pieces: previousPlumbing?.goods || 0 })} />
                 </div>
                 <details className="group rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                  <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4">
                     <div><div className="text-xs font-bold text-[#687582]">Інше</div><div className="mt-1 text-2xl font-black text-[#805ad5]">{fmtMoney(currentOther?.revenue || 0)}</div><div className="mt-1 text-[10px] text-[#7e8994]">{otherYearComparison(currentOther?.revenue || 0, previousOther?.revenue || 0)}</div></div>
+                    {volume(data.summary.otherQuantities, comparisonData?.summary.otherQuantities)}
                   </summary>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     {(data.summary.otherSalesGroups || []).map((group) => (
                       <div key={group.label} className="rounded-xl bg-[#f7f8fc] p-3">
                         <div className="flex items-center justify-between gap-3 text-xs"><b>{group.label}</b><span>{fmtMoney(group.revenue)}</span></div>
                         <div className="mt-1 text-[10px] text-[#7e8994]">{otherYearComparison(group.revenue, previousOtherGroups.get(group.label) || 0)}</div>
+                        <div className="mt-3 border-t border-[#e4e7ed] pt-3">{volume({ [group.label === "Підлогові покриття" ? "squareMeters" : "pieces"]: group.goods }, { [group.label === "Підлогові покриття" ? "squareMeters" : "pieces"]: comparisonData?.summary.otherSalesGroups.find((previous) => previous.label === group.label)?.goods || 0 })}</div>
                         <div className="mt-2"><ProgressBar value={currentOther?.revenue ? group.revenue / currentOther.revenue * 100 : 0} color="#805ad5" /></div>
                         <div className="mt-1 text-[10px] text-[#7e8994]">{fmtPct(currentOther?.revenue ? group.revenue / currentOther.revenue * 100 : 0)} від загальної суми «Інше»</div>
                       </div>
