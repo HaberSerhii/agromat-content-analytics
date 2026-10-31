@@ -149,6 +149,7 @@ type DashboardResponse = {
     inactiveProducts: SegmentMetric;
     promoProducts: SegmentMetric;
     ctr: {
+      segments?: Partial<Record<keyof typeof OVERVIEW_SEGMENTS, { ctr: number | null; change: number | null; improved: number; declined: number }>>;
       tile: number | null;
       sanitary: number | null;
       deltaTile: number;
@@ -566,22 +567,6 @@ function MetricCard({
 }) {
   const isCtr = meta.key === "ctr";
   const metric = isCtr ? data?.metrics.ctr : data?.metrics[meta.key];
-  const tileValue = isCtr
-    ? data?.metrics.ctr.tile == null
-      ? "—"
-      : `${data.metrics.ctr.tile.toFixed(2)}%`
-    : formatNumber((metric as SegmentMetric | undefined)?.tile || 0);
-  const sanitaryValue = isCtr
-    ? data?.metrics.ctr.sanitary == null
-      ? "—"
-      : `${data.metrics.ctr.sanitary.toFixed(2)}%`
-    : formatNumber((metric as SegmentMetric | undefined)?.sanitary || 0);
-  const tileDelta = isCtr
-    ? data?.metrics.ctr.deltaTile || 0
-    : (metric as SegmentMetric | undefined)?.deltaTile || 0;
-  const sanitaryDelta = isCtr
-    ? data?.metrics.ctr.deltaSanitary || 0
-    : (metric as SegmentMetric | undefined)?.deltaSanitary || 0;
 
   return (
     <article className="relative rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_1px_2px_rgba(31,41,55,.05)]">
@@ -606,18 +591,18 @@ function MetricCard({
       </div>
       <div className="grid grid-cols-2 gap-y-4 divide-x divide-[#e6e9ec]">
         {(Object.keys(OVERVIEW_SEGMENTS) as Array<keyof typeof OVERVIEW_SEGMENTS>)
-          .filter((segment) => !isCtr && meta.key !== "promoProducts" || segment === "tile" || segment === "sanitary")
           .map((segment) => {
           const label = OVERVIEW_SEGMENTS[segment];
           const counts = (metric as SegmentMetric | undefined)?.segments?.[segment];
-          const value = segment === "tile" ? tileValue : segment === "sanitary" ? sanitaryValue : formatNumber(counts?.count || 0);
-          const delta = segment === "tile" ? tileDelta : segment === "sanitary" ? sanitaryDelta : counts?.delta || 0;
-          const ctrChange = segment === "tile" ? data?.metrics.ctr.changeTile : data?.metrics.ctr.changeSanitary;
+          const ctrSegment = data?.metrics.ctr.segments?.[segment];
+          const value = isCtr ? ctrSegment?.ctr == null ? "—" : `${ctrSegment.ctr.toFixed(2)}%` : formatNumber(counts?.count || 0);
+          const delta = counts?.delta || 0;
+          const ctrChange = ctrSegment?.change;
           const roundedCtrChange = ctrChange == null ? null : Number(ctrChange.toFixed(2));
           const active = selection?.metric === meta.key && selection.segment === segment;
           const disabled = !data || (isCtr && (!data.metrics.ctr.available || value === "—"));
           return (
-            <div key={segment} className={segment === "tile" ? "pr-3" : "pl-3"}>
+            <div key={segment} className="px-3 first:pl-0">
               <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#9aa4ae]">{label}</div>
               <div className="mt-1.5 flex items-center gap-2">
                 <button
@@ -653,8 +638,8 @@ function MetricCard({
               {isCtr && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {([
-                    { scope: "added", label: "Покращились", sign: "+", count: segment === "tile" ? data?.metrics.ctr.improvedTile || 0 : data?.metrics.ctr.improvedSanitary || 0, color: "#087a55", background: "#e6f5ee" },
-                    { scope: "removed", label: "Погіршились", sign: "−", count: segment === "tile" ? data?.metrics.ctr.declinedTile || 0 : data?.metrics.ctr.declinedSanitary || 0, color: "#bd3b3b", background: "#fdecec" },
+                    { scope: "added", label: "Покращились", sign: "+", count: ctrSegment?.improved || 0, color: "#087a55", background: "#e6f5ee" },
+                    { scope: "removed", label: "Погіршились", sign: "−", count: ctrSegment?.declined || 0, color: "#bd3b3b", background: "#fdecec" },
                   ] as const).map(({ scope, label: directionLabel, sign, count, color, background }) => (
                     <button
                       key={scope}

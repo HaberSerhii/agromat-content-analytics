@@ -6,7 +6,9 @@ import {
   buildOverviewCohorts,
   normalizeOverviewSelection,
   overviewMetric,
-  segmentOf,
+  overviewSegmentOf,
+  OVERVIEW_SEGMENTS,
+  type OverviewSegment,
   selectOverviewRows,
   type OverviewCohorts,
   type OverviewSelection,
@@ -39,7 +41,6 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type Segment = "tile" | "sanitary";
 type DashboardFilters = {
   overviewSelection?: OverviewSelection | null;
   includeAnalytics?: boolean;
@@ -188,6 +189,7 @@ let productAnalysisCache: {
 } | null = null;
 
 type CtrSummary = {
+  segments?: Partial<Record<OverviewSegment, { ctr: number | null; change: number | null; improved: number; declined: number }>>;
   cohorts: OverviewCohorts;
   available: boolean;
   benchmark: number | null;
@@ -593,14 +595,10 @@ async function readCtr(
       byRef.set(goodsRef, current);
     }
 
-    const totals = {
-      tile: { impressions: 0, clicks: 0 },
-      sanitary: { impressions: 0, clicks: 0 },
-    };
-    const previousTotals = {
-      tile: { impressions: 0, clicks: 0 },
-      sanitary: { impressions: 0, clicks: 0 },
-    };
+    const segments = Object.keys(OVERVIEW_SEGMENTS) as OverviewSegment[];
+    const emptyTotals = () => Object.fromEntries(segments.map((key) => [key, { impressions: 0, clicks: 0 }])) as Record<OverviewSegment, { impressions: number; clicks: number }>;
+    const totals = emptyTotals();
+    const previousTotals = emptyTotals();
     let totalImpressions = 0;
     let totalClicks = 0;
     let scoreTile = 0;
@@ -613,7 +611,7 @@ async function readCtr(
     const cohorts = buildOverviewCohorts([], []);
     for (const [goodsRef, periods] of byRef) {
       const product = productByRef.get(goodsRef)!;
-      const segment = segmentOf(product);
+      const segment = overviewSegmentOf(product);
       const current = periods.current;
       const previous = periods.previous;
       if (previous) {
@@ -641,7 +639,7 @@ async function readCtr(
         if (segment === "tile") {
           scoreTile++;
           improvedTile++;
-        } else {
+        } else if (segment === "sanitary") {
           scoreSanitary++;
           improvedSanitary++;
         }
@@ -650,18 +648,18 @@ async function readCtr(
         if (segment === "tile") {
           scoreTile--;
           declinedTile++;
-        } else {
+        } else if (segment === "sanitary") {
           scoreSanitary--;
           declinedSanitary++;
         }
       }
     }
 
-    const ctr = (segment: Segment) =>
+    const ctr = (segment: OverviewSegment) =>
       totals[segment].impressions > 0
         ? (totals[segment].clicks / totals[segment].impressions) * 100
         : null;
-    const change = (segment: Segment) => {
+    const change = (segment: OverviewSegment) => {
       const currentCtr = ctr(segment);
       const previous = previousTotals[segment];
       return currentCtr != null && previous.impressions > 0
@@ -670,6 +668,10 @@ async function readCtr(
     };
     const value: CtrSummary = {
       cohorts,
+      segments: Object.fromEntries(segments.map((segment) => [segment, {
+        ctr: ctr(segment), change: change(segment),
+        improved: cohorts[segment].added.length, declined: cohorts[segment].removed.length,
+      }])),
       changeTile: change("tile"),
       changeSanitary: change("sanitary"),
       available: totalImpressions > 0,
@@ -914,7 +916,7 @@ async function buildDashboard(input: DashboardFilters) {
     ),
     newProducts: buildOverviewCohorts(currentNew, previousNew),
     inactiveProducts: buildOverviewCohorts(currentInactive, previousInactive),
-    promoProducts: buildOverviewCohorts(currentPromo, previousPromo, true),
+    promoProducts: buildOverviewCohorts(currentPromo, previousPromo),
     ctr: ctr.cohorts,
   };
   const selection = filters.overviewSelection;
@@ -1714,6 +1716,7 @@ async function buildDashboard(input: DashboardFilters) {
       inactiveProducts: overviewMetric(cohorts.inactiveProducts),
       promoProducts: overviewMetric(cohorts.promoProducts),
       ctr: {
+        segments: ctr.segments || {},
         changeTile: ctr.changeTile,
         changeSanitary: ctr.changeSanitary,
         tile: ctr.tile,

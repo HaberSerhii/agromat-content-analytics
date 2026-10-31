@@ -246,3 +246,26 @@ test("active products require a transition to Buy in the current Kyiv month and 
   assert.deepEqual(result.rows.map((row) => row.id).sort(), [1, 6]);
   assert.equal(result.metrics.activeProducts.tile, 2);
 });
+
+
+test("all six categories have independent CTR, changes and drilldowns", async () => {
+  const names = ["Плитка", "Сантехніка", "Підлогові покриття", "Зарядні станції", "Будівельна хімія / Клей для плитки", "Освітлення"];
+  const segments = ["tile", "sanitary", "flooring", "power", "chemicals", "other"];
+  const products = names.map((name, i) => product(i + 1, {categoryName: name, categoryPath: name}));
+  const ctr = products.flatMap((p, i) => [
+    {goods_ref: p.goodsRef, period: "previous", impressions: 100, clicks: 10},
+    {goods_ref: p.goodsRef, period: "current", impressions: 100, clicks: i % 2 ? 5 : 20},
+  ]);
+  const { dashboard } = setup({ products, ctr });
+  for (const [i, segment] of segments.entries()) {
+    const result = await dashboard("ctr", segment, i % 2 ? "removed" : "added");
+    assert.deepEqual(result.rows.map(p => p.id), [i + 1]);
+    assert.equal(result.metrics.ctr.segments[segment].ctr, i % 2 ? 5 : 20);
+    assert.equal(result.metrics.ctr.segments[segment].change, i % 2 ? -5 : 10);
+    const promo = await dashboard("newProducts", segment);
+    assert.equal(promo.metrics.newProducts.sanitary, 0);
+  }
+  const other = await dashboard("ctr", "other", "current");
+  assert.equal(other.total, 1);
+  assert.equal(other.metrics.ctr.benchmark, 12.5);
+});

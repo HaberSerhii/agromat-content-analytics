@@ -2,8 +2,8 @@ import type { ProductLite } from "./products-store";
 
 export type OverviewMetric = "newProducts" | "activeProducts" | "inactiveProducts" | "promoProducts" | "ctr";
 export const OVERVIEW_SEGMENTS = {
-  tile: "Плитка", sanitary: "Сантехніка", flooring: "Напольні покриття",
-  power: "Зарядні станції", chemicals: "Будівельна хімія",
+  tile: "Плитка", sanitary: "Сантехніка", flooring: "Підлогові покриття",
+  power: "Зарядні станції", chemicals: "Будівельна хімія", other: "Інше",
 } as const;
 export type OverviewSegment = keyof typeof OVERVIEW_SEGMENTS;
 export type OverviewScope = "current" | "changes" | "added" | "removed";
@@ -38,7 +38,9 @@ export function overviewSegmentOf(product: Pick<ProductLite, "categoryName" | "c
   if (/х[іи]м[іи]|кле[йї]|затир|затиран|гермет|ґрунт|грунт|chem/i.test(category)) return "chemicals";
   if (/підлог|наполь|лам[іи]нат|паркет|в[іи]н[іи]л|floor/i.test(category)) return "flooring";
   if (/станц|електрост|электрост|заряд|генератор|power/i.test(category)) return "power";
-  return segmentOf(product);
+  if (/плит|керам|кл[іи]нкер|моза|tile|gres/i.test(category)) return "tile";
+  if (/сантех|змішувач|смесител|унітаз|унитаз|умиваль|раковин|ванн|душ|біде|биде|рушникосуш|полотенцесуш|інстал|инстал|сифон|sanitar|plumbing/i.test(category)) return "sanitary";
+  return "other";
 }
 
 export function isActivatedInRange(product: ProductLite, from: string, to: string) {
