@@ -1,4 +1,5 @@
 "use client";
+import { OVERVIEW_SEGMENTS } from "@/lib/product-overview-drilldown";
 /* eslint-disable @next/next/no-img-element -- product images come from the Agromat CDN */
 
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
@@ -106,6 +107,7 @@ type CategoryAnalysisRow = {
 };
 
 type SegmentMetric = {
+  segments?: Partial<Record<keyof typeof OVERVIEW_SEGMENTS, { count: number; delta: number }>>;
   tile: number;
   sanitary: number;
   deltaTile: number;
@@ -142,6 +144,7 @@ type DashboardResponse = {
     };
   };
   metrics: {
+    activeProducts: SegmentMetric;
     newProducts: SegmentMetric;
     inactiveProducts: SegmentMetric;
     promoProducts: SegmentMetric;
@@ -241,7 +244,7 @@ type ProcessingStatus =
   | "processed"
   | "unprocessed"
   | ContentReviewManager;
-type MetricKey = "newProducts" | "inactiveProducts" | "promoProducts" | "ctr";
+type MetricKey = "activeProducts" | "newProducts" | "inactiveProducts" | "promoProducts" | "ctr";
 type ContentManager = ContentReviewManager;
 type ContentAction = ContentReviewAction;
 type ReviewMetrics = ContentReviewMetrics;
@@ -351,6 +354,7 @@ const METRIC_META: Array<{
     tone: "#d14343",
     note: "Динаміка від 08.10.2026 · без давніх неактивних",
   },
+  { key: "activeProducts", label: "Активні товари", symbol: "✓", tone: "#0f9d72", note: "Перейшли у статус «В наявності (Купити)» цього місяця" },
   {
     key: "promoProducts",
     label: "Акційні товари",
@@ -600,11 +604,14 @@ function MetricCard({
           {meta.symbol}
         </span>
       </div>
-      <div className="grid grid-cols-2 divide-x divide-[#e6e9ec]">
-        {([
-          { segment: "tile", label: "Плитка", value: tileValue, delta: tileDelta },
-          { segment: "sanitary", label: "Сантехніка", value: sanitaryValue, delta: sanitaryDelta },
-        ] as const).map(({ segment, label, value, delta }) => {
+      <div className="grid grid-cols-2 gap-y-4 divide-x divide-[#e6e9ec]">
+        {(Object.keys(OVERVIEW_SEGMENTS) as Array<keyof typeof OVERVIEW_SEGMENTS>)
+          .filter((segment) => !isCtr && meta.key !== "promoProducts" || segment === "tile" || segment === "sanitary")
+          .map((segment) => {
+          const label = OVERVIEW_SEGMENTS[segment];
+          const counts = (metric as SegmentMetric | undefined)?.segments?.[segment];
+          const value = segment === "tile" ? tileValue : segment === "sanitary" ? sanitaryValue : formatNumber(counts?.count || 0);
+          const delta = segment === "tile" ? tileDelta : segment === "sanitary" ? sanitaryDelta : counts?.delta || 0;
           const ctrChange = segment === "tile" ? data?.metrics.ctr.changeTile : data?.metrics.ctr.changeSanitary;
           const roundedCtrChange = ctrChange == null ? null : Number(ctrChange.toFixed(2));
           const active = selection?.metric === meta.key && selection.segment === segment;
@@ -3209,7 +3216,7 @@ export function ProductCardsDashboardV2() {
         <div className="mb-4 rounded-xl border border-[#bcd8f1] bg-[#edf6ff] p-3 text-[11px] text-[#355a7b]" role="status">
           <p className="font-black">
             {METRIC_META.find((item) => item.key === overviewSelection.metric)?.label}
-            {" · "}{overviewSelection.segment === "tile" ? "Плитка" : "Сантехніка"}
+            {" · "}{OVERVIEW_SEGMENTS[overviewSelection.segment]}
           </p>
           {loading ? <p className="mt-1">Завантаження вибраного списку…</p> : data?.overviewDrilldown && (() => {
             const detail = data.overviewDrilldown;

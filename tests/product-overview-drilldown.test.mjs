@@ -196,7 +196,9 @@ test("segment moves contribute to both segment balances", () => {
   const { load } = setup();
   const { buildOverviewCohorts, overviewMetric } = load("@/lib/product-overview-drilldown");
   const cohorts = buildOverviewCohorts([product(1, sanitary)], [product(1)]);
-  assert.deepEqual(plain(overviewMetric(cohorts)), { tile: 0, sanitary: 1, deltaTile: -1, deltaSanitary: 1 });
+  const { segments, ...totals } = plain(overviewMetric(cohorts));
+  assert.equal(segments.sanitary.delta, 1);
+  assert.deepEqual(totals, { tile: 0, sanitary: 1, deltaTile: -1, deltaSanitary: 1 });
 });
 
 test("promotion drilldown uses exact product codes, preserves empty selections, and exports the complete filtered list", async () => {
@@ -213,4 +215,34 @@ test("promotion drilldown uses exact product codes, preserves empty selections, 
   assert.equal((await dashboard(null, 'tile', 'current', { promotionCodes: [] })).total, 0);
   const posted = await route.POST({ json: async () => ({ view: 'overview', includeAnalytics: false, promotionCodes: [1003] }) });
   assert.deepEqual(posted.value.rows.map(row => row.code), [1003]);
+});
+
+
+test("additional categories have distinct counts and drilldowns", async () => {
+  const categories = ["Напольні покриття", "Зарядні станції", "Будівельна хімія / Клей для плитки"];
+  const products = categories.map((categoryName, i) => product(i + 1, {
+    categoryName, categoryPath: categoryName, firstSeenAt: "2026-09-15",
+  }));
+  const { dashboard } = setup({ products });
+  for (const [i, segment] of ["flooring", "power", "chemicals"].entries()) {
+    const result = await dashboard("newProducts", segment);
+    assert.deepEqual(result.rows.map((row) => row.id), [i + 1]);
+    assert.equal(result.metrics.newProducts.segments[segment].count, 1);
+    assert.equal(result.metrics.newProducts.sanitary, 0);
+  }
+});
+
+test("active products require a transition to Buy in the current Kyiv month and current availability", async () => {
+  const transition = { at: "2026-09-10T10:00:00Z", from: 3, to: 5 };
+  const products = [
+    product(1, { statusHistory: [transition] }), product(2),
+    product(3, { statusId: 1, statusHistory: [transition] }),
+    product(4, { deleted: true, statusHistory: [transition] }),
+    product(5, { statusHistory: [{ ...transition, at: "2026-08-15" }] }),
+    product(6, { statusHistory: [transition, transition] }),
+  ];
+  const { dashboard } = setup({ products });
+  const result = await dashboard("activeProducts");
+  assert.deepEqual(result.rows.map((row) => row.id).sort(), [1, 6]);
+  assert.equal(result.metrics.activeProducts.tile, 2);
 });

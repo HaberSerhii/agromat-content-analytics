@@ -1,3 +1,4 @@
+import { isActivatedInRange } from "@/lib/product-overview-drilldown";
 import { normalizePromotionCodes } from "@/lib/promotion-product-selection";
 import { isInactiveProduct, readInactiveTracking } from "@/lib/product-inactive-tracking";
 import { compareProductAnalysisRows, normalizeProductSortKey, type ProductSortKey } from "@/lib/product-analysis-sort";
@@ -907,9 +908,13 @@ async function buildDashboard(input: DashboardFilters) {
     : emptyProducts;
 
   const cohorts = {
+    activeProducts: buildOverviewCohorts(
+      isOverview ? products.filter((p) => isActivatedInRange(p, ranges.currentFrom, today)) : [],
+      isOverview ? previousProducts.filter((p) => isActivatedInRange(p, ranges.currentFrom, comparisonDate || today)) : [],
+    ),
     newProducts: buildOverviewCohorts(currentNew, previousNew),
     inactiveProducts: buildOverviewCohorts(currentInactive, previousInactive),
-    promoProducts: buildOverviewCohorts(currentPromo, previousPromo),
+    promoProducts: buildOverviewCohorts(currentPromo, previousPromo, true),
     ctr: ctr.cohorts,
   };
   const selection = filters.overviewSelection;
@@ -1704,6 +1709,7 @@ async function buildDashboard(input: DashboardFilters) {
     syncedAt,
     syncState,
     metrics: {
+      activeProducts: overviewMetric(cohorts.activeProducts),
       newProducts: overviewMetric(cohorts.newProducts),
       inactiveProducts: overviewMetric(cohorts.inactiveProducts),
       promoProducts: overviewMetric(cohorts.promoProducts),

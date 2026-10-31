@@ -1,7 +1,11 @@
 import type { ProductLite } from "./products-store";
 
-export type OverviewMetric = "newProducts" | "inactiveProducts" | "promoProducts" | "ctr";
-export type OverviewSegment = "tile" | "sanitary";
+export type OverviewMetric = "newProducts" | "activeProducts" | "inactiveProducts" | "promoProducts" | "ctr";
+export const OVERVIEW_SEGMENTS = {
+  tile: "Плитка", sanitary: "Сантехніка", flooring: "Напольні покриття",
+  power: "Зарядні станції", chemicals: "Будівельна хімія",
+} as const;
+export type OverviewSegment = keyof typeof OVERVIEW_SEGMENTS;
 export type OverviewScope = "current" | "changes" | "added" | "removed";
 export type OverviewSelection = {
   metric: OverviewMetric;
@@ -18,21 +22,37 @@ export type OverviewCohorts = Record<OverviewSegment, OverviewCohort>;
 export function normalizeOverviewSelection(value: unknown): OverviewSelection | null {
   if (!value || typeof value !== "object") return null;
   const { metric, segment, scope } = value as OverviewSelection;
-  if (!["newProducts", "inactiveProducts", "promoProducts", "ctr"].includes(metric) ||
-      !["tile", "sanitary"].includes(segment) ||
+  if (!["newProducts", "activeProducts", "inactiveProducts", "promoProducts", "ctr"].includes(metric) ||
+      !Object.hasOwn(OVERVIEW_SEGMENTS, segment) ||
       !["current", "changes", "added", "removed"].includes(scope)) return null;
   return { metric, segment, scope };
 }
 
-export function segmentOf(product: Pick<ProductLite, "categoryName" | "categoryPath">): OverviewSegment {
+export function segmentOf(product: Pick<ProductLite, "categoryName" | "categoryPath">): "tile" | "sanitary" {
   return /плит|керам|кл[іи]нкер|моза|tile|gres/i.test(`${product.categoryName} ${product.categoryPath}`)
     ? "tile" : "sanitary";
 }
 
+export function overviewSegmentOf(product: Pick<ProductLite, "categoryName" | "categoryPath">): OverviewSegment {
+  const category = `${product.categoryPath} ${product.categoryName}`;
+  if (/х[іи]м[іи]|кле[йї]|затир|затиран|гермет|ґрунт|грунт|chem/i.test(category)) return "chemicals";
+  if (/підлог|наполь|лам[іи]нат|паркет|в[іи]н[іи]л|floor/i.test(category)) return "flooring";
+  if (/станц|електрост|электрост|заряд|генератор|power/i.test(category)) return "power";
+  return segmentOf(product);
+}
+
+export function isActivatedInRange(product: ProductLite, from: string, to: string) {
+  return !product.deleted && product.statusId === 5 && product.statusHistory.some(
+    (change) => change.from !== 5 && change.to === 5 &&
+      new Date(change.at).toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" }) >= from &&
+      new Date(change.at).toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" }) <= to,
+  );
+}
+
 // Counts and drilldowns share the same deduplicated cohorts, including segment moves.
-export function buildOverviewCohorts(current: ProductLite[], previous: ProductLite[]): OverviewCohorts {
+export function buildOverviewCohorts(current: ProductLite[], previous: ProductLite[], legacySegments = false): OverviewCohorts {
   const unique = (products: ProductLite[], segment: OverviewSegment) =>
-    new Map(products.filter((product) => segmentOf(product) === segment).map((product) => [product.id, product]));
+    new Map(products.filter((product) => (legacySegments ? segmentOf(product) : overviewSegmentOf(product)) === segment).map((product) => [product.id, product]));
   const cohort = (segment: OverviewSegment): OverviewCohort => {
     const now = unique(current, segment);
     const before = unique(previous, segment);
@@ -42,11 +62,12 @@ export function buildOverviewCohorts(current: ProductLite[], previous: ProductLi
       removed: [...before.values()].filter((product) => !now.has(product.id)),
     };
   };
-  return { tile: cohort("tile"), sanitary: cohort("sanitary") };
+  return Object.fromEntries(Object.keys(OVERVIEW_SEGMENTS).map((segment) => [segment, cohort(segment as OverviewSegment)])) as OverviewCohorts;
 }
 
 export function overviewMetric(cohorts: OverviewCohorts) {
   return {
+    segments: Object.fromEntries(Object.entries(cohorts).map(([key, value]) => [key, { count: value.current.length, delta: value.added.length - value.removed.length }])),
     tile: cohorts.tile.current.length,
     sanitary: cohorts.sanitary.current.length,
     deltaTile: cohorts.tile.added.length - cohorts.tile.removed.length,
