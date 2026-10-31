@@ -410,12 +410,18 @@ export function PromotionWebFunnelDashboard({
   const dataListId = useId();
   const [draftUrl, setDraftUrl] = useState("");
   const [appliedUrl, setAppliedUrl] = useState(SITEWIDE_URL);
-  const [periodKind, setPeriodKind] = useState<WebFunnelPeriodKind>("week");
+  const [initialRange] = useState(() => {
+    const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+    const from = params.get("funnel_from") || "";
+    const to = params.get("funnel_to") || "";
+    return /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) ? { from, to } : null;
+  });
+  const [periodKind, setPeriodKind] = useState<WebFunnelPeriodKind>(initialRange ? "custom" : "week");
   const [anchor, setAnchor] = useState("");
-  const [customFrom, setCustomFrom] = useState(DEFAULT_CUSTOM_RANGE.from);
-  const [customTo, setCustomTo] = useState(DEFAULT_CUSTOM_RANGE.to);
-  const [appliedCustomFrom, setAppliedCustomFrom] = useState(DEFAULT_CUSTOM_RANGE.from);
-  const [appliedCustomTo, setAppliedCustomTo] = useState(DEFAULT_CUSTOM_RANGE.to);
+  const [customFrom, setCustomFrom] = useState(initialRange?.from ?? DEFAULT_CUSTOM_RANGE.from);
+  const [customTo, setCustomTo] = useState(initialRange?.to ?? DEFAULT_CUSTOM_RANGE.to);
+  const [appliedCustomFrom, setAppliedCustomFrom] = useState(initialRange?.from ?? DEFAULT_CUSTOM_RANGE.from);
+  const [appliedCustomTo, setAppliedCustomTo] = useState(initialRange?.to ?? DEFAULT_CUSTOM_RANGE.to);
   const [channel, setChannel] = useState<WebFunnelChannel>("all");
   const [device, setDevice] = useState<WebFunnelDevice>("all");
   const [utmSource, setUtmSource] = useState("");
@@ -436,7 +442,7 @@ export function PromotionWebFunnelDashboard({
   useEffect(() => {
     if (!appliedUrl) return;
     const controller = new AbortController();
-    const params = new URLSearchParams({ url: appliedUrl, period: periodKind });
+    const params = new URLSearchParams({ url: appliedUrl, period: periodKind, country_scope: "ua-global-created-orders" });
     if (anchor) params.set("anchor", anchor);
     if (periodKind === "custom") {
       params.set("from", appliedCustomFrom);
@@ -610,15 +616,16 @@ export function PromotionWebFunnelDashboard({
               {data.scope === "sitewide" ? "Увесь сайт" : data.normalizedUrl}
             </span>
             <span className="rounded-lg px-2.5 py-1 text-[10px] font-semibold" style={{ background: "#e5f3e5", color: "#107c10" }}>
-              Тільки Україна
+              Воронка · Україна. Замовлення · усі країни
             </span>
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
               {data.scope === "sitewide"
-                ? "Унікальні користувачі кожної події · канал за джерелом сеансу"
-                : "Унікальні користувачі · події після відвідування URL в одній сесії"}
+                ? "Користувачі до Checkout · унікальні ID замовлень · канал за джерелом сеансу"
+                : "Користувачі та унікальні ID замовлень · після відвідування URL в одній сесії"}
             </span>
           </div>
         )}
+        <p className="mt-2 text-[10px]" style={{ color: "var(--text-muted)" }}>До Checkout — користувачі з України. Замовлення — унікальні transaction_id з purchase та payment_unpaid, усі країни. Повторні події одного замовлення не додаються. Конверсія в замовлення порівнює різні географічні групи.</p>
       </section>
 
       {error && (

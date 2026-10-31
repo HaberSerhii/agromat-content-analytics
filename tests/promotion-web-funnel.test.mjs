@@ -27,10 +27,17 @@ test('Meta CPC is returned for every device and period, with a fresh attribution
     assert.ok(result.comparisonsByDevice[device].meta_cpc.previous);
     assert.ok(result.comparisonsByDevice[device].meta_cpc.yearAgo);
   }
-  assert.match(cache.key, /^v2-session-channels:/);
+  assert.match(cache.key, /^v5-ua-funnel-unique-created-orders:/);
+  assert.equal(result.countryFilter, "Ukraine");
+  assert.equal(result.purchaseCountryFilter, "all");
+  assert.match(query.query, /WHEN 'payment_unpaid' THEN 'purchase'/);
+  assert.match(query.query, /FROM UNNEST\(event_params\) WHERE key = 'transaction_id'/);
+  assert.match(query.query, /geo\.country AS country/);
+  assert.match(query.query, /e\.event_name IN \('purchase', 'payment_unpaid'\) OR e\.country = 'Ukraine'/);
+  assert.doesNotMatch(query.query, /AND geo\.country =/);
   assert.equal(query.params.utmSource, 'meta');
   assert.match(query.query, /session_traffic_source_last_click/);
   assert.doesNotMatch(query.query, /collected_traffic_source|\btraffic_source\.source|\bgclid\b/);
-  assert.match(query.query, /COUNT\(DISTINCT user_pseudo_id\)/);
+  assert.match(query.query, /COUNT\(DISTINCT IF\(stage_key = 'purchase', transaction_id, user_pseudo_id\)\)/);
   assert.match(query.query, /FROM base\s+WHERE \(@utmSource = '' OR traffic_source_name = @utmSource\)/);
 });

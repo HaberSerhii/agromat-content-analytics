@@ -40,6 +40,7 @@ export type PromotionWebFunnelResponse = {
   normalizedUrl: string;
   scope: "sitewide" | "page";
   countryFilter: "Ukraine";
+  purchaseCountryFilter: "all";
   periodKind: WebFunnelPeriodKind;
   generatedAt: string;
   navigation: {

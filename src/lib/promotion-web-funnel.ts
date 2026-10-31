@@ -301,11 +301,14 @@ stage_rows AS (
       WHEN 'add_to_cart' THEN 'cart'
       WHEN 'begin_checkout' THEN 'begin_checkout'
       WHEN 'purchase' THEN 'purchase'
+      WHEN 'payment_unpaid' THEN 'purchase'
     END AS stage_key,
-    e.user_pseudo_id
+    e.user_pseudo_id,
+    e.transaction_id
   FROM events e
   JOIN periods p ON e.event_day BETWEEN p.date_from AND p.date_to
-  WHERE e.event_name IN ('session_start', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase')
+  WHERE e.event_name IN ('session_start', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'payment_unpaid')
+    AND (e.event_name IN ('purchase', 'payment_unpaid') OR e.country = 'Ukraine')
 )`
     : `
 landing_candidates AS (
@@ -319,6 +322,7 @@ landing_candidates AS (
   FROM events e
   JOIN periods p ON e.event_day BETWEEN p.date_from AND p.date_to
   WHERE e.event_name = 'page_view'
+    AND e.country = 'Ukraine'
     AND e.session_key IS NOT NULL
     AND REGEXP_REPLACE(
       REGEXP_REPLACE(LOWER(SPLIT(e.page_location, '?')[SAFE_OFFSET(0)]), r'^https?://(www\\.)?', ''),
@@ -346,7 +350,7 @@ step_landing AS (
   FROM landings
 ),
 stage_rows AS (
-  SELECT period_key, channel, device, 'landing' AS stage_key, user_pseudo_id
+  SELECT period_key, channel, device, 'landing' AS stage_key, user_pseudo_id, CAST(NULL AS STRING) AS transaction_id
   FROM step_landing
 
   UNION ALL
@@ -360,12 +364,15 @@ stage_rows AS (
       WHEN 'add_to_cart' THEN 'cart'
       WHEN 'begin_checkout' THEN 'begin_checkout'
       WHEN 'purchase' THEN 'purchase'
+      WHEN 'payment_unpaid' THEN 'purchase'
     END AS stage_key,
-    s.user_pseudo_id
+    s.user_pseudo_id,
+    e.transaction_id
   FROM step_landing s
   JOIN events e USING (session_key)
   WHERE e.event_timestamp >= s.step_ts
-    AND e.event_name IN ('view_item', 'add_to_cart', 'begin_checkout', 'purchase')
+    AND e.event_name IN ('view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'payment_unpaid')
+    AND (e.event_name IN ('purchase', 'payment_unpaid') OR e.country = 'Ukraine')
 )`;
 
   return `
@@ -377,18 +384,23 @@ base AS (
     PARSE_DATE('%Y%m%d', event_date) AS event_day,
     event_timestamp,
     event_name,
+    COALESCE(
+      NULLIF(NULLIF(TRIM(ecommerce.transaction_id), ''), '(not set)'),
+      (SELECT NULLIF(NULLIF(TRIM(COALESCE(value.string_value, CAST(value.int_value AS STRING))), ''), '(not set)')
+       FROM UNNEST(event_params) WHERE key = 'transaction_id')
+    ) AS transaction_id,
     user_pseudo_id,
     CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS ga_session_id,
     (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') AS page_location,
     ${promotionTrafficFieldsSql},
+    geo.country AS country,
     LOWER(device.category) AS device_category
   FROM \`${projectId}.${datasetId}.events_*\`
   WHERE (
       ${suffixFilter}
     )
-    AND event_name IN ('session_start', 'page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase')
-    AND user_pseudo_id IS NOT NULL
-    AND geo.country = 'Ukraine'
+    AND event_name IN ('session_start', 'page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'payment_unpaid')
+    AND (user_pseudo_id IS NOT NULL OR event_name IN ('purchase', 'payment_unpaid'))
 ),
 events AS (
   SELECT
@@ -411,7 +423,8 @@ expanded_dimensions AS (
     selected_channel AS channel,
     selected_device AS device,
     stage_key,
-    user_pseudo_id
+    user_pseudo_id,
+    transaction_id
   FROM stage_rows,
   UNNEST([channel, 'all']) AS selected_channel,
   UNNEST([device, 'all']) AS selected_device
@@ -421,7 +434,7 @@ SELECT
   channel,
   device,
   stage_key,
-  COUNT(DISTINCT user_pseudo_id) AS users
+  COUNT(DISTINCT IF(stage_key = 'purchase', transaction_id, user_pseudo_id)) AS users
 FROM expanded_dimensions
 WHERE channel IN ('all', 'organic', 'cpc', 'meta_cpc', 'direct')
   AND device IN ('all', 'mobile', 'desktop')
@@ -504,7 +517,7 @@ export async function readPromotionWebFunnel(input: {
   const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}:${utmSource}:${utmCampaign}`;
   const rows = await readThroughBigQueryCache<QueryRow[]>({
     namespace: "promotion-web-funnel",
-    key: `v2-session-channels:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
+    key: `v5-ua-funnel-unique-created-orders:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
     load: async () => {
       const bigQuery = getBigQueryClient();
       const [queryRows] = await bigQuery.query({
@@ -550,6 +563,7 @@ export async function readPromotionWebFunnel(input: {
     normalizedUrl,
     scope,
     countryFilter: "Ukraine",
+    purchaseCountryFilter: "all",
     periodKind,
     generatedAt: new Date().toISOString(),
     navigation: {
