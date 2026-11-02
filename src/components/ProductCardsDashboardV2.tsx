@@ -1,4 +1,6 @@
 "use client";
+
+import { ResultFilterButton } from "@/components/ResultFilterButton";
 import { OVERVIEW_SEGMENTS } from "@/lib/product-overview-drilldown";
 /* eslint-disable @next/next/no-img-element -- product images come from the Agromat CDN */
 
@@ -353,7 +355,7 @@ const METRIC_META: Array<{
     label: "Неактивні товари",
     symbol: "!",
     tone: "#d14343",
-    note: "Динаміка від 08.10.2026 · без давніх неактивних",
+    note: "Стали неактивними цього місяця",
   },
   { key: "activeProducts", label: "Активні товари", symbol: "✓", tone: "#0f9d72", note: "Перейшли у статус «В наявності (Купити)» цього місяця" },
   {
@@ -361,7 +363,7 @@ const METRIC_META: Array<{
     label: "Акційні товари",
     symbol: "%",
     tone: "#e28a22",
-    note: "Активні пропозиції на сьогодні",
+    note: "Нові акційні товари цього місяця",
   },
   {
     key: "ctr",
@@ -1709,6 +1711,13 @@ function NewProductsAnalysisPanel({
   onRefresh: () => void | Promise<void>;
   onOpenProduct: (product: ProductOpenTarget) => void;
 }) {
+  const [selection, setSelection] = useState<{key: string; label: string; matches: (row: NewProductAnalysisRow) => boolean} | null>(null);
+  const select = (key: string, label: string, matches: (row: NewProductAnalysisRow) => boolean) =>
+    setSelection(current => current?.key === key ? null : {key, label, matches});
+  const visibleAssignments = selection ? assignments.filter(selection.matches) : assignments;
+  const matchesKpi = (label: string, row: NewProductAnalysisRow) => label === "Опубліковано" ||
+    (label === "Мали продажі" ? (row.measurement?.salesQty || 0) > 0 :
+      label === "Без продажів" ? Boolean(row.measurement) && !(row.measurement!.salesQty > 0) : !row.measurement);
   const [chartMode, setChartMode] = useState<"sales" | "stock">("sales");
   const segmentCount = (
     predicate: (item: NewProductAnalysisRow) => boolean = () => true,
@@ -1827,13 +1836,12 @@ function NewProductsAnalysisPanel({
         ].map((item) => (
           <article
             key={item.label}
+            onClick={() => select(item.label, item.label, row => matchesKpi(item.label, row))}
             className="rounded-2xl border border-[#dfe4ea] bg-white p-4"
           >
-            <div className="text-[9px] font-black uppercase tracking-[.12em] text-[#8a949e]">
-              {item.label}
-            </div>
+            <ResultFilterButton active={selection?.key === item.label} onClick={() => select(item.label, item.label, row => matchesKpi(item.label, row))} className="w-full rounded text-[9px] font-black uppercase tracking-[.12em] text-[#8a949e]">{item.label}</ResultFilterButton>
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-[#f7f9fb] p-2.5">
+              <ResultFilterButton active={selection?.key === `${item.label}:tile`} onClick={() => select(`${item.label}:tile`, `${item.label} · Плитка`, row => row.segment === "tile" && matchesKpi(item.label, row))} className="rounded-xl bg-[#f7f9fb] p-2.5">
                 <div className="text-[8px] font-bold text-[#7d8892]">
                   Плитка
                 </div>
@@ -1843,8 +1851,8 @@ function NewProductsAnalysisPanel({
                 >
                   {formatNumber(item.value.tile)}
                 </div>
-              </div>
-              <div className="rounded-xl bg-[#f7f9fb] p-2.5">
+              </ResultFilterButton>
+              <ResultFilterButton active={selection?.key === `${item.label}:sanitary`} onClick={() => select(`${item.label}:sanitary`, `${item.label} · Сантехніка`, row => row.segment === "sanitary" && matchesKpi(item.label, row))} className="rounded-xl bg-[#f7f9fb] p-2.5">
                 <div className="text-[8px] font-bold text-[#7d8892]">
                   Сантехніка
                 </div>
@@ -1854,7 +1862,7 @@ function NewProductsAnalysisPanel({
                 >
                   {formatNumber(item.value.sanitary)}
                 </div>
-              </div>
+              </ResultFilterButton>
             </div>
             <div className="mt-2 text-[8px] text-[#8b949e]">{item.note}</div>
           </article>
@@ -1877,15 +1885,12 @@ function NewProductsAnalysisPanel({
                 {statusRows.map((row) => (
                   <div
                     key={row.status}
+                    onClick={() => select(`status:${row.status}`, row.status, item => item.statusName === row.status)}
                     className="grid grid-cols-[minmax(0,1fr)_80px_80px] items-center gap-2 rounded-xl bg-[#f7f9fb] px-3 py-2.5 text-[10px]"
                   >
-                    <b className="truncate text-[#45515d]">{row.status}</b>
-                    <span className="text-right text-[#118dff]">
-                      Плитка: <b>{row.tile}</b>
-                    </span>
-                    <span className="text-right text-[#6556d8]">
-                      Сант.: <b>{row.sanitary}</b>
-                    </span>
+                    <ResultFilterButton active={selection?.key === `status:${row.status}`} onClick={() => select(`status:${row.status}`, row.status, item => item.statusName === row.status)} className="truncate rounded font-bold text-[#45515d]">{row.status}</ResultFilterButton>
+                    <ResultFilterButton active={selection?.key === `status:${row.status}:tile`} onClick={() => select(`status:${row.status}:tile`, `${row.status} · Плитка`, item => item.segment === "tile" && item.statusName === row.status)} className="rounded text-right text-[#118dff]">Плитка: <b>{row.tile}</b></ResultFilterButton>
+                    <ResultFilterButton active={selection?.key === `status:${row.status}:sanitary`} onClick={() => select(`status:${row.status}:sanitary`, `${row.status} · Сантехніка`, item => item.segment === "sanitary" && item.statusName === row.status)} className="rounded text-right text-[#118dff]">Сантехніка: <b>{row.sanitary}</b></ResultFilterButton>
                   </div>
                 ))}
               </div>
@@ -1932,28 +1937,26 @@ function NewProductsAnalysisPanel({
           </header>
           <div className="space-y-4 p-4">
             {managerChart.map((item) => (
-              <div key={item.manager}>
+              <div key={item.manager} onClick={() => select(`manager:${item.manager}`, item.manager, row => row.manager === item.manager && Boolean(row.measurement))}>
                 <div className="mb-1.5 flex items-center justify-between text-[10px]">
-                  <b className="text-[#45515d]">{item.manager}</b>
-                  <span className="text-[#8b949e]">
-                    {item.positive + item.negative} перевірено
-                  </span>
+                  <ResultFilterButton active={selection?.key === `manager:${item.manager}`} onClick={() => select(`manager:${item.manager}`, item.manager, row => row.manager === item.manager && Boolean(row.measurement))} className="rounded font-bold text-[#45515d]">{item.manager}</ResultFilterButton>
+                  <ResultFilterButton active={selection?.key === `manager:${item.manager}`} onClick={() => select(`manager:${item.manager}`, item.manager, row => row.manager === item.manager && Boolean(row.measurement))} className="rounded text-[#8b949e]">{item.positive + item.negative} перевірено</ResultFilterButton>
                 </div>
                 <div className="flex h-7 overflow-hidden rounded-lg bg-[#edf0f3]">
-                  <div
+                  <ResultFilterButton active={selection?.key === `${item.manager}:${chartMode}:positive`} onClick={() => select(`${item.manager}:${chartMode}:positive`, `${item.manager} · ${chartMode === "sales" ? "Продажі" : "Залишки"} · Є`, row => row.manager === item.manager && Boolean(row.measurement) && ((chartMode === "sales" ? (row.measurement?.salesQty || 0) : (row.measurement?.stockQty || 0)) > 0) === true)}
                     className="flex items-center justify-center bg-[#23a875] text-[9px] font-black text-white"
                     style={{ width: `${(item.positive / chartMax) * 100}%` }}
                     title={`${chartMode === "sales" ? "З продажами" : "Із залишком"}: ${item.positive}`}
                   >
                     {item.positive || ""}
-                  </div>
-                  <div
+                  </ResultFilterButton>
+                  <ResultFilterButton active={selection?.key === `${item.manager}:${chartMode}:negative`} onClick={() => select(`${item.manager}:${chartMode}:negative`, `${item.manager} · ${chartMode === "sales" ? "Продажі" : "Залишки"} · Немає`, row => row.manager === item.manager && Boolean(row.measurement) && ((chartMode === "sales" ? (row.measurement?.salesQty || 0) : (row.measurement?.stockQty || 0)) > 0) === false)}
                     className="flex items-center justify-center bg-[#e05c68] text-[9px] font-black text-white"
                     style={{ width: `${(item.negative / chartMax) * 100}%` }}
                     title={`${chartMode === "sales" ? "Без продажів" : "Без залишку"}: ${item.negative}`}
                   >
                     {item.negative || ""}
-                  </div>
+                  </ResultFilterButton>
                 </div>
               </div>
             ))}
@@ -1971,6 +1974,7 @@ function NewProductsAnalysisPanel({
         </section>
       </div>
 
+      <div className="flex items-center justify-between text-xs text-[#596571]" aria-live="polite"><span>{selection?.label || "Усі товари"} · {visibleAssignments.length} з {assignments.length}</span>{selection && <button type="button" onClick={() => setSelection(null)} className="font-bold text-[#118dff]">Скинути фільтр</button>}</div>
       <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1480px] border-collapse text-left">
@@ -1997,7 +2001,7 @@ function NewProductsAnalysisPanel({
                   </td>
                 </tr>
               )}
-              {assignments.map((item) => (
+              {visibleAssignments.map((item) => (
                 <tr
                   key={item.id}
                   className="border-b border-[#edf0f2] align-top last:border-0 hover:bg-[#fbfcfd]"
@@ -2059,13 +2063,13 @@ function NewProductsAnalysisPanel({
                   </td>
                 </tr>
               ))}
-              {!loading && !error && assignments.length === 0 && (
+              {!loading && !error && visibleAssignments.length === 0 && (
                 <tr>
                   <td
                     colSpan={8}
                     className="p-12 text-center text-xs text-[#82909d]"
                   >
-                    Нові товари ще не призначені менеджерам
+                    Товарів за вибраним фільтром не знайдено
                   </td>
                 </tr>
               )}
@@ -2165,6 +2169,7 @@ export function ProductCardsDashboardV2() {
       setProductOpenError(cause instanceof Error ? cause.message : "Не вдалося відкрити картку товару");
     }
   }, []);
+  const [resultOutcomeFilter, setResultOutcomeFilter] = useState<ReviewOutcome | "all" | "checked">("all");
   const [resultSearch, setResultSearch] = useState("");
   const [resultCategory, setResultCategory] = useState("");
   const [resultBrand, setResultBrand] = useState("");
@@ -2522,6 +2527,9 @@ export function ProductCardsDashboardV2() {
     resultManager,
     resultMonth,
   ]);
+  const visibleInterventions = filteredInterventions.filter(item => resultOutcomeFilter === "all" ||
+    (resultOutcomeFilter === "checked" ? reviewOutcome(item) !== "waiting" : reviewOutcome(item) === resultOutcomeFilter));
+  const selectResultOutcome = (key: string) => setResultOutcomeFilter(current => current === key ? "all" : key as ReviewOutcome | "all" | "checked");
   const resultOutcomeItems = useMemo(() => {
     const counts: Record<Exclude<ReviewOutcome, "waiting">, number> = {
       growth: 0,
@@ -4028,6 +4036,7 @@ export function ProductCardsDashboardV2() {
                       <button
                         type="button"
                         onClick={() => {
+                          setResultOutcomeFilter("all");
                           setResultSearch("");
                           setResultCategory("");
                           setResultBrand("");
@@ -4048,19 +4057,19 @@ export function ProductCardsDashboardV2() {
                   <div className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">
                     {[
                       {
-                        label: "Оброблено",
+                        key: "all", label: "Оброблено",
                         value: filteredInterventions.length,
                         note: "за вибраними фільтрами",
                         color: "#118dff",
                       },
                       {
-                        label: "Перевірено",
+                        key: "checked", label: "Перевірено",
                         value: resultCheckedTotal,
                         note: "є показники після змін",
                         color: "#6556d8",
                       },
                       {
-                        label: "Є зростання",
+                        key: "growth", label: "Є зростання",
                         value:
                           resultOutcomeItems.find(
                             (item) => item.key === "growth",
@@ -4069,13 +4078,13 @@ export function ProductCardsDashboardV2() {
                         color: "#23a875",
                       },
                       {
-                        label: "Очікують заміру",
+                        key: "waiting", label: "Очікують заміру",
                         value: resultWaitingTotal,
                         note: "контрольна дата попереду",
                         color: "#d58a16",
                       },
                     ].map((item) => (
-                      <article
+                      <ResultFilterButton active={resultOutcomeFilter === item.key} onClick={() => selectResultOutcome(item.key)}
                         key={item.label}
                         className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_4px_16px_rgba(31,42,55,0.04)]"
                       >
@@ -4091,7 +4100,7 @@ export function ProductCardsDashboardV2() {
                         <div className="mt-1 text-[9px] text-[#8b949e]">
                           {item.note}
                         </div>
-                      </article>
+                      </ResultFilterButton>
                     ))}
                   </div>
 
@@ -4109,14 +4118,14 @@ export function ProductCardsDashboardV2() {
                         items={resultOutcomeItems}
                         colors={["#23a875", "#9aa4ae", "#e05c68"]}
                         total={resultCheckedTotal}
-                        activeKey={null}
-                        onSelect={() => {}}
+                        activeKey={resultOutcomeFilter}
+                        onSelect={(item) => selectResultOutcome(item.key)}
                       />
                       <div className="mt-3 space-y-2">
                         {resultOutcomeItems.map((item, index) => (
-                          <div
+                          <ResultFilterButton active={resultOutcomeFilter === item.key} onClick={() => selectResultOutcome(item.key)}
                             key={item.key}
-                            className="flex items-center justify-between rounded-lg bg-[#f7f9fb] px-3 py-2 text-[10px]"
+                            className="flex w-full items-center justify-between rounded-lg bg-[#f7f9fb] px-3 py-2 text-[10px]"
                           >
                             <span className="flex items-center gap-2 font-semibold text-[#596571]">
                               <span
@@ -4132,7 +4141,7 @@ export function ProductCardsDashboardV2() {
                             <b className="tabular-nums text-[#27313c]">
                               {formatNumber(item.count)}
                             </b>
-                          </div>
+                          </ResultFilterButton>
                         ))}
                       </div>
                       <div className="mt-5 border-t border-[#edf0f2] pt-4">
@@ -4147,10 +4156,10 @@ export function ProductCardsDashboardV2() {
                                 className="border-t border-[#edf0f2] first:border-0"
                               >
                                 <td className="py-2 font-semibold text-[#596571]">
-                                  {item.manager}
+                                  <ResultFilterButton active={resultManager === item.manager} onClick={() => setResultManager(current => current === item.manager ? "" : item.manager)} className="w-full rounded">{item.manager}</ResultFilterButton>
                                 </td>
                                 <td className="py-2 text-right font-black tabular-nums text-[#27313c]">
-                                  {formatNumber(item.count)}
+                                  <ResultFilterButton active={resultManager === item.manager} onClick={() => setResultManager(current => current === item.manager ? "" : item.manager)} className="w-full rounded text-right">{formatNumber(item.count)}</ResultFilterButton>
                                 </td>
                               </tr>
                             ))}
@@ -4160,7 +4169,9 @@ export function ProductCardsDashboardV2() {
                     </div>
                   </aside>
 
+
                   <div className="min-w-0 overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                  <div className="border-b border-[#e8edf1] px-4 py-3 text-xs text-[#596571]" aria-live="polite">Показано {visibleInterventions.length} з {filteredInterventions.length} · {resultOutcomeFilter === "all" ? "Усі результати" : resultOutcomeFilter === "checked" ? "Перевірено" : REVIEW_OUTCOME_META[resultOutcomeFilter].label} <button type="button" onClick={() => setResultOutcomeFilter("all")} className="ml-2 font-bold text-[#118dff]">Скинути результат</button></div>
                     <div className="overflow-x-auto overscroll-x-contain">
                       <table className="w-full min-w-[1100px] border-collapse text-left">
                         <thead>
@@ -4185,7 +4196,7 @@ export function ProductCardsDashboardV2() {
                               </td>
                             </tr>
                           )}
-                          {filteredInterventions.map((item) => {
+                          {visibleInterventions.map((item) => {
                             const outcome = reviewOutcome(item);
                             const outcomeMeta = REVIEW_OUTCOME_META[outcome];
                             return (
@@ -4300,7 +4311,7 @@ export function ProductCardsDashboardV2() {
                           })}
                           {!reviewsLoading &&
                             !reviewsError &&
-                            filteredInterventions.length === 0 && (
+                            visibleInterventions.length === 0 && (
                               <tr>
                                 <td
                                   colSpan={7}

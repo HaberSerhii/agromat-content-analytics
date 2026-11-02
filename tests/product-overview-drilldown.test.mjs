@@ -134,6 +134,7 @@ test("new products use the KPI's date, availability and hidden-batch rules and d
 
 test("promotion losses retain removed snapshot products and current status; pagination and facets use the cohort", async () => {
   const { dashboard } = setup({ products: [product(1), product(3, { isOnSale: true }), product(4)], snapshots: {
+    "2026-08-31": [],
     "2026-09-28": [product(1, { isOnSale: true }), product(2, { isOnSale: true })],
   } });
   const result = await dashboard("promoProducts", "tile", "changes");
@@ -183,7 +184,7 @@ test("unavailable CTR, missing snapshots and invalid selectors do not return unr
 });
 
 test("GET and POST carry drilldown filters through the response cache", async () => {
-  const { route } = setup({ products: [product(1, { isOnSale: true }), product(2)] });
+  const { route } = setup({ products: [product(1, { isOnSale: true }), product(2)], snapshots: {"2026-08-31": []} });
   const result = await route.POST({ json: async () => ({ view: "overview", includeAnalytics: false,
     overviewSelection: { metric: "promoProducts", segment: "tile", scope: "current" } }) });
   assert.equal(result.value.total, 1);
@@ -268,4 +269,27 @@ test("all six categories have independent CTR, changes and drilldowns", async ()
   const other = await dashboard("ctr", "other", "current");
   assert.equal(other.total, 1);
   assert.equal(other.metrics.ctr.benchmark, 12.5);
+});
+
+
+test("monthly reset excludes ongoing promotions and previous-month inactive cohorts", async () => {
+  const { dashboard } = setup({
+    products: [product(1, {isOnSale: true}), product(2, {isOnSale: true}), product(3, {statusId: 1})],
+    snapshots: {"2026-08-31": [product(1, {isOnSale: true}), product(3, {statusId: 1})]},
+    tracking: {month: "2026-08", trackedIds: [3], current: [product(3, {statusId: 1})], syncedAt: "2026-08-31T12:00:00Z"},
+  });
+  const promos = await dashboard("promoProducts");
+  assert.equal(promos.metrics.promoProducts.tile, 1);
+  assert.equal(promos.metrics.promoProducts.deltaTile, 1);
+  assert.deepEqual(promos.rows.map(p => p.id), [2]);
+  const inactive = await dashboard("inactiveProducts");
+  assert.equal(inactive.metrics.inactiveProducts.tile, 0);
+  assert.equal(inactive.metrics.inactiveProducts.deltaTile, 0);
+});
+
+test("without an opening snapshot promotions start at zero with no phantom losses", async () => {
+  const { dashboard } = setup({products: [product(1, {isOnSale: true})]});
+  const result = await dashboard("promoProducts");
+  assert.equal(result.metrics.promoProducts.tile, 0);
+  assert.equal(result.metrics.promoProducts.deltaTile, 0);
 });

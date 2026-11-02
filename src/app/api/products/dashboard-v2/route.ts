@@ -816,6 +816,10 @@ async function buildDashboard(input: DashboardFilters) {
   const processedProductCodes = new Set(processedManagerByCode.keys());
   const comparisonDate =
     snapshots.find((snapshot) => snapshot.date < today)?.date || null;
+  const promoBaselineDate = snapshots.find((snapshot) => snapshot.date < ranges.currentFrom)?.date
+    || snapshots.filter((snapshot) => snapshot.date <= today).at(-1)?.date || null;
+  const promoBaselineSnapshot = filters.view === "overview" && promoBaselineDate
+    ? await readDailySnapshot(promoBaselineDate) : null;
   const productAnalysisCacheKey = `${today}:${syncedAt || ""}:${products.length}:${JSON.stringify(requiredAttrs)}`;
   const cachedProductAnalysis =
     filters.view === "products" &&
@@ -890,22 +894,25 @@ async function buildDashboard(input: DashboardFilters) {
       )
     : emptyProducts;
   const inactiveTracking = isOverview ? readInactiveTracking() : null;
-  const trackedInactiveIds = new Set(inactiveTracking?.trackedIds || []);
+  const currentMonthTracked = inactiveTracking?.month === today.slice(0, 7);
+  const trackedInactiveIds = new Set(currentMonthTracked ? inactiveTracking?.trackedIds || [] : []);
   const currentInactive = isOverview
     ? products.filter((product) => trackedInactiveIds.has(product.id) && isInactive(product))
     : emptyProducts;
-  const currentMonthTracked = inactiveTracking?.month === today.slice(0, 7);
   const previousInactive = isOverview && inactiveTracking
-    ? currentMonthTracked ? inactiveTracking.baseline : inactiveTracking.current
+    ? currentMonthTracked ? inactiveTracking.baseline : []
     : emptyProducts;
+  // Existing promotions form the month-opening baseline, never the new month count.
+  const openingPromoIds = new Set((promoBaselineSnapshot?.products || products)
+    .filter((product) => !product.deleted && product.isOnSale).map((product) => product.id));
   const currentPromo = isOverview
     ? products.filter(
-        (product) => !product.deleted && product.isOnSale,
+        (product) => !product.deleted && product.isOnSale && !openingPromoIds.has(product.id),
       )
     : emptyProducts;
-  const previousPromo = isOverview
+  const previousPromo = isOverview && promoBaselineSnapshot && comparisonDate && comparisonDate >= ranges.currentFrom
     ? previousProducts.filter(
-        (product) => !product.deleted && product.isOnSale,
+        (product) => !product.deleted && product.isOnSale && !openingPromoIds.has(product.id),
       )
     : emptyProducts;
 

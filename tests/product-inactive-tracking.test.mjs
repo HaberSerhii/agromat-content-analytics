@@ -7,7 +7,7 @@ import { sourceLoader } from "./helpers/load-source.mjs";
 const product = (id, statusId = 5, extra = {}) => ({ id, statusId, deleted: false, categoryName: "Плитка", categoryPath: "Плитка", ...extra });
 const load = () => sourceLoader()("@/lib/product-inactive-tracking");
 
-test("zero start, 10 tile and 15 sanitary outages, five recoveries, and monthly carryover", () => {
+test("zero start, 10 tile and 15 sanitary outages, five recoveries, and monthly reset", () => {
   const { advanceInactiveTracking } = load();
   const initial = [product(1000, 1), ...Array.from({length: 25}, (_, i) => product(i + 1, 5,
     i >= 10 ? {categoryName: "Сантехніка", categoryPath: "Сантехніка"} : {}))];
@@ -23,10 +23,14 @@ test("zero start, 10 tile and 15 sanitary outages, five recoveries, and monthly 
   assert.equal(state.current.filter(p => p.id > 10).length, 15);
   assert.equal(state.baseline.length, 0);
   state = advanceInactiveTracking(state, recovered, "2026-11-01T12:00:00Z");
-  assert.equal(state.baseline.length, 20);
+  assert.equal(state.baseline.length, 0);
+  assert.equal(state.current.length, 0);
+  assert.deepEqual([...state.trackedIds], []);
   assert.equal(state.current.length - state.baseline.length, 0);
   state = advanceInactiveTracking(state, recovered.map(p => p.id === 6 ? {...p, statusId: 5} : p), "2026-11-02T12:00:00Z");
-  assert.equal(state.current.length - state.baseline.length, -1);
+  assert.equal(state.current.length - state.baseline.length, 0);
+  state = advanceInactiveTracking(state, recovered, "2026-11-03T12:00:00Z");
+  assert.deepEqual(state.current.map(p => p.id), [6]);
   assert.ok(!state.current.some(p => p.id === 1000));
 });
 
@@ -55,5 +59,23 @@ test("tracking state survives process reloads and monthly snapshot pruning", () 
     assert.deepEqual([...state.trackedIds], [1]);
     assert.equal(state.startedAt, "2026-10-08T12:00:00Z");
     assert.equal(state.current.length, 1);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
+
+test("legacy lifetime tracking migrates to this month's outages only", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "inactive-migrate-"));
+  try {
+    fs.writeFileSync(path.join(dir, "inactive-tracking.json"), JSON.stringify({
+      version: 1, month: "2026-11", syncedAt: "2026-11-02T12:00:00Z",
+      trackedIds: [1, 2], previousInactiveIds: [1, 2], baseline: [],
+      current: [product(1, 1, {statusHistory: [{at: "2026-10-10", from: 5, to: 1}]}),
+        product(2, 1, {statusHistory: [{at: "2026-11-01", from: 5, to: 1}]})],
+    }));
+    const load = sourceLoader({globals: {process: {env: {PRODUCT_SNAPSHOTS_DIR: dir}}}});
+    const state = load("@/lib/product-inactive-tracking").readInactiveTracking();
+    assert.equal(state.version, 2);
+    assert.deepEqual([...state.trackedIds], [2]);
+    assert.equal(state.baseline.length, 0);
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
 });

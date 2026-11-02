@@ -1,5 +1,7 @@
 "use client";
 
+import { ResultFilterButton } from "@/components/ResultFilterButton";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CONTENT_REVIEW_MANAGERS } from "@/lib/content-review-types";
 import type {
@@ -95,6 +97,7 @@ export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product:
   const [data, setData] = useState<SearchControlResponse>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [summaryFilter, setSummaryFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [manager, setManager] = useState("all");
   const [minNoResults, setMinNoResults] = useState(false);
@@ -129,17 +132,36 @@ export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product:
       if (decline === "ctr" && row.ctrScore !== -1) return false;
       if (decline === "atc" && row.atcScore !== -1) return false;
       if (outOfStock && row.productsOutOfStock <= 0) return false;
+      if (decline === "ctrUp" && row.ctrScore !== 1) return false;
+      if (decline === "atcUp" && row.atcScore !== 1) return false;
+      if (summaryFilter === "zero" && row.multisearchNoResultsCount !== 0) return false;
+      if (summaryFilter === "sales" && !(Number(row.uniqueSales) > 0)) return false;
+      if (summaryFilter === "measured" && !row.after) return false;
+      if (summaryFilter === "waiting" && row.after) return false;
+      if (summaryFilter === "ctr" && row.ctrScore == null) return false;
+      if (summaryFilter === "atc" && row.atcScore == null) return false;
       return true;
     });
-  }, [data.rows, decline, manager, minNoResults, outOfStock, search]);
+  }, [data.rows, decline, manager, minNoResults, outOfStock, search, summaryFilter]);
+
+  const selectSummary = (key: string, selectedManager = "all", direction = "all") => {
+    const same = summaryFilter === key && manager === selectedManager && decline === direction
+      && outOfStock === (key === "stock");
+    setSummaryFilter(same ? "all" : key);
+    setManager(same ? "all" : selectedManager);
+    setDecline(same ? "all" : direction);
+    setOutOfStock(!same && key === "stock");
+    setMinNoResults(false);
+    setSearch("");
+  };
 
   const kpis = [
-    { label: "Опрацьовано запитів", value: data.stats.processedQueries, note: `${data.stats.waitingQueries} очікують першого заміру`, color: "#118dff" },
-    { label: "MS без результату = 0", value: data.stats.zeroNoResultsQueries, note: "за останній контрольний місяць", color: "#23a875" },
-    { label: "Унікальні продажі", value: data.stats.uniqueSales, note: "унікальні чеки з залученими товарами", color: "#f39c4a" },
-    { label: "Ефект CTR", value: data.stats.ctrScore, note: "+1 покращення · −1 погіршення", color: scoreTone(data.stats.ctrScore) },
-    { label: "Ефект ATC", value: data.stats.atcScore, note: "+1 покращення · −1 погіршення", color: scoreTone(data.stats.atcScore) },
-    { label: "Товарів без залишків", value: data.stats.productsOutOfStock, note: "унікальні IDD у запитах", color: "#dc5a64" },
+    { key: "all", label: "Опрацьовано запитів", value: data.stats.processedQueries, note: `${data.stats.waitingQueries} очікують першого заміру`, color: "#118dff" },
+    { key: "zero", label: "MS без результату = 0", value: data.stats.zeroNoResultsQueries, note: "за останній контрольний місяць", color: "#23a875" },
+    { key: "sales", label: "Унікальні продажі", value: data.stats.uniqueSales, note: "унікальні чеки з залученими товарами", color: "#f39c4a" },
+    { key: "ctr", label: "Ефект CTR", value: data.stats.ctrScore, note: "+1 покращення · −1 погіршення", color: scoreTone(data.stats.ctrScore) },
+    { key: "atc", label: "Ефект ATC", value: data.stats.atcScore, note: "+1 покращення · −1 погіршення", color: scoreTone(data.stats.atcScore) },
+    { key: "stock", label: "Товарів без залишків", value: data.stats.productsOutOfStock, note: "унікальні IDD у запитах", color: "#dc5a64" },
   ];
 
   return (
@@ -164,25 +186,25 @@ export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product:
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {kpis.map((item) => (
-          <article key={item.label} className="rounded-2xl border border-[#dfe4ea] bg-white p-4">
+          <ResultFilterButton active={item.key === "stock" ? outOfStock : summaryFilter === item.key} onClick={() => selectSummary(item.key)} key={item.label} className="rounded-2xl border border-[#dfe4ea] bg-white p-4">
             <div className="text-[8px] font-black uppercase tracking-[.11em] text-[#82909d]">{item.label}</div>
             <div className="mt-2 text-2xl font-black" style={{ color: item.color }}>{item.value > 0 && item.label.startsWith("Ефект") ? "+" : ""}{number(item.value)}</div>
             <div className="mt-1 text-[8px] leading-4 text-[#7d8892]">{item.note}</div>
-          </article>
+          </ResultFilterButton>
         ))}
       </section>
 
       <section className="grid gap-3 md:grid-cols-2">
         {data.managers.map((item) => (
-          <article key={item.manager} className="rounded-2xl border border-[#dfe4ea] bg-white p-4">
+          <article key={item.manager} onClick={() => selectSummary("all", item.manager)} className="rounded-2xl border border-[#dfe4ea] bg-white p-4">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-black text-[#27313c]">{item.manager}</div>
-              <div className="rounded-full bg-[#edf6ff] px-3 py-1 text-[9px] font-black text-[#0b6fc2]">{item.queries} запитів</div>
+              <ResultFilterButton active={manager === item.manager} onClick={() => selectSummary("all", item.manager)} className="rounded text-xs font-black text-[#27313c]">{item.manager}</ResultFilterButton>
+              <ResultFilterButton active={manager === item.manager && summaryFilter === "all"} onClick={() => selectSummary("all", item.manager)} className="rounded-full bg-[#edf6ff] px-3 py-1 text-[9px] font-black text-[#0b6fc2]">{item.queries} запитів</ResultFilterButton>
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl bg-[#f5f7f9] p-2"><b className="text-sm text-[#45515d]">{item.measured}</b><div className="text-[7px] text-[#8a949e]">заміряно</div></div>
-              <div className="rounded-xl bg-[#eef9f4] p-2"><b className="text-sm text-[#087a55]">CTR +{item.improvedCtr} / −{item.declinedCtr}</b><div className="text-[7px] text-[#719083]">покращено / гірше</div></div>
-              <div className="rounded-xl bg-[#f2f0ff] p-2"><b className="text-sm text-[#6556d8]">ATC +{item.improvedAtc} / −{item.declinedAtc}</b><div className="text-[7px] text-[#80799c]">покращено / гірше</div></div>
+              <ResultFilterButton active={summaryFilter === "measured" && manager === item.manager} onClick={() => selectSummary("measured", item.manager)} className="rounded-xl bg-[#f5f7f9] p-2 text-center"><b className="text-sm text-[#45515d]">{item.measured}</b><div className="text-[7px] text-[#8a949e]">заміряно</div></ResultFilterButton>
+              <div onClick={event => {event.stopPropagation(); selectSummary("ctr", item.manager);}} className="cursor-pointer rounded-xl bg-[#eef9f4] p-2"><div className="flex flex-wrap items-center justify-center gap-1 text-sm font-bold"><ResultFilterButton active={summaryFilter === "ctr" && manager === item.manager} onClick={() => selectSummary("ctr", item.manager)} className="rounded">CTR</ResultFilterButton><ResultFilterButton aria-label={`${item.manager} · CTR покращення`} active={manager === item.manager && decline === "ctrUp"} onClick={() => selectSummary("all", item.manager, "ctrUp")} className="rounded px-1">+{item.improvedCtr}</ResultFilterButton><span>/</span><ResultFilterButton aria-label={`${item.manager} · CTR погіршення`} active={manager === item.manager && decline === "ctr"} onClick={() => selectSummary("all", item.manager, "ctr")} className="rounded px-1">−{item.declinedCtr}</ResultFilterButton></div><div className="text-[7px] text-[#719083]">покращено / гірше</div></div>
+              <div onClick={event => {event.stopPropagation(); selectSummary("atc", item.manager);}} className="cursor-pointer rounded-xl bg-[#f2f0ff] p-2"><div className="flex flex-wrap items-center justify-center gap-1 text-sm font-bold"><ResultFilterButton active={summaryFilter === "atc" && manager === item.manager} onClick={() => selectSummary("atc", item.manager)} className="rounded">ATC</ResultFilterButton><ResultFilterButton aria-label={`${item.manager} · ATC покращення`} active={manager === item.manager && decline === "atcUp"} onClick={() => selectSummary("all", item.manager, "atcUp")} className="rounded px-1">+{item.improvedAtc}</ResultFilterButton><span>/</span><ResultFilterButton aria-label={`${item.manager} · ATC погіршення`} active={manager === item.manager && decline === "atc"} onClick={() => selectSummary("all", item.manager, "atc")} className="rounded px-1">−{item.declinedAtc}</ResultFilterButton></div><div className="text-[7px] text-[#80799c]">покращено / гірше</div></div>
             </div>
           </article>
         ))}
@@ -198,6 +220,8 @@ export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product:
             </select>
             <select value={decline} onChange={(event) => setDecline(event.target.value)} className="rounded-xl border border-[#d8dde3] bg-white px-3 py-2.5 text-[10px] font-bold text-[#596571]">
               <option value="all">Будь-яка ефективність</option>
+              <option value="ctrUp">Покращився CTR</option>
+              <option value="atcUp">Покращився ATC</option>
               <option value="any">Погіршився CTR або ATC</option>
               <option value="ctr">Погіршився CTR</option>
               <option value="atc">Погіршився ATC</option>
@@ -205,6 +229,10 @@ export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product:
             <button type="button" onClick={() => setMinNoResults((value) => !value)} className="rounded-xl border px-3 py-2.5 text-[10px] font-black" style={minNoResults ? { borderColor: "#dc5a64", background: "#fff0f1", color: "#bd3b3b" } : { borderColor: "#d8dde3", background: "white", color: "#596571" }}>MS без результату &gt; 1</button>
             <button type="button" onClick={() => setOutOfStock((value) => !value)} className="rounded-xl border px-3 py-2.5 text-[10px] font-black" style={outOfStock ? { borderColor: "#dc5a64", background: "#fff0f1", color: "#bd3b3b" } : { borderColor: "#d8dde3", background: "white", color: "#596571" }}>Є товари без залишків</button>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e8edf1] px-4 py-3 text-[10px] text-[#596571]" aria-live="polite">
+          <span>Показано {number(rows.length)} з {number(data.rows.length)} · {({all: "Усі запити", zero: "MS без результату = 0", sales: "Є продажі", measured: "Заміряно", waiting: "Очікують заміру", ctr: "Є замір CTR", atc: "Є замір ATC", stock: "Є товари без залишків"} as Record<string, string>)[summaryFilter]}</span>
+          <div className="flex gap-3"><ResultFilterButton active={summaryFilter === "waiting"} onClick={() => selectSummary("waiting")} className="rounded text-[#d58a16]">Очікують заміру: {number(data.stats.waitingQueries)}</ResultFilterButton><button type="button" onClick={() => {setSummaryFilter("all"); setManager("all"); setDecline("all"); setSearch(""); setMinNoResults(false); setOutOfStock(false);}} className="font-black text-[#118dff]">Скинути фільтри</button></div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left">
