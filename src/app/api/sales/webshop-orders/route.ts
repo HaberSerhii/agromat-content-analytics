@@ -11,6 +11,7 @@ import { marketingDailySeries } from "@/lib/marketing-daily-series";
 import { NextResponse } from "next/server";
 import { getServerResult, peekServerResult } from "@/lib/server-result-cache";
 import {
+  readReviewPeriodSales,
   readSalesProductCategoryLookup,
   readSalesWebshopManagerLookup,
   readSalesWebshopReturnLookup,
@@ -355,7 +356,31 @@ export async function GET(req: Request) {
     const utmCampaign = url.searchParams.get("utm_campaign") || "";
     const promotionPricePosition = normalizePromotionPricePosition(url.searchParams.get("promotion_price_position"));
 
-    const scopeKey = `${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}`;
+    const salesCodesValue = url.searchParams.get("sales_codes") || "";
+    let reviewSales: Awaited<ReturnType<typeof readReviewPeriodSales>> | null = null;
+    if (salesCodesValue) {
+      if (!isDashboardRequest(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      try { validateGa4Dates(dateFrom, dateTo); }
+      catch { return NextResponse.json({ error: "Некоректний період продажів" }, { status: 400 }); }
+      const productCodes = salesCodesValue.split(",").map(Number);
+      if (productCodes.some(code => !Number.isSafeInteger(code) || code <= 0)) return NextResponse.json({ error: "Некоректні коди товарів" }, { status: 400 });
+      reviewSales = await readReviewPeriodSales({ from: dateFrom, to: dateTo, productCodes });
+    }
+    async function loadScopedOrders(withMovements = false) {
+      if (!reviewSales) return fetchCompleteOrders(dateFrom, dateTo, null, withMovements);
+      const matched: ApiOrder[] = [];
+      // ERP webshop_id is the authoritative relation; never apply the sales date to receipt creation.
+      const ids = reviewSales.webshopIds;
+      for (let start = 0; start < ids.length; start += 6) {
+        const batch = await Promise.all(ids.slice(start, start + 6).map(async id => {
+          const payload = await fetchOrders(new URLSearchParams({ search: id, per_page: "50", with_movements: "true" }));
+          return payload.data.find(order => String(order.id) === id) || null;
+        }));
+        matched.push(...batch.filter((order): order is ApiOrder => order != null));
+      }
+      return matched;
+    }
+    const scopeKey = `${salesCodesValue}|${cacheDayInKyiv()}|${dateFrom || "all"}|${dateTo || "all"}`;
     const p2Namespace = "webshop-orders-background-p2-v1";
     const p2Result = peekServerResult<ApiOrder[]>(p2Namespace, scopeKey);
     const [baseResult, returnLookup, managerLookup, onlinePayments] = await Promise.all([
@@ -365,7 +390,7 @@ export async function GET(req: Request) {
         ttlMs: SALES_AUTO_REFRESH_MS,
         staleMs: SALES_AUTO_REFRESH_MS,
         maxEntries: 16,
-        load: () => fetchCompleteOrders(dateFrom, dateTo, null),
+        load: () => loadScopedOrders(),
       }),
       readSalesWebshopReturnLookup(),
       readSalesWebshopManagerLookup(),
@@ -374,7 +399,7 @@ export async function GET(req: Request) {
     // Background enrichment never holds up the base registry. Concurrent readers share the job.
     void getServerResult({ namespace: p2Namespace, key: scopeKey, ttlMs: SALES_AUTO_REFRESH_MS,
       staleMs: SALES_AUTO_REFRESH_MS, maxEntries: 16,
-      load: () => fetchCompleteOrders(dateFrom, dateTo, null, true),
+      load: () => loadScopedOrders(true),
     }).catch(error => console.warn("[webshop] background P2 refresh failed", error instanceof Error ? error.message : error));
     const ordersResult = p2Result || baseResult;
     const returnedWebshopIds = new Set(returnLookup.keys());
@@ -448,6 +473,13 @@ export async function GET(req: Request) {
       data: filteredOrders.slice(start, start + DETAIL_PAGE_SIZE),
       meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: Boolean(p2Result) },
       summary: { ...summary, categoryRevenue },
+      ...(reviewSales ? { reviewSales: {
+        quantity: reviewSales.quantity, revenue: reviewSales.revenue, orders: reviewSales.orders,
+        withoutWebshop: reviewSales.withoutWebshop,
+        linked: reviewSales.webshopIds.length, found: ordersResult.value.length,
+        missingIds: reviewSales.webshopIds.filter(id => !ordersResult.value.some(order => String(order.id) === id)),
+        documents: reviewSales.documents,
+      } } : {}),
       productSales: goodsRefs.size ? {
         orders: filteredOrders.length,
         quantity: filteredOrders.reduce((sum, order) => sum + order.items.reduce((qty, item) => qty + (goodsRefs.has(Number(item.goods_ref)) ? Number(item.quantity) || 0 : 0), 0), 0),

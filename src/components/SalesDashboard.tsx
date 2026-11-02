@@ -297,6 +297,11 @@ type SalesWebshopOrder = {
 
 type UtmOption = { value: string; label: string; count: number };
 type SalesWebshopOrdersDataset = {
+  reviewSales?: {
+    quantity: number; revenue: number; orders: number; withoutWebshop: number;
+    linked: number; found: number; missingIds: string[];
+    documents: Array<{ docsRef: string; number: string; webshopId: string; shippedDate: string; quantity: number; revenue: number; items: Array<{ code: string; name: string; qty: number; revenue: number }> }>;
+  };
   origins?: Array<{ key: string; label: string; docs: number; revenue: number; averageOrder: number }>;
   onlinePayments?: OnlinePaymentsAnalysisData;
   utm?: { sources: UtmOption[]; campaigns: UtmOption[] };
@@ -1498,6 +1503,7 @@ function CancellationProductsDialog({
 }
 
 export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
+  const [reviewSalesCodes, setReviewSalesCodes] = useState("");
   const [productGoodsRefs, setProductGoodsRefs] = useState("");
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [view, setView] = useState<SalesDashboardView>("overview");
@@ -1508,6 +1514,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     if (params.get("view") !== "webshop") return;
     setView("webshop");
     setProductGoodsRefs(params.get("goods_refs") || "");
+    setReviewSalesCodes(params.get("sales_codes") || "");
     if (params.get("from")) setDateFrom(params.get("from")!);
     if (params.get("to")) setDateTo(params.get("to")!);
     setWebshopOriginSource(params.get("origin_source") || "all");
@@ -1685,6 +1692,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     let alive = true;
     const controller = new AbortController();
     const params = new URLSearchParams({ page: String(webshopOrdersPage), origin_source: webshopOriginSource });
+    if (reviewSalesCodes) params.set("sales_codes", reviewSalesCodes);
     if (productGoodsRefs) params.set("goods_refs", productGoodsRefs);
     if (webshopQuery.trim()) params.set("search", webshopQuery.trim());
     if (dateFrom) params.set("from", dateFrom);
@@ -1718,7 +1726,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [productGoodsRefs, dateFrom, dateTo, view, webshopOrdersPage, webshopQuery, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick, webshopEnrichmentTick]);
+  }, [reviewSalesCodes, productGoodsRefs, dateFrom, dateTo, view, webshopOrdersPage, webshopQuery, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick, webshopEnrichmentTick]);
 
   useEffect(() => {
     const category = expandedCategory;
@@ -2145,6 +2153,17 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
 
             {view === "checkout" && <AbandonedCheckout from={dateFrom} to={dateTo} refreshTick={refreshTick} />}
 
+            {view === "webshop" && reviewSalesCodes && <section className="mb-3 rounded-lg border border-[#cfe3f5] bg-[#eef7ff] p-4 text-xs">
+              <div className="font-bold">Фактичні продажі товарів {reviewSalesCodes} · {dateFrom} — {dateTo}</div>
+              <p className="mt-1">Період застосовується до створення та повного відвантаження в обліковій системі. Чеки Webshop знайдено за зв’язком із цими продажами незалежно від дати створення чека.</p>
+              {webshopOrders?.reviewSales && <>
+                <div className="mt-2 font-bold">{fmtNum(webshopOrders.reviewSales.quantity)} од. · {fmtMoney(webshopOrders.reviewSales.revenue)} · {webshopOrders.reviewSales.orders} документів продажу</div>
+                <div className="mt-1">Зв’язано з Webshop: {webshopOrders.reviewSales.linked} · Знайдено чеків: {webshopOrders.reviewSales.found} · Продажів без Webshop: {webshopOrders.reviewSales.withoutWebshop}</div>
+                {webshopOrders.reviewSales.missingIds.length > 0 && <div className="mt-1 text-[#a36b0e]">Чеки не знайдено в API: {webshopOrders.reviewSales.missingIds.join(", ")}. Пов’язані продажі залишаються в розрахунку.</div>}
+                <details className="mt-3"><summary className="cursor-pointer font-bold text-[#118dff]">Документи та продані товари</summary><div className="mt-2 overflow-auto"><table className="w-full text-left text-[10px]"><thead><tr><th className="p-2">Документ / відвантаження</th><th className="p-2">Продані товари</th><th className="p-2">Кількість / сума</th><th className="p-2">Webshop ID</th></tr></thead><tbody>{webshopOrders.reviewSales.documents.map(doc => <tr key={doc.docsRef || doc.number} className="border-t border-[#cfe3f5]"><td className="p-2">{doc.number}<div>{doc.shippedDate}</div></td><td className="p-2">{doc.items.map((item, index) => <div key={`${item.code}-${index}`}>{item.code} · {item.name} · {fmtNum(item.qty)} од.</div>)}</td><td className="p-2">{fmtNum(doc.quantity)} од. · {fmtMoney(doc.revenue)}</td><td className="p-2">{doc.webshopId || "Без зв’язку з Webshop"}</td></tr>)}</tbody></table></div></details>
+              </>}
+              <a href="/sales?view=webshop" className="mt-2 inline-block font-bold text-[#118dff] underline">Скинути фільтр продажів</a>
+            </section>}
             {view === "webshop" && productGoodsRefs && <div className="mb-3 rounded-lg bg-[#eef7ff] p-3 text-xs">Точний фільтр товарів (goods_ref): {productGoodsRefs} · {dateFrom} — {dateTo} <a href="/sales?view=webshop" className="ml-3 font-bold text-[#118dff] underline">Скинути фільтр товарів</a></div>}
             {view === "webshop" && <WebshopOrdersRegister query={webshopQuery} onQueryChange={(value) => { setWebshopQuery(value); setWebshopOrdersPage(1); }} originSource={webshopOriginSource} onOriginSourceChange={(value) => { setWebshopOriginSource(value); setWebshopOrdersPage(1); }} paymentStateFilter={webshopPaymentStateFilter} onPaymentStateChange={(value) => { setWebshopPaymentStateFilter(value); setWebshopOrdersPage(1); }} dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} utmSource={utmSource} utmCampaign={utmCampaign} onUtmSourceChange={(value) => { setUtmSource(value); setWebshopOrdersPage(1); }} onUtmCampaignChange={(value) => { setUtmCampaign(value); setWebshopOrdersPage(1); }} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
 

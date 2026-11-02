@@ -1,3 +1,4 @@
+import { summarizeReviewPeriodSales } from "@/lib/review-period-sales";
 import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import { splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, filterPromotionSalesRows, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
@@ -2315,4 +2316,9 @@ export async function readPromotionSalesDataset(input: {
       })),
     },
   };
+}
+
+export async function readReviewPeriodSales(input: { from: string; to: string; productCodes: number[] }) {
+  const { rows } = await readCachedSalesRows();
+  return summarizeReviewPeriodSales(rows.filter(row => !isExcludedAnalyticsOrder(row)), input);
 }
