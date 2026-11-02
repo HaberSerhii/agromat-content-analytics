@@ -572,7 +572,7 @@ function MetricCard({
   const metric = isCtr ? data?.metrics.ctr : data?.metrics[meta.key];
 
   return (
-    <article className="relative rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_1px_2px_rgba(31,41,55,.05)]">
+    <article className={`relative rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_1px_2px_rgba(31,41,55,.05)] ${isCtr ? "col-span-full" : ""}`}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h3 className="text-[11px] font-black text-[#626d78]">
@@ -592,7 +592,7 @@ function MetricCard({
           {meta.symbol}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-y-4 divide-x divide-[#e6e9ec]">
+      <div className={`grid grid-cols-2 gap-y-4 divide-x divide-[#e6e9ec] ${isCtr ? "md:grid-cols-3 xl:grid-cols-6" : ""}`}>
         {(Object.keys(OVERVIEW_SEGMENTS) as Array<keyof typeof OVERVIEW_SEGMENTS>)
           .map((segment) => {
           const label = OVERVIEW_SEGMENTS[segment];

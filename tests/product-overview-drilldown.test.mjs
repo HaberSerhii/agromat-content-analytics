@@ -21,7 +21,7 @@ function setup({ products = [], snapshots = {}, ctr = [], failCtr = false, track
   }
   const load = sourceLoader({
     globals: { Date: FixedDate },
-    append: { [routeName]: "\nexport { buildDashboard };" },
+    append: { [routeName]: "\nexport { buildDashboard, categoryCtrMonths, dateInKyiv };" },
     mocks: {
       "next/server": { NextResponse: class { constructor(value) { this.value = JSON.parse(value); } } },
       "@google-cloud/bigquery": { BigQuery: class {} },
@@ -292,4 +292,26 @@ test("without an opening snapshot promotions start at zero with no phantom losse
   const result = await dashboard("promoProducts");
   assert.equal(result.metrics.promoProducts.tile, 0);
   assert.equal(result.metrics.promoProducts.deltaTile, 0);
+});
+
+
+test("category trend targets the current month and its historical seasonality", () => {
+  const { route } = setup();
+  const november = plain(route.categoryCtrMonths("2026-11-02"));
+  assert.equal(november.forecastMonth, "2026-11");
+  assert.deepEqual(november.currentThree, ["2026-08", "2026-09", "2026-10"]);
+  assert.deepEqual(november.seasonalPairs, [2023, 2024, 2025].map(year => ({
+    year, previousMonth: `${year}-10`, targetMonth: `${year}-11`,
+  })));
+  assert.ok(november.queryMonths.includes("2025-11"));
+  assert.ok(!november.queryMonths.includes("2025-12"));
+  assert.equal(route.categoryCtrMonths("2026-11-30").forecastMonth, "2026-11");
+  assert.equal(route.categoryCtrMonths("2026-12-01").forecastMonth, "2026-12");
+  const january = plain(route.categoryCtrMonths("2027-01-01"));
+  assert.equal(january.forecastMonth, "2027-01");
+  assert.deepEqual(january.seasonalPairs[2], {
+    year: 2026, previousMonth: "2025-12", targetMonth: "2026-01",
+  });
+  assert.equal(route.categoryCtrMonths(route.dateInKyiv(new Date("2026-11-30T21:59:59Z"))).forecastMonth, "2026-11");
+  assert.equal(route.categoryCtrMonths(route.dateInKyiv(new Date("2026-11-30T22:00:00Z"))).forecastMonth, "2026-12");
 });

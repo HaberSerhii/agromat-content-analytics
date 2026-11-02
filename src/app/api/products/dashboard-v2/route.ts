@@ -293,7 +293,8 @@ function categoryCtrMonths(today: string) {
   const lastYear = [-3, -2, -1, 0].map((offset) =>
     monthKey(year - 1, currentMonthIndex + offset),
   );
-  const forecastDate = new Date(Date.UTC(year, currentMonthIndex + 1, 1));
+  // Target the current Kyiv calendar month; recent signals use complete months.
+  const forecastDate = new Date(Date.UTC(year, currentMonthIndex, 1));
   const forecastYear = forecastDate.getUTCFullYear();
   const forecastMonthIndex = forecastDate.getUTCMonth();
   const seasonalPairs = [-3, -2, -1].map((yearOffset) => {
