@@ -33,6 +33,8 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean, refresh 
   try {
     const key = JSON.stringify({
       compact,
+      businessSegment: filter.businessSegment,
+      salesCategory: filter.salesCategory,
       from: filter.from || "",
       to: filter.to || "",
       productCodes: Array.isArray(filter.productCodes)
@@ -77,6 +79,8 @@ export async function GET(req: Request) {
   const pricePosition = normalizePromotionPricePosition(url.searchParams.get("price_position"));
   const positionCodes = await readPricePositionCodes(pricePosition);
   return salesResponse({
+    businessSegment: url.searchParams.get("segment") || undefined,
+    salesCategory: url.searchParams.getAll("sales_category"),
     from: url.searchParams.get("from") || undefined,
     to: url.searchParams.get("to") || undefined,
     productCodes: positionCodes

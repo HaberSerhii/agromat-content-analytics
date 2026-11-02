@@ -1,6 +1,6 @@
 import { summarizeReviewPeriodSales } from "@/lib/review-period-sales";
 import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
-import { splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
+import { classifySalesCategory, splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, filterPromotionSalesRows, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -259,6 +259,7 @@ export type SalesDataset = {
     months: SalesMonthSummary[];
     segments: SalesBucketSummary[];
     shippedSegments: SalesBucketSummary[];
+    categoryOptions: Array<{ label: string; segment: BusinessSegment }>;
     otherSalesGroups: Array<{ label: string; revenue: number }>;
     otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: SalesBucketSummary[];
@@ -348,6 +349,8 @@ export type SalesDateFilter = {
   productCodes?: string | number[];
   statuses?: string | string[];
   channel?: SalesChannel;
+  businessSegment?: string;
+  salesCategory?: string | string[];
 };
 
 export type SalesDatasetOptions = {
@@ -1095,6 +1098,25 @@ function buildDataset(
   dateFilter?: SalesDateFilter,
   options: SalesDatasetOptions = {},
 ): SalesDataset {
+  const categoryOptions = [...new Map(rows.flatMap(row => row.items
+    .filter(item => !isSalesPlanService(item))
+    .map(item => { const segment = classifySalesCategory(item.categoryKey || "").segment;
+      return [`${segment}:${item.category}`, { label: item.category, segment }] as const; }))).values()]
+    .sort((a, b) => a.label.localeCompare(b.label, "uk"));
+  const selectedCategories = new Set((Array.isArray(dateFilter?.salesCategory) ? dateFilter.salesCategory : [dateFilter?.salesCategory]).filter(Boolean));
+  if (dateFilter?.businessSegment || selectedCategories.size) {
+    rows = rows.flatMap(sourceRow => {
+      const row = goodsOnlySalesRow(sourceRow);
+      if (!row) return [];
+      const codes = new Set(row.items.filter(item =>
+        (!dateFilter?.businessSegment || classifySalesCategory(item.categoryKey || "").segment === dateFilter?.businessSegment)
+        && (!selectedCategories.size || selectedCategories.has(item.category))
+      ).map(item => Number(item.code)));
+      if (!codes.size) return [];
+      const scoped = scopeSalesRowToProductCodes(row, codes);
+      return scoped ? [scoped] : [];
+    });
+  }
   const filter = getEffectiveFilter(dateFilter);
   const categoryProductsMode = options.categoryProducts ?? "all";
   const productCodeSet = new Set(filter.productCodes);
@@ -1530,6 +1552,7 @@ function buildDataset(
         })), filter.from, filter.to),
       months: monthList,
       segments: segmentList,
+      categoryOptions,
       shippedSegments: finishSegmentBuckets(shippedSegments),
       otherSalesGroups: [...otherSalesGroups].map(([label, revenue]) => ({ label, revenue })),
       otherSalesRemainder: [...otherSalesRemainder].map(([label, revenue]) => ({ label, revenue })).sort((a, b) => b.revenue - a.revenue),

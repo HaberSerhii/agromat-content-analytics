@@ -165,6 +165,7 @@ type SalesDataset = {
     months: Array<{ month: string; docs: number; goods: number; revenue: number }>;
     segments: BucketSummary[];
     shippedSegments: BucketSummary[];
+    categoryOptions: Array<{ label: string; segment: string }>;
     otherSalesGroups: Array<{ label: string; revenue: number }>;
     otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: BucketSummary[];
@@ -824,20 +825,56 @@ function StatusFilter({
   );
 }
 
-function DocumentSegmentFilter({ value, onChange }: { value: DocumentSegment; onChange: (value: DocumentSegment) => void }) {
+function DocumentSegmentFilter({ value, onChange, category, categories, onCategoryChange }: {
+  value: DocumentSegment; onChange: (value: DocumentSegment) => void;
+  category: string[]; categories: Array<{ label: string; segment: string }>; onCategoryChange: (value: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  const options = [...new Set(categories.filter(item => value === "Усі" || item.segment === value).map(item => item.label))];
   return (
     <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
       <div>
         <div className="text-[10px] font-black uppercase tracking-[.12em] text-[#7b8691]">Сегмент продажів</div>
         <div className="mt-1 text-[10px] text-[#8a939c]">Суми, кількість і частки перераховуються всередині вибраного сегмента</div>
       </div>
-      <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
+      <div className="flex flex-wrap items-center gap-3"><div className="inline-flex h-[34px] items-stretch rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
         {(["Усі", "Плитка", "Сантехніка", "Інше"] as const).map((segment) => (
           <button key={segment} type="button" onClick={() => onChange(segment)} aria-pressed={value === segment} className="rounded-md px-3 py-1.5 text-[10px] font-bold transition-colors" style={{ background: value === segment ? "#118dff" : "transparent", color: value === segment ? "#fff" : "#687582" }}>
             {segment}
           </button>
         ))}
       </div>
+      <div ref={containerRef} className="relative flex items-center gap-2 text-[10px] font-bold text-[#687582]">
+        <span>Категорії</span>
+        <button type="button" aria-label="Категорії продажів" aria-expanded={open} onClick={() => setOpen(current => !current)} className="flex h-[34px] max-w-[320px] items-center gap-3 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#687582] focus-visible:outline-[#118dff]">
+          <span className="truncate">{category.length === 0 ? "Усі категорії" : category.length === 1 ? category[0] : `Категорій обрано: ${category.length}`}</span>
+          <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" className="h-3 w-3 shrink-0"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+        {open && <div role="group" aria-label="Вибір категорій" className="absolute right-0 top-full z-30 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-lg border border-[#d8dde3] bg-white shadow-lg">
+          <button type="button" onClick={() => onCategoryChange([])} className="w-full border-b border-[#d8dde3] px-3 py-2.5 text-left text-[10px] font-bold text-[#118dff] hover:bg-[#eef7ff]">Усі категорії · скинути вибір</button>
+          <div className="max-h-64 overflow-y-auto p-1">
+            {options.map(label => <label key={label} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-[10px] hover:bg-[#eef7ff]">
+              <input type="checkbox" checked={category.includes(label)} onChange={event => onCategoryChange(event.target.checked ? [...category, label] : category.filter(item => item !== label))} className="h-3.5 w-3.5 shrink-0 accent-[#118dff]" />
+              <span>{label}</span>
+            </label>)}
+            {!options.length && <p className="px-2 py-3">Немає доступних категорій</p>}
+          </div>
+        </div>}
+      </div></div>
     </section>
   );
 }
@@ -1557,6 +1594,9 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [brandError, setBrandError] = useState<string | null>(null);
   const [selectedManager, setSelectedManager] = useState<string | null>(null);
   const [selectedDocumentSegment, setSelectedDocumentSegment] = useState<DocumentSegment>("Усі");
+  const [selectedSalesCategory, setSelectedSalesCategory] = useState<string[]>([]);
+  const hasCategoryFilter = ["overview", "department", "statuses", "cancellations"].includes(view);
+  const salesScope = hasCategoryFilter ? JSON.stringify([selectedDocumentSegment, selectedSalesCategory]) : "";
   const [selectedCancelReason, setSelectedCancelReason] = useState<CancelReasonSummary | null>(null);
   const hasLoadedRef = useRef(false);
   const webshopScopeRef = useRef("");
@@ -1594,7 +1634,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     setCategoryProducts({});
     setBrandProducts({});
     setSelectedCancelReason(null);
-  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick]);
+  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory]);
 
   useEffect(() => {
     setSelectedCancelReason(null);
@@ -1617,6 +1657,10 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     if (dateTo) params.set("to", dateTo);
     params.set("channel", salesChannel);
     params.set("compact", "1");
+    if (salesScope) {
+      if (selectedDocumentSegment !== "Усі") params.set("segment", selectedDocumentSegment);
+      selectedSalesCategory.forEach(category => params.append("sales_category", category));
+    }
     selectedStatuses.forEach((status) => params.append("status", status));
     const request = fetchApiJson<SalesDataset>(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
     request
@@ -1641,7 +1685,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick]);
+  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory]);
 
   useEffect(() => {
     if (!compareWithPreviousYear || !dateFrom || !dateTo) {
@@ -1657,6 +1701,10 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       compact: "1",
       channel: salesChannel,
     });
+    if (salesScope) {
+      if (selectedDocumentSegment !== "Усі") params.set("segment", selectedDocumentSegment);
+      selectedSalesCategory.forEach(category => params.append("sales_category", category));
+    }
     selectedStatuses.forEach((status) => params.append("status", status));
     setComparisonLoading(true);
     fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
@@ -1679,7 +1727,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick]);
+  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory]);
 
   useEffect(() => {
     if (view !== "webshop" || !webshopOrders || webshopOrders.meta.movements_included) return;
@@ -2088,6 +2136,8 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               </div>
             </section>
 
+            {hasCategoryFilter && <DocumentSegmentFilter value={selectedDocumentSegment} onChange={segment => { setSelectedDocumentSegment(segment); setSelectedSalesCategory([]); }} category={selectedSalesCategory} onCategoryChange={setSelectedSalesCategory} categories={data.summary.categoryOptions || []} />}
+
             {view === "overview" && (
               <div className="space-y-4">
                 <section className="overflow-hidden rounded-2xl border border-[#9cccf6] bg-[linear-gradient(135deg,#eef7ff_0%,#f2fbf6_100%)] p-5 shadow-sm">
@@ -2215,7 +2265,6 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
 
             {view === "statuses" && (
               <div className="space-y-4">
-                <DocumentSegmentFilter value={selectedDocumentSegment} onChange={setSelectedDocumentSegment} />
                 <StatusFilter selectedStatuses={selectedStatuses} onReset={resetStatuses} onToggle={toggleStatus} />
                 <div className="grid gap-3 sm:grid-cols-3">
                   <SalesMetricCard label="Усього документів" value={fmtNum(statusDocsTotal)} hint={`сегмент: ${selectedDocumentSegment}`} symbol="Σ" tone="#118dff" />
@@ -2228,7 +2277,6 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
 
             {view === "cancellations" && (
               <div className="space-y-4">
-                <DocumentSegmentFilter value={selectedDocumentSegment} onChange={setSelectedDocumentSegment} />
                 <div className="grid gap-3 sm:grid-cols-3">
                   <SalesMetricCard label="Скасованих документів" value={fmtNum(canceledStatusDocs)} hint={`сегмент: ${selectedDocumentSegment}`} symbol="×" tone="#e45858" />
                   <SalesMetricCard label="Сума скасувань" value={fmtMoney(canceledStatusRevenue)} hint="втрачений оборот" symbol="₴" tone="#e39a25" />

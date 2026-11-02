@@ -60,6 +60,27 @@ test("overview, statuses and cancellation products split mixed orders while pres
   const base = { docsRef: "1", number: "1", createdDate: "2026-10-01", shippedDate: "2026-10-02", seller: "4964", state: "Повністю відвантажений", docsSum: 1000, returnSum: 0, goodsCount: 3, goodsCodes: "1 | 2 | 3", trademarksNames: "", groupRefs: "", goodsNames: "", margin: null, stockm: "", planGroup: "Плитка", cartNumber: "", items: products, goodsCodeNumbers: [1, 2, 3], cancelReason: "Відмова", webshopId: "", marketingProgram: "", hasReturns: false, returnGoodsCodes: [], returnRowSums: [], ownCost: 0, hasOwnCostData: false };
   const rows = [base, { ...base, docsRef: "2", number: "2", shippedDate: null, state: "Скасована" }];
   const args = [rows, {}, { from: "2026-10-01", to: "2026-10-31" }];
+  const categoryRows = rows.map(row => ({ ...row, items: row.items.map((item, index) => ({ ...item, category: ["Плитка підлогова", "Змішувачі", "Живлення"][index] })) }));
+  const scoped = build(categoryRows, {}, { ...args[2], businessSegment: "Сантехніка", salesCategory: "Змішувачі" });
+  assert.equal(scoped.summary.shippedRevenue, 300);
+  assert.equal(scoped.summary.shippedGoods, 1);
+  assert.equal(scoped.summary.cancelReasons[0].revenue, 300);
+  assert.deepEqual(scoped.summary.cancelReasons[0].products.map(product => product.code), ["2"]);
+  assert.equal(scoped.summary.categoryOptions.length, 3, "options remain available after filtering");
+  const absent = build(categoryRows, {}, { ...args[2], businessSegment: "Плитка", salesCategory: "Змішувачі" });
+  assert.equal(absent.summary.shippedRevenue, 0);
+  const categoryOnly = build(categoryRows, {}, { ...args[2], salesCategory: "Живлення" });
+  assert.equal(categoryOnly.summary.shippedRevenue, 100);
+  const multi = build(categoryRows, {}, { ...args[2], salesCategory: ["Змішувачі", "Живлення"] });
+  assert.equal(multi.summary.shippedRevenue, 400);
+  assert.equal(multi.summary.shippedGoods, 2);
+  assert.equal(multi.summary.cancelReasons[0].revenue, 400);
+  assert.deepEqual(multi.summary.cancelReasons[0].products.map(product => product.code).sort(), ["2", "3"]);
+  const multiSegment = build(categoryRows, {}, { ...args[2], businessSegment: "Сантехніка", salesCategory: ["Змішувачі", "Живлення"] });
+  assert.equal(multiSegment.summary.shippedRevenue, 300);
+  const reset = build(categoryRows, {}, { ...args[2], salesCategory: [] });
+  assert.equal(reset.summary.shippedRevenue, 1000);
+
   const result = build(...args);
   assert.equal(result.summary.shippedRevenue, 1000);
   assert.deepEqual(result.summary.shippedSegments.map((part) => part.revenue), [600, 300, 100]);
