@@ -1,5 +1,6 @@
 "use client";
 
+import { ReviewPeriodSales } from "@/components/ReviewPeriodSales";
 import { ResultFilterButton } from "@/components/ResultFilterButton";
 import { OVERVIEW_SEGMENTS } from "@/lib/product-overview-drilldown";
 /* eslint-disable @next/next/no-img-element -- product images come from the Agromat CDN */
@@ -2049,6 +2050,7 @@ function NewProductsAnalysisPanel({
                     }}
                   >
                     {item.measurement ? item.measurement.salesQty : "Очікує"}
+                    <ReviewPeriodSales goodsRefs={[item.goodsRef]} from={item.assignedAt} to={item.measurement?.checkedAt} />
                   </td>
                   <td className="whitespace-nowrap px-3 py-3 text-[10px] font-semibold text-[#596571]">
                     {formatDate(item.publishedAt)}
@@ -4286,6 +4288,7 @@ export function ProductCardsDashboardV2() {
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-3 text-[10px] font-semibold text-[#596571]">
                                   {formatDate(item.changedAt)}
+                                  <ReviewPeriodSales goodsRefs={[item.goodsRef]} from={item.changedAt} to={item.checkedAt} />
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-3">
                                   <div className="text-[10px] font-black text-[#34404c]">

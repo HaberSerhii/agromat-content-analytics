@@ -1,5 +1,6 @@
 "use client";
 
+import { ReviewPeriodSales } from "@/components/ReviewPeriodSales";
 import { ResultFilterButton } from "@/components/ResultFilterButton";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -261,7 +262,7 @@ export function SearchControlPanel({ onOpenProduct }: { onOpenProduct: (product:
                   <td className="px-3 py-3 text-center">
                     {row.multisearchNoResultsCount == null ? <span className="text-[9px] text-[#929ca5]">з {date(row.checkAt)}</span> : <span className="inline-flex min-w-8 justify-center rounded-full px-2 py-1 text-[10px] font-black" style={{ color: row.multisearchNoResultsCount === 0 ? "#087a55" : "#bd3b3b", background: row.multisearchNoResultsCount === 0 ? "#eaf7f1" : "#fff0f0" }}>{number(row.multisearchNoResultsCount)}</span>}
                   </td>
-                  <td className="px-3 py-3 text-center text-[11px] font-black text-[#34404c]">{row.uniqueSales == null ? "—" : number(row.uniqueSales)}</td>
+                  <td className="px-3 py-3 text-center text-[11px] font-black text-[#34404c]">{row.uniqueSales == null ? "—" : number(row.uniqueSales)}<ReviewPeriodSales goodsRefs={row.products.map(product => product.goodsRef)} from={row.updatedAt} to={row.after ? data.updatedAt : null} /></td>
                   <td className="min-w-[145px] px-3 py-3">
                     <div className="text-[10px] font-black text-[#118dff]">CTR {percent(row.before.ctr)}</div>
                     <div className="mt-1 text-[10px] font-black text-[#6556d8]">ATC {percent(row.before.atc)}</div>

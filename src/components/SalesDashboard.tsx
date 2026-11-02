@@ -1498,10 +1498,20 @@ function CancellationProductsDialog({
 }
 
 export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
+  const [productGoodsRefs, setProductGoodsRefs] = useState("");
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [view, setView] = useState<SalesDashboardView>("overview");
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") !== "webshop") return;
+    setView("webshop");
+    setProductGoodsRefs(params.get("goods_refs") || "");
+    if (params.get("from")) setDateFrom(params.get("from")!);
+    if (params.get("to")) setDateTo(params.get("to")!);
+    setWebshopOriginSource(params.get("origin_source") || "all");
+  }, []);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [salesChannel, setSalesChannel] = useState<SalesChannel>("all");
   const [compareWithPreviousYear, setCompareWithPreviousYear] = useState(true);
@@ -1675,6 +1685,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     let alive = true;
     const controller = new AbortController();
     const params = new URLSearchParams({ page: String(webshopOrdersPage), origin_source: webshopOriginSource });
+    if (productGoodsRefs) params.set("goods_refs", productGoodsRefs);
     if (webshopQuery.trim()) params.set("search", webshopQuery.trim());
     if (dateFrom) params.set("from", dateFrom);
     if (dateTo) params.set("to", dateTo);
@@ -1707,7 +1718,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, view, webshopOrdersPage, webshopQuery, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick, webshopEnrichmentTick]);
+  }, [productGoodsRefs, dateFrom, dateTo, view, webshopOrdersPage, webshopQuery, webshopOriginSource, webshopSyncFilter, webshopPaymentStateFilter, webshopPaymentFilter, webshopDeliveryFilter, webshopStatusFilter, utmSource, utmCampaign, refreshTick, webshopEnrichmentTick]);
 
   useEffect(() => {
     const category = expandedCategory;
@@ -2134,6 +2145,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
 
             {view === "checkout" && <AbandonedCheckout from={dateFrom} to={dateTo} refreshTick={refreshTick} />}
 
+            {view === "webshop" && productGoodsRefs && <div className="mb-3 rounded-lg bg-[#eef7ff] p-3 text-xs">Точний фільтр товарів (goods_ref): {productGoodsRefs} · {dateFrom} — {dateTo} <a href="/sales?view=webshop" className="ml-3 font-bold text-[#118dff] underline">Скинути фільтр товарів</a></div>}
             {view === "webshop" && <WebshopOrdersRegister query={webshopQuery} onQueryChange={(value) => { setWebshopQuery(value); setWebshopOrdersPage(1); }} originSource={webshopOriginSource} onOriginSourceChange={(value) => { setWebshopOriginSource(value); setWebshopOrdersPage(1); }} paymentStateFilter={webshopPaymentStateFilter} onPaymentStateChange={(value) => { setWebshopPaymentStateFilter(value); setWebshopOrdersPage(1); }} dataset={webshopOrders} loading={webshopOrdersLoading} error={webshopOrdersError} page={webshopOrdersPage} syncFilter={webshopSyncFilter} paymentFilter={webshopPaymentFilter} deliveryFilter={webshopDeliveryFilter} statusFilter={webshopStatusFilter} utmSource={utmSource} utmCampaign={utmCampaign} onUtmSourceChange={(value) => { setUtmSource(value); setWebshopOrdersPage(1); }} onUtmCampaignChange={(value) => { setUtmCampaign(value); setWebshopOrdersPage(1); }} onPageChange={setWebshopOrdersPage} onSyncFilterChange={(filter) => { setWebshopSyncFilter(filter); setWebshopOrdersPage(1); }} onPaymentFilterChange={(filter) => { setWebshopPaymentFilter(filter); setWebshopOrdersPage(1); }} onDeliveryFilterChange={(filter) => { setWebshopDeliveryFilter(filter); setWebshopOrdersPage(1); }} onStatusFilterChange={(filter) => { setWebshopStatusFilter(filter); setWebshopOrdersPage(1); }} />}
 
             {view === "web" && (

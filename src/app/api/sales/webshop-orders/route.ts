@@ -384,7 +384,13 @@ export async function GET(req: Request) {
       ? null
       : await readPromotionalPricePositionCodes(promotionPricePosition, dateFrom, dateTo);
     const search = url.searchParams.get("search") || "";
-    const searchedOrders = enrichedAllOrders.filter(order => matchesOrderSearch(order, search));
+    const goodsRefsValue = url.searchParams.get("goods_refs") || "";
+    const goodsRefs = new Set(goodsRefsValue.split(",").filter(Boolean).map(Number));
+    if (goodsRefsValue && (!goodsRefs.size || [...goodsRefs].some(value => !Number.isSafeInteger(value) || value <= 0))) {
+      return NextResponse.json({ error: "Некоректний фільтр товарів" }, { status: 400 });
+    }
+    const searchedOrders = enrichedAllOrders.filter(order => matchesOrderSearch(order, search)
+      && (!goodsRefs.size || order.items.some(item => goodsRefs.has(Number(item.goods_ref)))));
     const originOrders = promotionPricePosition === "all"
       ? searchedOrders
       : searchedOrders
@@ -442,6 +448,11 @@ export async function GET(req: Request) {
       data: filteredOrders.slice(start, start + DETAIL_PAGE_SIZE),
       meta: { total: filteredOrders.length, page: effectivePage, per_page: DETAIL_PAGE_SIZE, total_pages: totalPages, movements_included: Boolean(p2Result) },
       summary: { ...summary, categoryRevenue },
+      productSales: goodsRefs.size ? {
+        orders: filteredOrders.length,
+        quantity: filteredOrders.reduce((sum, order) => sum + order.items.reduce((qty, item) => qty + (goodsRefs.has(Number(item.goods_ref)) ? Number(item.quantity) || 0 : 0), 0), 0),
+        revenue: filteredOrders.reduce((sum, order) => sum + order.items.reduce((amount, item) => amount + (goodsRefs.has(Number(item.goods_ref)) ? Number(item.line_total) || 0 : 0), 0), 0),
+      } : null,
       daily: marketingDailySeries(filteredOrders, dateFrom, dateTo),
       onlinePayments: {
         ...onlinePayments,
