@@ -709,7 +709,7 @@ function getNetRevenue(row: SalesRow) {
   return row.docsSum - row.returnSum;
 }
 
-function addBucket(map: Map<string, MutableBucket>, label: string, row: SalesRow, revenue: number, goods = 1) {
+function addBucket(map: Map<string, MutableBucket>, label: string, row: SalesRow, revenue: number, goods = 1, countDocument = true) {
   const item = map.get(label) || {
     label,
     docs: 0,
@@ -719,7 +719,7 @@ function addBucket(map: Map<string, MutableBucket>, label: string, row: SalesRow
     marginSum: 0,
     marginCount: 0,
   };
-  item.docs += 1;
+  if (countDocument) item.docs += 1;
   item.goods += goods;
   item.revenue += revenue;
   if (row.margin != null) {
@@ -1313,9 +1313,13 @@ function buildDataset(
 
     if (!matchesProductCodes(goodsCodes, productCodeSet)) continue;
     if (isDimensionOrderInPeriod(row, filter) && !isExcludedAnalyticsOrder(row)) {
+      const seenBrands = new Set<string>();
+      const seenCategories = new Set<string>();
       for (const item of netItems) {
-        addBucket(brands, item.brand, row, item.revenue, item.qty || 1);
-        addBucket(categories, item.category, row, item.revenue, item.qty || 1);
+        addBucket(brands, item.brand, row, item.revenue, item.qty || 1, !seenBrands.has(item.brand));
+        addBucket(categories, item.category, row, item.revenue, item.qty || 1, !seenCategories.has(item.category));
+        seenBrands.add(item.brand);
+        seenCategories.add(item.category);
         if (categoryProductsMode === "all" || categoryProductsMode === item.category) {
           addCategoryProduct(categoryProducts, item, row, row.docsSum / row.goodsCount);
         }
@@ -1756,6 +1760,16 @@ export async function readSalesWebshopOrders(filter?: SalesDateFilter): Promise<
       };
     }),
   };
+}
+
+/** Historical goods metadata keeps received and shipped rankings on the same dimensions. */
+export async function readSalesProductDimensionLookup() {
+  const { rows } = await readCachedSalesRows();
+  const lookup = new Map<string, { category: string; categoryKey: string; brand: string }>();
+  for (const row of rows) for (const item of row.items) {
+    if (item.code) lookup.set(String(item.code), { category: item.category, categoryKey: item.categoryKey || "", brand: item.brand });
+  }
+  return lookup;
 }
 
 /** ERP classification is authoritative; include all cached documents, regardless of date or shipment. */

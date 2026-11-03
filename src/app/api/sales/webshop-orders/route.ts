@@ -1,12 +1,13 @@
+import { fetchOrders, fetchCompleteOrders, type ApiOrder } from "@/lib/webshop-orders-api";
 import { matchesOrderSearch } from "@/lib/orders-search";
 import { readAllLite } from "@/lib/products-store";
 import { webshopCategoryRevenue } from "@/lib/webshop-category-revenue";
 import { validateGa4Dates } from "@/lib/ga4-marketing-report";
 import { isDashboardRequest } from "@/lib/dashboard-auth";
 import { readGa4OrderTransactions } from "@/lib/ga4-order-transactions";
-import { attributeOrder, transactionIndex, matchesMarketing, marketingOrderGroups, type MarketingAttribution } from "@/lib/order-marketing-attribution";
+import { attributeOrder, transactionIndex, matchesMarketing, marketingOrderGroups } from "@/lib/order-marketing-attribution";
 import { isSalesPlanService } from "@/lib/sales-plan-items";
-import { matchesOrderOrigin, summarizeOrderOrigins, type OrderOrigin } from "@/lib/orders-origin";
+import { matchesOrderOrigin, summarizeOrderOrigins } from "@/lib/orders-origin";
 import { marketingDailySeries } from "@/lib/marketing-daily-series";
 import { NextResponse } from "next/server";
 import { getServerResult, peekServerResult } from "@/lib/server-result-cache";
@@ -19,7 +20,6 @@ import {
 } from "@/lib/sales-s3";
 import { webshopFinalStatus } from "@/lib/sales-webshop-status";
 import { SALES_AUTO_REFRESH_MS } from "@/lib/sales-refresh";
-import { orderInDateRange, ordersApiEndDate } from "@/lib/orders-date-range";
 import { matchesUtm, utmOptions } from "@/lib/orders-utm";
 import {
   normalizePromotionPricePosition,
@@ -27,78 +27,9 @@ import {
 } from "@/lib/promotion-price-position";
 
 import { readOnlinePayments } from "@/lib/liqpay";
-import { deduplicatePayments, summarizePayments, matchOrderPayments, indexOrderPayments, type OnlinePayment } from "@/lib/online-payments";
+import { deduplicatePayments, summarizePayments, matchOrderPayments, indexOrderPayments } from "@/lib/online-payments";
 
 export const dynamic = "force-dynamic";
-
-type ApiOrder = {
-  origin?: OrderOrigin | null;
-  marketing?: MarketingAttribution;
-  id: number;
-  order_num: number | string | null;
-  order_doc_id: number | string | null;
-  is_synced: boolean;
-  date: string;
-  doc_date: string | null;
-  status: string | null;
-  http_status: number | null;
-  payment: { status: string | null; type: string | null; system_ref: number | null; order_id?: string; liqpay_order_id?: string } | null;
-  online_payments?: OnlinePayment[];
-  totals: { cost: number; delivery: number; items_sum: number; weight: number; currency: string };
-  customer: {
-    client_id: number | null;
-    first_name: string | null;
-    last_name: string | null;
-    patronymic: string | null;
-    email: string | null;
-    phone: string | null;
-    callback: boolean;
-    legal_name: string | null;
-    legal_code: string | null;
-    recipient: { first_name: string | null; last_name: string | null; patronymic: string | null; phone: string | null } | null;
-  };
-  delivery: {
-    type: string | null;
-    address: unknown;
-    city_ref: string | null;
-    department_ref: string | null;
-    date: string | null;
-    to_floor: number | null;
-    elevator: boolean | null;
-  } | null;
-  comments: string | null;
-  source: { utm_source: string | null; utm_campaign: string | null } | null;
-  has_items: boolean;
-  items: Array<{
-    product_id: number | string;
-    goods_ref: number | null;
-    code: number | string | null;
-    sku: string | null;
-    name: string | null;
-    url: string | null;
-    quantity: number;
-    number_pieces: number | null;
-    sale_measures_ref: number | null;
-    is_set: boolean;
-    price: number;
-    price_old: number | null;
-    line_total: number;
-    availability_status: { id: number; name: string } | null;
-  }>;
-  fulfillment?: {
-    current: { id: number; name: string; stage: number } | null;
-    history: Array<{ id: number; name: string; stage: number; rolled_back: boolean; started_at: string | null; finished_at: string | null }>;
-  } | null;
-  analytics_status?: string;
-  return_info?: SalesWebshopReturnInfo | null;
-  erp_manager?: string | null;
-};
-
-type ApiResponse = {
-  data: ApiOrder[];
-  meta: { total: number; page: number; per_page: number; total_pages: number; movements_included: boolean };
-};
-
 const DETAIL_PAGE_SIZE = 50;
 
 type PaymentFilter = "all" | "cash" | "bank" | "online_full" | "online_parts";
@@ -114,28 +45,6 @@ type SummaryAccumulator = {
   deliveryTypes: Map<string, number>;
   statuses: Map<string, number>;
 };
-
-function apiConfig() {
-  const apiKey = process.env.AGROMAT_API_KEY;
-  if (!apiKey) throw new Error("AGROMAT_API_KEY is not configured");
-  const baseUrl = (process.env.AGROMAT_API_BASE_URL || "https://www.agromat.ua/api/v1").replace(/\/$/, "");
-  return { apiKey, baseUrl };
-}
-
-async function fetchOrders(params: URLSearchParams) {
-  const { apiKey, baseUrl } = apiConfig();
-  // The trailing slash is required: the upstream redirect from /orders drops query parameters.
-  const response = await fetch(`${baseUrl}/orders/?${params.toString()}`, {
-    headers: { Accept: "application/json", "X-API-Key": apiKey },
-    cache: "no-store",
-  });
-  const payload = await response.json().catch(() => null) as ApiResponse | { message?: string; error?: string } | null;
-  if (!response.ok || !payload || !("data" in payload)) {
-    const message = payload && "message" in payload ? payload.message : payload && "error" in payload ? payload.error : null;
-    throw new Error(message || `Orders API returned ${response.status}`);
-  }
-  return payload;
-}
 
 function increment(map: Map<string, number>, value: string | null | undefined) {
   const key = value?.trim() || "unknown";
@@ -249,35 +158,6 @@ function cacheDayInKyiv() {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-}
-
-function applyOrderFilters(params: URLSearchParams, dateFrom: string, dateTo: string, synced: string | null) {
-  if (dateFrom) params.set("date_from", dateFrom);
-  if (dateTo) params.set("date_to", ordersApiEndDate(dateTo));
-  if (synced === "true" || synced === "false") params.set("synced", synced);
-}
-
-async function fetchCompleteOrders(dateFrom: string, dateTo: string, synced: string | null, withMovements = false) {
-  const orders: ApiOrder[] = [];
-  const firstParams = new URLSearchParams({ page: "1", per_page: String(DETAIL_PAGE_SIZE), with_movements: String(withMovements) });
-  applyOrderFilters(firstParams, dateFrom, dateTo, synced);
-  const first = await fetchOrders(firstParams);
-  orders.push(...first.data);
-
-  // P2 movements are available only for pages up to 50 rows. Load a few pages
-  // concurrently and cache the completed dataset for the refresh interval.
-  for (let startPage = 2; startPage <= first.meta.total_pages; startPage += 6) {
-    const requests: Array<Promise<ApiResponse>> = [];
-    for (let page = startPage; page < Math.min(startPage + 6, first.meta.total_pages + 1); page += 1) {
-      const params = new URLSearchParams({ page: String(page), per_page: String(DETAIL_PAGE_SIZE), with_movements: String(withMovements) });
-      applyOrderFilters(params, dateFrom, dateTo, synced);
-      requests.push(fetchOrders(params));
-    }
-    const responses = await Promise.all(requests);
-    responses.forEach((response) => orders.push(...response.data));
-  }
-
-  return orders.filter((order) => orderInDateRange(order.date, dateFrom, dateTo));
 }
 
 function summarizeOrders(orders: ApiOrder[]) {

@@ -328,7 +328,7 @@ type SalesWebshopOrdersDataset = {
   };
 };
 
-type RankingMetric = "goods" | "revenue";
+type RankingMetric = "goods" | "revenue" | "docs";
 type DocumentSegment = "Усі" | "Плитка" | "Сантехніка" | "Інше";
 
 type SalesDashboardView = "checkout" | "overview" | "webshop" | "web" | "brands" | "categories" | "department" | "statuses" | "cancellations";
@@ -408,7 +408,29 @@ function ProgressBar({ value, color }: { value: number; color: string }) {
   );
 }
 
+type ReceivedRankingData = Record<"brands" | "categories", { items: BucketSummary[]; products: Record<string, CategoryProductSummary[]> }>;
+function ReceivedRanking({ dimension, from, to, channel, compare, refresh }: { dimension: "brands" | "categories"; from: string; to: string; channel: SalesChannel; compare: boolean; refresh: number }) {
+  const [data, setData] = useState<ReceivedRankingData | null>(null);
+  const [previous, setPrevious] = useState<ReceivedRankingData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [metric, setMetric] = useState<RankingMetric>("docs");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    setData(null); setPrevious(null); setError(null); setExpanded(null);
+    const load = (start: string, end: string) => fetchApiJson<ReceivedRankingData>(`/api/sales/received?${new URLSearchParams({ from: start, to: end, channel })}`, { signal: controller.signal, cache: "no-store" });
+    Promise.all([load(from, to), compare ? load(shiftIsoYear(from, -1), shiftIsoYear(to, -1)) : Promise.resolve(null)])
+      .then(([current, prior]) => { if (!controller.signal.aborted) { setData(current); setPrevious(prior); } })
+      .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не вдалося завантажити замовлення"); });
+    return () => controller.abort();
+  }, [from, to, channel, compare, refresh]);
+  if (error) return <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</div>;
+  if (!data) return <div role="status" className="p-5 text-sm">Завантаження отриманих замовлень…</div>;
+  return <CategoryRankingList received title={dimension === "brands" ? "Замовлення за брендами" : "Замовлення за категоріями"} itemNoun={dimension === "brands" ? "бренд" : "категорію"} color="#118dff" items={data[dimension].items} comparisonItems={previous?.[dimension].items || []} metric={metric} onMetricChange={setMetric} productsByCategory={data[dimension].products} expandedCategory={expanded} loadingCategory={null} categoryError={null} onToggleCategory={label => setExpanded(current => current === label ? null : label)} />;
+}
+
 function CategoryRankingList({
+  received = false,
   title,
   itemNoun,
   color,
@@ -422,6 +444,7 @@ function CategoryRankingList({
   categoryError,
   onToggleCategory,
 }: {
+  received?: boolean;
   title: string;
   itemNoun: string;
   color: string;
@@ -442,13 +465,13 @@ function CategoryRankingList({
     <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
         <div>
-          <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-black text-[#26313d]">{title} · {fmtNum(items.length)}</span><span className="rounded-full bg-[#eaf8f1] px-2 py-1 text-[9px] font-black text-[#16865c]">Повністю відвантажено</span></div>
-          <div className="mt-1 text-[10px] text-[#8a939c]">Документи створені й повністю відвантажені за обраний період · без доставки · натисніть на {itemNoun}, щоб переглянути товари</div>
+          <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-black text-[#26313d]">{title} · {fmtNum(items.length)}</span><span className="rounded-full bg-[#eaf8f1] px-2 py-1 text-[9px] font-black text-[#16865c]">{received ? "Отримані замовлення" : "Повністю відвантажено"}</span></div>
+          <div className="mt-1 text-[10px] text-[#8a939c]">{received ? "Замовлення за датою поступлення · усі статуси · без доставки" : "Документи створені й повністю відвантажені за обраний період · без доставки"} · натисніть на {itemNoun}, щоб переглянути товари</div>
         </div>
         <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
-          {(["goods", "revenue"] as RankingMetric[]).map((value) => (
+          {(["docs", "goods", "revenue"] as RankingMetric[]).map((value) => (
             <button key={value} type="button" onClick={() => onMetricChange(value)} className="rounded-md px-3 py-1.5 text-[10px] font-bold" style={{ background: metric === value ? "#118dff" : "transparent", color: metric === value ? "#fff" : "#687582" }}>
-              {value === "goods" ? "У штуках" : "У грошах"}
+              {value === "docs" ? "Замовлення" : value === "goods" ? "У штуках" : "У грошах"}
             </button>
           ))}
         </div>
@@ -456,7 +479,7 @@ function CategoryRankingList({
       <div className="space-y-1 p-4">
         {sortedItems.map((item) => {
           const expanded = expandedCategory === item.label;
-          const products = [...(productsByCategory[item.label] || [])].sort((left, right) => metric === "goods" ? right.qty - left.qty : right.revenue - left.revenue);
+          const products = [...(productsByCategory[item.label] || [])].sort((left, right) => metric === "docs" ? right.orders - left.orders : metric === "goods" ? right.qty - left.qty : right.revenue - left.revenue);
           const comparison = comparisonByLabel.get(item.label);
           const currentValue = item[metric];
           const previousValue = comparison?.[metric] || 0;
@@ -476,8 +499,8 @@ function CategoryRankingList({
                 </button>
                 <ProgressBar value={(currentValue / maxValue) * 100} color={color} />
                 <div className="text-xs md:text-right">
-                  <b className="text-[#33404c]">{metric === "goods" ? `${fmtNum(currentValue)} шт` : fmtMoney(currentValue)}</b>
-                  <div className="mt-0.5 text-[9px] text-[#8a939c]">Рік тому: {metric === "goods" ? `${fmtNum(previousValue)} шт` : fmtMoney(previousValue)} · <span style={{ color: delta == null ? "#8a939c" : delta >= 0 ? "#16865c" : "#d14b4b" }}>{fmtPct(delta)}</span></div>
+                  <b className="text-[#33404c]">{metric === "docs" ? `${fmtNum(currentValue)} зам.` : metric === "goods" ? `${fmtNum(currentValue)} шт` : fmtMoney(currentValue)}</b>
+                  <div className="mt-0.5 text-[9px] text-[#8a939c]">Рік тому: {metric === "docs" ? `${fmtNum(previousValue)} зам.` : metric === "goods" ? `${fmtNum(previousValue)} шт` : fmtMoney(previousValue)} · <span style={{ color: delta == null ? "#8a939c" : delta >= 0 ? "#16865c" : "#d14b4b" }}>{fmtPct(delta)}</span></div>
                 </div>
               </div>
               {expanded && (
@@ -1562,6 +1585,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [data, setData] = useState<SalesDataset | null>(null);
   const [comparisonData, setComparisonData] = useState<SalesDataset | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(true);
+  const [orderMeasure, setOrderMeasure] = useState<"received" | "shipped">("shipped");
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>("revenue");
   const [webMetrics, setWebMetrics] = useState<SalesWebMetricsDataset | null>(null);
   const [webMetricsError, setWebMetricsError] = useState<string | null>(null);
@@ -2252,9 +2276,12 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               </div>
             )}
 
-            {view === "brands" && <CategoryRankingList title="Продажі за брендами" itemNoun="бренд" color="#20a66a" items={data.summary.brands} comparisonItems={comparisonData?.summary.brands || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={brandProducts} expandedCategory={expandedBrand} loadingCategory={loadingBrand} categoryError={brandError} onToggleCategory={(brand) => setExpandedBrand((current) => current === brand ? null : brand)} />}
+            {(view === "brands" || view === "categories") && <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Тип замовлень">{([ ["received", "Отримані замовлення"], ["shipped", "Відвантажені"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderMeasure === value} onClick={() => setOrderMeasure(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${orderMeasure === value ? "bg-[#118dff] text-white" : "bg-white text-[#586572]"}`}>{label}</button>)}</div>}
+            {(view === "brands" || view === "categories") && orderMeasure === "received" && <ReceivedRanking dimension={view} from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} />}
 
-            {view === "categories" && <CategoryRankingList title="Продажі за категоріями" itemNoun="категорію" color="#e39a25" items={data.summary.categories} comparisonItems={comparisonData?.summary.categories || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={categoryProducts} expandedCategory={expandedCategory} loadingCategory={loadingCategory} categoryError={categoryError} onToggleCategory={(category) => setExpandedCategory((current) => current === category ? null : category)} />}
+            {view === "brands" && orderMeasure === "shipped" && <CategoryRankingList title="Продажі за брендами" itemNoun="бренд" color="#20a66a" items={data.summary.brands} comparisonItems={comparisonData?.summary.brands || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={brandProducts} expandedCategory={expandedBrand} loadingCategory={loadingBrand} categoryError={brandError} onToggleCategory={(brand) => setExpandedBrand((current) => current === brand ? null : brand)} />}
+
+            {view === "categories" && orderMeasure === "shipped" && <CategoryRankingList title="Продажі за категоріями" itemNoun="категорію" color="#e39a25" items={data.summary.categories} comparisonItems={comparisonData?.summary.categories || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={categoryProducts} expandedCategory={expandedCategory} loadingCategory={loadingCategory} categoryError={categoryError} onToggleCategory={(category) => setExpandedCategory((current) => current === category ? null : category)} />}
 
             {view === "department" && (
               <div className="space-y-4">
