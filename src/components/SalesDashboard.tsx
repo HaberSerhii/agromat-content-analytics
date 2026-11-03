@@ -425,7 +425,7 @@ function ReceivedRanking({ dimension, from, to, channel, compare, refresh }: { d
     return () => controller.abort();
   }, [from, to, channel, compare, refresh]);
   if (error) return <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!data) return <div role="status" className="p-5 text-sm">Завантаження отриманих замовлень…</div>;
+  if (!data) return <div role="status" className="p-5 text-sm">Завантаження Web-shop замовлень…</div>;
   return <CategoryRankingList received title={dimension === "brands" ? "Замовлення за брендами" : "Замовлення за категоріями"} itemNoun={dimension === "brands" ? "бренд" : "категорію"} color="#118dff" items={data[dimension].items} comparisonItems={previous?.[dimension].items || []} metric={metric} onMetricChange={setMetric} productsByCategory={data[dimension].products} expandedCategory={expanded} loadingCategory={null} categoryError={null} onToggleCategory={label => setExpanded(current => current === label ? null : label)} />;
 }
 
@@ -465,7 +465,7 @@ function CategoryRankingList({
     <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
         <div>
-          <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-black text-[#26313d]">{title} · {fmtNum(items.length)}</span><span className="rounded-full bg-[#eaf8f1] px-2 py-1 text-[9px] font-black text-[#16865c]">{received ? "Отримані замовлення" : "Повністю відвантажено"}</span></div>
+          <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-black text-[#26313d]">{title} · {fmtNum(items.length)}</span><span className="rounded-full bg-[#eaf8f1] px-2 py-1 text-[9px] font-black text-[#16865c]">{received ? "Web-shop замовлення" : "Повністю відвантажено"}</span></div>
           <div className="mt-1 text-[10px] text-[#8a939c]">{received ? "Замовлення за датою поступлення · усі статуси · без доставки" : "Документи створені й повністю відвантажені за обраний період · без доставки"} · натисніть на {itemNoun}, щоб переглянути товари</div>
         </div>
         <div className="inline-flex rounded-lg border border-[#d8dde3] bg-[#f7f9fb] p-0.5">
@@ -2276,7 +2276,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               </div>
             )}
 
-            {(view === "brands" || view === "categories") && <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Тип замовлень">{([ ["received", "Отримані замовлення"], ["shipped", "Відвантажені"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderMeasure === value} onClick={() => setOrderMeasure(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${orderMeasure === value ? "bg-[#118dff] text-white" : "bg-white text-[#586572]"}`}>{label}</button>)}</div>}
+            {(view === "brands" || view === "categories") && <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Тип замовлень">{([ ["received", "Web-shop замовлення"], ["shipped", "Відвантажені замовлення"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderMeasure === value} onClick={() => setOrderMeasure(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${orderMeasure === value ? "bg-[#118dff] text-white" : "bg-white text-[#586572]"}`}>{label}</button>)}</div>}
             {(view === "brands" || view === "categories") && orderMeasure === "received" && <ReceivedRanking dimension={view} from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} />}
 
             {view === "brands" && orderMeasure === "shipped" && <CategoryRankingList title="Продажі за брендами" itemNoun="бренд" color="#20a66a" items={data.summary.brands} comparisonItems={comparisonData?.summary.brands || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={brandProducts} expandedCategory={expandedBrand} loadingCategory={loadingBrand} categoryError={brandError} onToggleCategory={(brand) => setExpandedBrand((current) => current === brand ? null : brand)} />}

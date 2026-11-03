@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   try { validateGa4Dates(from, to); } catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
   const channel = normalizeSalesChannel(params.get("channel"));
   try {
-    const { value } = await getServerResult({ namespace: "received-sales-v1", key: JSON.stringify({ from, to, channel }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
+    const { value } = await getServerResult({ namespace: "received-sales-v2", key: JSON.stringify({ from, to, channel }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
       const [orders, products, categories] = await Promise.all([fetchCompleteOrders(from, to, null), readAllLite(), readSalesProductDimensionLookup()]);
       return receivedSales(orders, products, categories, channel);
     } });
