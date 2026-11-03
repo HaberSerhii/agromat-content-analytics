@@ -1,5 +1,7 @@
 "use client";
 
+import type { receivedSales } from "@/lib/received-sales";
+
 import type { SalesChannel } from "@/lib/sales-order-origin";
 import { orderOriginSource, orderOriginLabel, type OrderOrigin } from "@/lib/orders-origin";
 
@@ -406,6 +408,61 @@ function ProgressBar({ value, color }: { value: number; color: string }) {
       <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, value))}%`, background: color }} />
     </div>
   );
+}
+
+type ReceivedOverviewData = ReturnType<typeof receivedSales>["overview"];
+function ReceivedOverview({ from, to, channel, compare, refresh, segment, categories, onSegmentChange, onCategoriesChange, plan }: {
+  from: string; to: string; channel: SalesChannel; compare: boolean; refresh: number;
+  segment: DocumentSegment; categories: string[]; onSegmentChange: (value: DocumentSegment) => void; onCategoriesChange: (value: string[]) => void;
+  plan: SalesDataset["summary"]["plan"];
+}) {
+  const [data, setData] = useState<ReceivedOverviewData | null>(null);
+  const [prior, setPrior] = useState<ReceivedOverviewData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [priorLoading, setPriorLoading] = useState(false);
+  const [options, setOptions] = useState<Array<{ label: string; segment: string }>>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setData(null); setPrior(null); setError(null); setPriorLoading(compare);
+    const load = async (start: string, end: string) => {
+      const params = new URLSearchParams({ from: start, to: end, channel, segment });
+      categories.forEach(category => params.append("sales_category", category));
+      return (await fetchApiJson<{ overview: ReceivedOverviewData }>(`/api/sales/received?${params}`, { signal: controller.signal, cache: "no-store" })).overview;
+    };
+    load(from, to).then(value => { if (!controller.signal.aborted) { setData(value); setOptions(value.categoryOptions); } })
+      .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не вдалося завантажити Web-shop замовлення"); });
+    if (compare) load(shiftIsoYear(from, -1), shiftIsoYear(to, -1))
+      .then(value => { if (!controller.signal.aborted) setPrior(value); })
+      .catch(() => {})
+      .finally(() => { if (!controller.signal.aborted) setPriorLoading(false); });
+    return () => controller.abort();
+  }, [from, to, channel, compare, refresh, segment, categories]);
+  const hint = (value: number, previous: number | undefined, formatter: (value: number) => string = fmtMoney) => !compare ? "Порівняння вимкнено" : priorLoading ? "Завантаження порівняння…" : previous === undefined ? "Порівняння недоступне" : yearComparisonHint(value, previous, formatter);
+  const target = segment === "Усі" ? plan.plan : plan.segments.find(item => item.segment === segment)?.plan;
+  return <div className="space-y-4">
+    <DocumentSegmentFilter value={segment} onChange={value => { onSegmentChange(value); onCategoriesChange([]); }} category={categories} onCategoryChange={onCategoriesChange} categories={options} />
+    {error ? <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</div> : !data ? <div role="status" className="p-5 text-sm">Завантаження Web-shop замовлень…</div> : <>
+      <section className="rounded-2xl border border-[#9cccf6] bg-[#eef7ff] p-5">
+        <h2 className="text-sm font-black">Web-shop замовлення · за обраний період</h2>
+        <div className="mt-3 text-3xl font-black">{fmtMoney(data.revenue)}</div>
+        <p className="mt-2 text-xs text-[#687784]">За датою створення · усі статуси, включно зі скасованими · без послуг і доставки</p>
+        {target && !categories.length ? <div className="mt-4"><div className="mb-2 text-xs">Сума замовлень до місячного плану {fmtMonth(plan.month)}: <b>{fmtPct(data.revenue / target * 100)}</b> · план {fmtMoney(target)}</div><ProgressBar value={data.revenue / target * 100} color="#118dff" /><p className="mt-2 text-[10px] text-[#687784]">Фактичне виконання плану дивіться в режимі «Відвантажені замовлення».</p></div> : null}
+      </section>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SalesMetricCard label="Сума Web-shop замовлень" value={fmtMoney(data.revenue)} hint={hint(data.revenue, prior?.revenue)} symbol="₴" tone="#168b9b" />
+        <SalesMetricCard label="Web-shop замовлення" value={fmtNum(data.docs)} hint={hint(data.docs, prior?.docs, fmtNum)} symbol="W" tone="#118dff" />
+        <SalesMetricCard label="Замовлено товарів" value={fmtNum(data.goods)} hint={hint(data.goods, prior?.goods, fmtNum)} symbol="#" tone="#805ad5" />
+        <SalesMetricCard label="Середній чек" value={data.averageCheck === null ? "—" : fmtMoney(data.averageCheck)} hint={hint(data.averageCheck || 0, prior?.averageCheck ?? undefined)} symbol="₴" tone="#168b9b" />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">{["Плитка", "Сантехніка", "Інше"].map(label => {
+        const revenue = data.segments.find(item => item.label === label)?.revenue || 0;
+        return <SalesMetricCard key={label} label={label} value={fmtMoney(revenue)} hint={hint(revenue, prior ? prior.segments.find(item => item.label === label)?.revenue || 0 : undefined)} symbol="₴" tone="#118dff" />;
+      })}</div>
+      {data.otherGroups.length > 0 && <details className="rounded-2xl border bg-white p-4"><summary className="cursor-pointer text-sm font-bold">Інше · деталізація</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">{data.otherGroups.map(item => <div key={item.label} className="flex justify-between gap-3 text-xs"><span>{item.label}</span><b>{fmtMoney(item.revenue)}</b></div>)}</div></details>}
+      <SalesTrendChart received days={data.byDate} previousDays={compare && prior ? prior.byDate : undefined} />
+      <OrdersTrendChart days={data.byDate.map(day => ({ date: day.date, docs: day.docs, managers: [] }))} previousDays={compare && prior ? prior.byDate.map(day => ({ date: day.date, docs: day.docs, managers: [] })) : undefined} />
+    </>}
+  </div>;
 }
 
 type ReceivedRankingData = Record<"brands" | "categories", { items: BucketSummary[]; products: Record<string, CategoryProductSummary[]> }>;
@@ -1009,9 +1066,11 @@ function chartLabelIndices(length: number) {
 }
 
 function SalesTrendChart({
+  received = false,
   days,
   previousDays,
 }: {
+  received?: boolean;
   days: SalesDataset["summary"]["byDate"];
   previousDays?: SalesDataset["summary"]["byDate"];
 }) {
@@ -1043,8 +1102,8 @@ function SalesTrendChart({
     <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
         <div>
-          <h2 className="text-sm font-black text-[#26313d]">Динаміка відвантажень</h2>
-          <p className="mt-1 text-[10px] text-[#8a939c]">Лише документи зі статусом «Повністю відвантажений»</p>
+          <h2 className="text-sm font-black text-[#26313d]">{received ? "Динаміка Web-shop замовлень" : "Динаміка відвантажень"}</h2>
+          <p className="mt-1 text-[10px] text-[#8a939c]">{received ? "За датою створення · усі статуси" : "Лише документи зі статусом «Повністю відвантажений»"}</p>
           {previousDays && <div className="mt-2 flex gap-4 text-[9px] font-bold text-[#687582]"><span><i className="mr-1 inline-block h-0.5 w-4 bg-[#118dff] align-middle" />Обраний період</span><span><i className="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-[#8a939c] align-middle" />Минулий рік</span></div>}
         </div>
         <div className="text-right">
@@ -1066,7 +1125,7 @@ function SalesTrendChart({
                 {hovered && (
                   <div className="pointer-events-none absolute top-2 z-20 min-w-[180px] rounded-xl border border-[#cbdfee] bg-white p-3 text-[10px] shadow-lg" style={{ left: `${hoveredLeft}%`, transform: `translateX(${hoveredLeft > 80 ? "-100%" : hoveredLeft < 20 ? "0" : "-50%"})` }}>
                     <div className="font-black text-[#26313d]">{fmtIsoDateShort(hovered.date)}</div>
-                    <div className="mt-2 flex justify-between gap-4 text-[#6e7a86]"><span>Продано</span><b className="text-[#26313d]">{fmtNum(hovered.goods)} шт</b></div>
+                    <div className="mt-2 flex justify-between gap-4 text-[#6e7a86]"><span>{received ? "Замовлено" : "Продано"}</span><b className="text-[#26313d]">{fmtNum(hovered.goods)} шт</b></div>
                     <div className="mt-1 flex justify-between gap-4 text-[#6e7a86]"><span>Сума</span><b className="text-[#118dff]">{fmtMoney(hovered.revenue)}</b></div>
                     {hoveredPrevious && <div className="mt-2 flex justify-between gap-4 border-t border-[#edf0f2] pt-2 text-[#6e7a86]"><span>Рік тому</span><b className="text-[#687582]">{fmtMoney(hoveredPrevious.revenue)}</b></div>}
                   </div>
@@ -1148,7 +1207,7 @@ function OrdersTrendChart({
               <div className="relative h-56 rounded-xl border border-[#edf1f4] bg-[linear-gradient(180deg,#f7fbff_0%,#fff_100%)]">
                 {hovered && <div className="pointer-events-none absolute top-2 z-20 min-w-[230px] rounded-xl border border-[#d6caed] bg-white p-3 text-[10px] shadow-lg" style={{ left: `${hoveredLeft}%`, transform: `translateX(${hoveredLeft > 80 ? "-100%" : hoveredLeft < 20 ? "0" : "-50%"})` }}>
                   <div className="flex justify-between gap-4 font-black text-[#26313d]"><span>{fmtIsoDateShort(hovered.date)}</span><span>{fmtNum(hovered.docs)} total</span></div>
-                  <div className="mt-2 space-y-1 border-t border-[#edf0f2] pt-2">{hovered.managers.map((manager) => <div key={manager.seller} className="flex justify-between gap-4 text-[#6e7a86]"><span className="max-w-[170px] truncate">{manager.seller}</span><b className="text-[#6b46c1]">{fmtNum(manager.docs)}</b></div>)}{!hovered.managers.length && <div className="text-[#8a939c]">Замовлень немає</div>}</div>
+                  <div className="mt-2 space-y-1 border-t border-[#edf0f2] pt-2">{hovered.managers.map((manager) => <div key={manager.seller} className="flex justify-between gap-4 text-[#6e7a86]"><span className="max-w-[170px] truncate">{manager.seller}</span><b className="text-[#6b46c1]">{fmtNum(manager.docs)}</b></div>)}{!hovered.managers.length && hovered.docs === 0 && <div className="text-[#8a939c]">Замовлень немає</div>}</div>
                   {hoveredPrevious && <div className="mt-2 flex justify-between gap-4 border-t border-[#edf0f2] pt-2 text-[#6e7a86]"><span>{fmtIsoDateShort(hoveredPrevious.date)} · рік тому</span><b>{fmtNum(hoveredPrevious.docs)}</b></div>}
                 </div>}
                 <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" role="img" aria-label="Графік оформлених замовлень по днях">
@@ -2093,7 +2152,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               <div>
                 <div className="mb-1 text-[10px] font-black uppercase tracking-[.2em] text-[#118dff]">Sales intelligence</div>
                 <h1 className="text-2xl font-black tracking-tight text-[#202a35] sm:text-3xl">{activeView.label}</h1>
-                <p className="mt-1 text-xs text-[#737d87]">{pageDescriptions[view]}</p>
+                <p className="mt-1 text-xs text-[#737d87]">{view === "overview" && orderMeasure === "received" ? "Надходження Web-shop замовлень і динаміка за датою створення." : pageDescriptions[view]}</p>
               </div>
               <div className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-bold ${view === "web" && webMetrics?.mode === "demo" ? "border-[#f1d18f] bg-[#fff8e8] text-[#9b6817]" : "border-[#cfe3f5] bg-[#eef7ff] text-[#176aa8]"}`}>
                 <span className={`h-2 w-2 rounded-full ${view === "web" && webMetrics?.mode === "demo" ? "bg-[#e39a25]" : "bg-[#20a66a]"}`} /> {view === "web" && webMetrics?.mode === "demo" ? "Тестові дані" : "Актуальні дані"}
@@ -2160,9 +2219,13 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               </div>
             </section>
 
-            {hasCategoryFilter && <DocumentSegmentFilter value={selectedDocumentSegment} onChange={segment => { setSelectedDocumentSegment(segment); setSelectedSalesCategory([]); }} category={selectedSalesCategory} onCategoryChange={setSelectedSalesCategory} categories={data.summary.categoryOptions || []} />}
+            {(view === "overview" || view === "brands" || view === "categories") && <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Тип замовлень">{([ ["received", "Web-shop замовлення"], ["shipped", "Відвантажені замовлення"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderMeasure === value} onClick={() => setOrderMeasure(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${orderMeasure === value ? "bg-[#118dff] text-white" : "bg-white text-[#586572]"}`}>{label}</button>)}</div>}
 
-            {view === "overview" && (
+            {view === "overview" && orderMeasure === "received" && <ReceivedOverview from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} segment={selectedDocumentSegment} categories={selectedSalesCategory} onSegmentChange={setSelectedDocumentSegment} onCategoriesChange={setSelectedSalesCategory} plan={plan} />}
+
+            {hasCategoryFilter && !(view === "overview" && orderMeasure === "received") && <DocumentSegmentFilter value={selectedDocumentSegment} onChange={segment => { setSelectedDocumentSegment(segment); setSelectedSalesCategory([]); }} category={selectedSalesCategory} onCategoryChange={setSelectedSalesCategory} categories={data.summary.categoryOptions || []} />}
+
+            {view === "overview" && orderMeasure === "shipped" && (
               <div className="space-y-4">
                 <section className="overflow-hidden rounded-2xl border border-[#9cccf6] bg-[linear-gradient(135deg,#eef7ff_0%,#f2fbf6_100%)] p-5 shadow-sm">
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_330px] xl:items-center">
@@ -2276,7 +2339,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               </div>
             )}
 
-            {(view === "brands" || view === "categories") && <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Тип замовлень">{([ ["received", "Web-shop замовлення"], ["shipped", "Відвантажені замовлення"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderMeasure === value} onClick={() => setOrderMeasure(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${orderMeasure === value ? "bg-[#118dff] text-white" : "bg-white text-[#586572]"}`}>{label}</button>)}</div>}
+
             {(view === "brands" || view === "categories") && orderMeasure === "received" && <ReceivedRanking dimension={view} from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} />}
 
             {view === "brands" && orderMeasure === "shipped" && <CategoryRankingList title="Продажі за брендами" itemNoun="бренд" color="#20a66a" items={data.summary.brands} comparisonItems={comparisonData?.summary.brands || []} metric={rankingMetric} onMetricChange={setRankingMetric} productsByCategory={brandProducts} expandedCategory={expandedBrand} loadingCategory={loadingBrand} categoryError={brandError} onToggleCategory={(brand) => setExpandedBrand((current) => current === brand ? null : brand)} />}

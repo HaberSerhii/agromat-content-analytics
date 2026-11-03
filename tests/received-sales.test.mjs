@@ -38,3 +38,31 @@ test("site channel accepts the live API origin and legacy webshop origin", () =>
   ], products, new Map(), "site");
   assert.equal(data.brands.items[0].docs, 2);
 });
+
+test("overview counts mixed orders once and filters amounts by segment and category", () => {
+  const metadata = new Map([
+    ["101", { category: "Ванни", categoryKey: "002", brand: "A" }],
+    ["102", { category: "Плитка", categoryKey: "001", brand: "A" }],
+  ]);
+  const input = [{ ...orders[0], date: "2026-10-01T23:30:00Z" }];
+  const range = { from: "2026-10-01", to: "2026-10-03" };
+  const all = receivedSales(input, products, metadata, "site", range).overview;
+  assert.equal(all.docs, 1);
+  assert.equal(all.revenue, 300);
+  assert.equal(all.goods, 4);
+  assert.equal(all.averageCheck, 300);
+  assert.deepEqual(Array.from(all.byDate, x => x.docs), [0, 1, 0]);
+  assert.equal(all.segments.find(x => x.label === "Сантехніка").docs, 1);
+  const tile = receivedSales(input, products, metadata, "site", { ...range, segment: "Плитка" }).overview;
+  assert.equal(tile.docs, 1);
+  assert.equal(tile.revenue, 100);
+  assert.equal(tile.goods, 1);
+  assert.equal(tile.categoryOptions.length, 2);
+  const bath = receivedSales(input, products, metadata, "site", { ...range, categories: ["Ванни"] }).overview;
+  assert.equal(bath.revenue, 200);
+  assert.equal(bath.docs, 1);
+  const empty = receivedSales(input, products, metadata, "rozetka", range).overview;
+  assert.equal(empty.docs, 0);
+  assert.equal(empty.averageCheck, null);
+  assert.equal(empty.byDate.length, 3);
+});

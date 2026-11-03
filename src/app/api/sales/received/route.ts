@@ -13,10 +13,12 @@ export async function GET(req: Request) {
   const from = params.get("from") || "", to = params.get("to") || "";
   try { validateGa4Dates(from, to); } catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
   const channel = normalizeSalesChannel(params.get("channel"));
+  const segment = params.get("segment") || "";
+  const categories = params.getAll("sales_category");
   try {
-    const { value } = await getServerResult({ namespace: "received-sales-v2", key: JSON.stringify({ from, to, channel }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
-      const [orders, products, categories] = await Promise.all([fetchCompleteOrders(from, to, null), readAllLite(), readSalesProductDimensionLookup()]);
-      return receivedSales(orders, products, categories, channel);
+    const { value } = await getServerResult({ namespace: "received-sales-v3", key: JSON.stringify({ from, to, channel, segment, categories }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
+      const [orders, products, dimensions] = await Promise.all([getServerResult({ namespace: "received-raw-orders-v1", key: JSON.stringify({ from, to }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 8, load: () => fetchCompleteOrders(from, to, null) }).then(result => result.value), readAllLite(), readSalesProductDimensionLookup()]);
+      return receivedSales(orders, products, dimensions, channel, { from, to, segment, categories });
     } });
     return NextResponse.json(value, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Не вдалося завантажити замовлення" }, { status: 500 }); }
