@@ -402,6 +402,27 @@ function ChannelPanel({
   );
 }
 
+function MonthPeriodPicker({ label, value, tone, onChange }: { label: string; value: string; tone: "blue" | "orange"; onChange: (value: string) => void }) {
+  const [draft, setDraft] = useState(value.slice(0, 7));
+  useEffect(() => setDraft(value.slice(0, 7)), [value]);
+  const today = kyivIsoToday();
+  const previous = new Date(`${today.slice(0, 7)}-01T00:00:00Z`);
+  previous.setUTCMonth(previous.getUTCMonth() - 1);
+  const maxMonth = previous.toISOString().slice(0, 7);
+  return <details name="web-funnel-month-picker" className="group relative shrink-0">
+    <summary aria-label={`Обрати місяць: ${label}`} className="cursor-pointer list-none rounded-lg border px-3 py-1.5 text-xs font-bold" style={tone === "blue" ? { borderColor: "#b9dfff", background: "#f6fbff", color: "#0078d4" } : { borderColor: "#f8c4a8", background: "#fff8f4", color: "#f05a1a" }}>{label} <span aria-hidden="true">▾</span></summary>
+    <form className={`absolute ${tone === "orange" ? "right-0" : "left-0"} top-full z-40 mt-2 w-60 rounded-xl border bg-white p-3 shadow-lg`} style={{ borderColor: "var(--border2)" }} onSubmit={event => {
+      event.preventDefault();
+      if (!/^\d{4}-\d{2}$/.test(draft) || draft > maxMonth) return;
+      onChange(`${draft}-01`);
+      event.currentTarget.closest("details")?.removeAttribute("open");
+    }}>
+      <label className="block text-[10px] font-bold" style={{ color: "var(--text-dim)" }}>Місяць і рік<input aria-label="Місяць і рік" type="month" required max={maxMonth} value={draft} onChange={event => setDraft(event.target.value)} className="mt-2 h-9 w-full rounded-lg border px-2 text-xs" style={{ color: "var(--text)", borderColor: "var(--border2)" }} /></label>
+      <button type="submit" className="mt-3 w-full rounded-lg bg-[#118dff] px-3 py-2 text-xs font-bold text-white">Застосувати</button>
+    </form>
+  </details>;
+}
+
 export function PromotionWebFunnelDashboard({
   suggestedUrls,
 }: {
@@ -418,6 +439,7 @@ export function PromotionWebFunnelDashboard({
   });
   const [periodKind, setPeriodKind] = useState<WebFunnelPeriodKind>(initialRange ? "custom" : "week");
   const [anchor, setAnchor] = useState("");
+  const [comparisonMonth, setComparisonMonth] = useState("");
   const [customFrom, setCustomFrom] = useState(initialRange?.from ?? DEFAULT_CUSTOM_RANGE.from);
   const [customTo, setCustomTo] = useState(initialRange?.to ?? DEFAULT_CUSTOM_RANGE.to);
   const [appliedCustomFrom, setAppliedCustomFrom] = useState(initialRange?.from ?? DEFAULT_CUSTOM_RANGE.from);
@@ -444,6 +466,7 @@ export function PromotionWebFunnelDashboard({
     const controller = new AbortController();
     const params = new URLSearchParams({ url: appliedUrl, period: periodKind, country_scope: "ua-global-created-orders" });
     if (anchor) params.set("anchor", anchor);
+    if (periodKind === "month" && comparisonMonth) params.set("comparison_month", comparisonMonth);
     if (periodKind === "custom") {
       params.set("from", appliedCustomFrom);
       params.set("to", appliedCustomTo);
@@ -469,7 +492,7 @@ export function PromotionWebFunnelDashboard({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [anchor, appliedCustomFrom, appliedCustomTo, appliedUrl, periodKind, utmCampaign, utmSource]);
+  }, [anchor, comparisonMonth, appliedCustomFrom, appliedCustomTo, appliedUrl, periodKind, utmCampaign, utmSource]);
 
   const applyUrl = (event: React.FormEvent) => {
     event.preventDefault();
@@ -491,6 +514,7 @@ export function PromotionWebFunnelDashboard({
 
   const changePeriod = (value: WebFunnelPeriodKind) => {
     setPeriodKind(value);
+    setComparisonMonth("");
     setAnchor("");
     if (value === "custom") {
       setAppliedCustomFrom(customFrom);
@@ -706,11 +730,11 @@ export function PromotionWebFunnelDashboard({
                 </div>
               )}
 
-              <div className="flex min-w-0 items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 pb-1 sm:pb-0">
               {periodKind !== "custom" && (
                 <button
                   type="button"
-                  onClick={() => setAnchor(data.navigation.previousAnchor)}
+                  onClick={() => { setComparisonMonth(""); setAnchor(data.navigation.previousAnchor); }}
                   className="h-8 w-8 rounded-lg border text-sm font-bold"
                   style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text-mid)" }}
                   aria-label="Попередній період"
@@ -718,17 +742,17 @@ export function PromotionWebFunnelDashboard({
                   ◀
                 </button>
               )}
-              <span className="rounded-lg border px-3 py-1.5 text-xs font-bold" style={{ borderColor: "#b9dfff", background: "#f6fbff", color: "#0078d4" }}>
+              {periodKind === "month" ? <MonthPeriodPicker label={comparison.previous.label} value={comparison.previous.from} tone="blue" onChange={value => { setAnchor(comparison.current.from); setComparisonMonth(value); }} /> : (<span className="rounded-lg border px-3 py-1.5 text-xs font-bold" style={{ borderColor: "#b9dfff", background: "#f6fbff", color: "#0078d4" }}>
                 {comparison.previous.label}
-              </span>
+              </span>) }
               <span className="text-xs font-bold" style={{ color: "var(--text-muted)" }}>→</span>
-              <span className="rounded-lg border px-3 py-1.5 text-xs font-bold" style={{ borderColor: "#f8c4a8", background: "#fff8f4", color: "#f05a1a" }}>
+              {periodKind === "month" ? <MonthPeriodPicker label={comparison.current.label} value={comparison.current.from} tone="orange" onChange={value => { setComparisonMonth(comparison.previous.from); setAnchor(value); }} /> : (<span className="rounded-lg border px-3 py-1.5 text-xs font-bold" style={{ borderColor: "#f8c4a8", background: "#fff8f4", color: "#f05a1a" }}>
                 {comparison.current.label}
-              </span>
+              </span>) }
               {periodKind !== "custom" && (
                 <button
                   type="button"
-                  onClick={() => setAnchor(data.navigation.nextAnchor)}
+                  onClick={() => { setComparisonMonth(""); setAnchor(data.navigation.nextAnchor); }}
                   disabled={!data.navigation.canGoNext}
                   className="h-8 w-8 rounded-lg border text-sm font-bold disabled:opacity-30"
                   style={{ background: "#fff", borderColor: "var(--border2)", color: "var(--text-mid)" }}

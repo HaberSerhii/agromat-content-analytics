@@ -186,6 +186,7 @@ function periodRanges(
   anchor?: string,
   customFrom?: string,
   customTo?: string,
+  comparisonMonth?: string,
 ): {
   ranges: PeriodRange[];
   previousAnchor: string;
@@ -227,11 +228,12 @@ function periodRanges(
     const latestCompleteFrom = shiftMonths(startOfMonth(today), -1);
     currentFrom = anchor ? startOfMonth(anchor) : latestCompleteFrom;
     currentTo = endOfMonth(currentFrom);
-    previousFrom = shiftMonths(currentFrom, -1);
+    previousFrom = comparisonMonth ? startOfMonth(comparisonMonth) : shiftMonths(currentFrom, -1);
     previousTo = endOfMonth(previousFrom);
     yearAgoFrom = shiftMonths(currentFrom, -12);
     yearAgoTo = endOfMonth(yearAgoFrom);
     nextAnchor = shiftMonths(currentFrom, 1);
+    if (comparisonMonth && (currentTo >= today || previousTo >= today)) throw new Error("Оберіть завершені місяці не пізніше минулого місяця");
   }
 
   const range = (key: PeriodKey, from: string, to: string): PeriodRange => ({
@@ -253,7 +255,7 @@ function periodRanges(
       range("previous", previousFrom, previousTo),
       range("yearAgo", yearAgoFrom, yearAgoTo),
     ],
-    previousAnchor: previousFrom,
+    previousAnchor: kind === "month" ? shiftMonths(currentFrom, -1) : previousFrom,
     nextAnchor,
     canGoNext: kind !== "custom" && nextAnchor <= latestCompleteFrom,
   };
@@ -501,6 +503,7 @@ export async function readPromotionWebFunnel(input: {
   url: string;
   periodKind: WebFunnelPeriodKind;
   anchor?: string;
+  comparisonMonth?: string;
   dateFrom?: string;
   dateTo?: string;
   utmSource?: string;
@@ -511,10 +514,10 @@ export async function readPromotionWebFunnel(input: {
   const periodKind: WebFunnelPeriodKind = input.periodKind === "month" || input.periodKind === "custom"
     ? input.periodKind
     : "week";
-  const periodInfo = periodRanges(periodKind, input.anchor, input.dateFrom, input.dateTo);
+  const periodInfo = periodRanges(periodKind, input.anchor, input.dateFrom, input.dateTo, input.comparisonMonth);
   const utmSource = input.utmSource?.trim().toLocaleLowerCase("uk") ?? "";
   const utmCampaign = input.utmCampaign?.trim().toLocaleLowerCase("uk") ?? "";
-  const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}:${utmSource}:${utmCampaign}`;
+  const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}:${periodInfo.ranges[1].from}:${periodInfo.ranges[1].to}:${utmSource}:${utmCampaign}`;
   const rows = await readThroughBigQueryCache<QueryRow[]>({
     namespace: "promotion-web-funnel",
     key: `v5-ua-funnel-unique-created-orders:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,

@@ -21,6 +21,7 @@ export async function GET(request: Request) {
       url: pageUrl,
       periodKind,
       anchor,
+      comparisonMonth: url.searchParams.get("comparison_month") || undefined,
       dateFrom,
       dateTo,
       utmSource,
