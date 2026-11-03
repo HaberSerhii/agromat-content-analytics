@@ -13,8 +13,9 @@ export function receivedSales(orders: ApiOrder[], products: ProductLite[], categ
   const groups = { brands: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>(), categories: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>() };
   const seen = new Set<number>();
   for (const order of orders) {
-    const origin = orderOriginSource(order);
-    if (seen.has(order.id) || (channel !== "all" && origin !== (channel === "site" ? "webshop" : channel))) continue;
+    const source = orderOriginSource(order);
+    const origin = source === "webshop" ? "site" : source;
+    if (seen.has(order.id) || (channel !== "all" && origin !== channel)) continue;
     seen.add(order.id);
     // Orders without positions still count in the unknown dimension.
     const items = order.items.length ? order.items : [{ product_id: `unknown-${order.id}`, code: null, goods_ref: null, name: null, url: null, quantity: 0, line_total: Math.max(0, (Number(order.totals?.cost) || 0) - (Number(order.totals?.delivery) || 0)) }];

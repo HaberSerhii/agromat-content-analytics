@@ -29,3 +29,12 @@ test("orders without lines remain countable under unknown dimensions", () => {
   assert.equal(data.categories.items[0].goods, 0);
   assert.equal(data.categories.items[0].revenue, 100);
 });
+
+test("site channel accepts the live API origin and legacy webshop origin", () => {
+  const data = receivedSales([
+    { id: 10, origin: { source: "site" }, items: [item(1)] },
+    { id: 11, origin: { source: "webshop" }, items: [item(1)] },
+    { id: 12, origin: { source: "rozetka" }, items: [item(1)] },
+  ], products, new Map(), "site");
+  assert.equal(data.brands.items[0].docs, 2);
+});
