@@ -460,7 +460,7 @@ function ReceivedOverview({ from, to, channel, compare, refresh, segment, catego
       })}</div>
       {data.otherGroups.length > 0 && <details className="rounded-2xl border bg-white p-4"><summary className="cursor-pointer text-sm font-bold">Інше · деталізація</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">{data.otherGroups.map(item => <div key={item.label} className="flex justify-between gap-3 text-xs"><span>{item.label}</span><b>{fmtMoney(item.revenue)}</b></div>)}</div></details>}
       <SalesTrendChart received days={data.byDate} previousDays={compare && prior ? prior.byDate : undefined} />
-      <OrdersTrendChart days={data.byDate.map(day => ({ date: day.date, docs: day.docs, managers: [] }))} previousDays={compare && prior ? prior.byDate.map(day => ({ date: day.date, docs: day.docs, managers: [] })) : undefined} />
+      <OrdersTrendChart received days={data.byDate.map(day => ({ date: day.date, docs: day.docs, managers: [] }))} previousDays={compare && prior ? prior.byDate.map(day => ({ date: day.date, docs: day.docs, managers: [] })) : undefined} />
     </>}
   </div>;
 }
@@ -1075,7 +1075,7 @@ function SalesTrendChart({
   previousDays?: SalesDataset["summary"]["byDate"];
 }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const points = completedDateSeries(days, kyivToday()).slice(-31);
+  const points = (received ? days : completedDateSeries(days, kyivToday())).slice(-31);
   const previousByDate = new Map(previousDays?.map((point) => [point.date, point]) || []);
   const comparisonPoints = previousDays
     ? points.map((point) => previousByDate.get(shiftIsoYear(point.date, -1)) || { date: shiftIsoYear(point.date, -1), docs: 0, goods: 0, revenue: 0 })
@@ -1115,7 +1115,7 @@ function SalesTrendChart({
         {points.length > 1 ? (
           <div className="grid grid-cols-[24px_68px_minmax(0,1fr)] gap-2">
             <div className="flex h-56 items-center justify-center overflow-visible">
-              <span className="-rotate-90 whitespace-nowrap text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">Сума продажів, грн</span>
+              <span className="-rotate-90 whitespace-nowrap text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">{received ? "Сума замовлень, грн" : "Сума продажів, грн"}</span>
             </div>
             <div className="relative h-56 text-[9px] font-semibold text-[#7d8994]">
               {axis.ticks.map((value) => <span key={value} className="absolute right-0 -translate-y-1/2 tabular-nums" style={{ top: `${chartY(value, axis.max)}%` }}>{fmtCompactMoney(value)}</span>)}
@@ -1146,7 +1146,7 @@ function SalesTrendChart({
                 })}
               </div>
               <div className="relative mt-2 h-4 text-[9px] font-semibold text-[#7d8994]">{xLabels.map((index) => <span key={points[index].date} className="absolute whitespace-nowrap" style={{ left: `${chartX(index, points.length)}%`, transform: `translateX(${index === 0 ? "0" : index === points.length - 1 ? "-100%" : "-50%"})` }}>{fmtIsoDateShort(points[index].date)}</span>)}</div>
-              <div className="mt-1 text-center text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">Дата відвантаження</div>
+              <div className="mt-1 text-center text-[9px] font-black uppercase tracking-[.08em] text-[#687582]">{received ? "Дата створення" : "Дата відвантаження"}</div>
             </div>
           </div>
         ) : (
@@ -1158,14 +1158,16 @@ function SalesTrendChart({
 }
 
 function OrdersTrendChart({
+  received = false,
   days,
   previousDays,
 }: {
+  received?: boolean;
   days: SalesDataset["summary"]["ordersByDate"];
   previousDays?: SalesDataset["summary"]["ordersByDate"];
 }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const points = completedDateSeries(days, kyivToday()).slice(-31);
+  const points = (received ? days : completedDateSeries(days, kyivToday())).slice(-31);
   const previousByDate = new Map(previousDays?.map((point) => [point.date, point]) || []);
   const comparisonPoints = previousDays
     ? points.map((point) => previousByDate.get(shiftIsoYear(point.date, -1)) || { date: shiftIsoYear(point.date, -1), docs: 0, managers: [] })
@@ -1191,7 +1193,7 @@ function OrdersTrendChart({
   return (
     <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
-        <div><h2 className="text-sm font-black text-[#26313d]">Оформлені замовлення по днях</h2><p className="mt-1 text-[10px] text-[#8a939c]">Наведіть на точку, щоб побачити кількість і розподіл по менеджерах</p>{previousDays && <div className="mt-2 flex gap-4 text-[9px] font-bold text-[#687582]"><span><i className="mr-1 inline-block h-0.5 w-4 bg-[#805ad5] align-middle" />Обраний період</span><span><i className="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-[#8a939c] align-middle" />Минулий рік</span></div>}</div>
+        <div><h2 className="text-sm font-black text-[#26313d]">Оформлені замовлення по днях</h2><p className="mt-1 text-[10px] text-[#8a939c]">{received ? "Кількість Web-shop замовлень за датою створення" : "Наведіть на точку, щоб побачити кількість і розподіл по менеджерах"}</p>{previousDays && <div className="mt-2 flex gap-4 text-[9px] font-bold text-[#687582]"><span><i className="mr-1 inline-block h-0.5 w-4 bg-[#805ad5] align-middle" />Обраний період</span><span><i className="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-[#8a939c] align-middle" />Минулий рік</span></div>}</div>
         <div className="text-right"><div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div><div className="mt-1 text-sm font-black text-[#26313d]">{fmtNum(total)} замовлень</div></div>
       </div>
       <div className="p-5">
@@ -2143,7 +2145,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
             <div className="flex flex-wrap items-center gap-2">
               {refreshing && <span className="rounded-lg bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2]">Оновлення…</span>}
               <button type="button" onClick={refreshNow} disabled={refreshing || webshopOrdersLoading} className="rounded-lg border border-[#cfe3f5] bg-[#eef7ff] px-3 py-1.5 text-[10px] font-bold text-[#0b6fc2] disabled:cursor-wait disabled:opacity-60">Оновити зараз</button>
-              <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">{view === "checkout" ? "Carts API" : view === "webshop" ? "Orders API + P2" : "облікова система + GA4"}</b></span>
+              <span className="rounded-lg border border-[#dfe4ea] bg-white px-3 py-1.5 text-[10px] text-[#68727d]">Джерело: <b className="text-[#27313c]">{view === "checkout" ? "Carts API" : view === "webshop" ? "Orders API + P2" : (view === "overview" || view === "brands" || view === "categories") && orderMeasure === "received" ? "Orders API (Web-shop)" : "облікова система + GA4"}</b></span>
             </div>
           </header>
 
