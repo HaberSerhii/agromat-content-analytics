@@ -81,6 +81,12 @@ test("overview, statuses and cancellation products split mixed orders while pres
   const reset = build(categoryRows, {}, { ...args[2], salesCategory: [] });
   assert.equal(reset.summary.shippedRevenue, 1000);
 
+  const extendedProducts = products.map((product, index) => ({ ...product, categoryKey: ["001", "009.002", "007"][index] }));
+  for (const [segment, expected] of [["Плитка", 600], ["Підлогові покриття", 300], ["Будівельна хімія", 100]]) {
+    const filtered = build([{ ...base, items: extendedProducts }], {}, { ...args[2], businessSegment: segment });
+    assert.equal(filtered.summary.brands.reduce((sum, brand) => sum + brand.revenue, 0), expected);
+    assert.equal(Object.values(filtered.summary.categoryProducts).flat().reduce((sum, product) => sum + product.revenue, 0), expected);
+  }
   const result = build(...args);
   assert.equal(result.summary.shippedRevenue, 1000);
   assert.deepEqual(result.summary.shippedSegments.map((part) => part.revenue), [600, 300, 100]);

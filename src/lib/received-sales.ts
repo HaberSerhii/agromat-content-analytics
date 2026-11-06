@@ -1,4 +1,4 @@
-import { classifySalesCategory } from "@/lib/sales-business-segments";
+import { classifySalesCategory, matchesSalesSegment } from "@/lib/sales-business-segments";
 import { promotionCatalogSegment } from "@/lib/promotion-sales-segments";
 import { fillSalesDateSeries } from "@/lib/sales-date-series";
 import { isSalesPlanService } from "@/lib/sales-plan-items";
@@ -40,7 +40,7 @@ export function receivedSales(orders: ApiOrder[], products: ProductLite[], categ
       const classification = metadata?.categoryKey ? classifySalesCategory(metadata.categoryKey)
         : { segment: catalog === "tile" ? "Плитка" : catalog === "plumbing" ? "Сантехніка" : "Інше", otherGroup: null };
       categoryOptions.set(category, { label: category, segment: classification.segment });
-      if (filter.segment && filter.segment !== "Усі" && classification.segment !== filter.segment) continue;
+      if (!matchesSalesSegment(classification, filter.segment)) continue;
       if (filter.categories?.length && !filter.categories.includes(category)) continue;
       matched = true;
       const qty = Number(item.quantity) || 0, revenue = Number(item.line_total) || 0;

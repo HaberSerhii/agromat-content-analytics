@@ -1,6 +1,6 @@
 import { summarizeReviewPeriodSales } from "@/lib/review-period-sales";
 import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
-import { classifySalesCategory, splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
+import { classifySalesCategory, matchesSalesSegment, splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, filterPromotionSalesRows, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -1109,7 +1109,7 @@ function buildDataset(
       const row = goodsOnlySalesRow(sourceRow);
       if (!row) return [];
       const codes = new Set(row.items.filter(item =>
-        (!dateFilter?.businessSegment || classifySalesCategory(item.categoryKey || "").segment === dateFilter?.businessSegment)
+        matchesSalesSegment(classifySalesCategory(item.categoryKey || ""), dateFilter?.businessSegment)
         && (!selectedCategories.size || selectedCategories.has(item.category))
       ).map(item => Number(item.code)));
       if (!codes.size) return [];

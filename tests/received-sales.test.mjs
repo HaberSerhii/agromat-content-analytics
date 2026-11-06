@@ -66,3 +66,19 @@ test("overview counts mixed orders once and filters amounts by segment and categ
   assert.equal(empty.averageCheck, null);
   assert.equal(empty.byDate.length, 3);
 });
+
+test("monthly segment filters isolate flooring and chemistry lines inside mixed Web-shop orders", () => {
+  const metadata = new Map([
+    ["101", { category: "Ламінат", categoryKey: "009.002", brand: "A" }],
+    ["102", { category: "Клей", categoryKey: "003.023", brand: "A" }],
+  ]);
+  const flooring = receivedSales(orders, products, metadata, "site", { segment: "Підлогові покриття" });
+  assert.equal(flooring.brands.items[0].revenue, 200);
+  assert.equal(flooring.brands.items[0].goods, 3);
+  assert.deepEqual(Array.from(flooring.categories.items, x => x.label), ["Ламінат"]);
+  const chemistry = receivedSales(orders, products, metadata, "site", { segment: "Будівельна хімія" });
+  assert.equal(chemistry.brands.items[0].revenue, 100);
+  assert.equal(chemistry.brands.items[0].docs, 1);
+  assert.deepEqual(Array.from(chemistry.brands.products.A, x => x.category), ["Клей"]);
+  assert.equal(receivedSales(orders, products, metadata, "site", { segment: "Плитка" }).brands.items.length, 0);
+});

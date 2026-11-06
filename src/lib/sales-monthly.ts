@@ -25,3 +25,10 @@ export function salesCsv(rows: (string | number)[][]) {
     return `"${(/^[=+@\-]/.test(value) && typeof cell === "string" ? "'" + value : value).replaceAll('"', '""')}"`;
   }).join(";")).join("\r\n");
 }
+
+export type MonthlySort = "total" | "growth" | "decline";
+
+export function sortMonthlyRows<T extends { label: string; total: number; monthValue: number; previousMonthValue: number }>(rows: T[], sort: MonthlySort) {
+  const value = (row: T) => sort === "total" ? row.total : row.monthValue - row.previousMonthValue;
+  return [...rows].sort((a, b) => (sort === "decline" ? value(a) - value(b) : value(b) - value(a)) || b.monthValue - a.monthValue || a.label.localeCompare(b.label, "uk"));
+}

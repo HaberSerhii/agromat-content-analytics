@@ -34,3 +34,8 @@ export function splitBusinessSales<T extends { categoryKey?: string; revenue: nu
   });
   return [...groups.values()];
 }
+
+/** Filter both main segments and named groups within Other without changing reporting totals. */
+export function matchesSalesSegment(classification: { segment: string; otherGroup: string | null }, selected?: string) {
+  return !selected || selected === "Усі" || classification.segment === selected || classification.otherGroup === selected;
+}
