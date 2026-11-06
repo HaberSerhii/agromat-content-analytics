@@ -100,3 +100,23 @@ test("slow P2 never blocks the registry; completed P2 updates status filters", a
   assert.equal(enriched.body.meta.total, 1);
   assert.equal(baseCalls, 1); assert.equal(p2Calls, 1);
 });
+
+test("base order pagination uses 200 rows while P2 keeps its 50-row contract", async () => {
+  const calls = [];
+  const reader = sourceLoader({ globals: {
+    process: { env: { AGROMAT_API_KEY: "test" } },
+    fetch: async url => {
+      const params = new URL(url).searchParams;
+      const page = Number(params.get("page")), size = Number(params.get("per_page"));
+      calls.push({ size, movements: params.get("with_movements") });
+      return { ok: true, json: async () => ({ data: Array.from({ length: Math.min(size, 300 - (page - 1) * size) }, (_, index) => ({ id: (page - 1) * size + index + 1, date: "2026-10-02T12:00:00Z" })), meta: { total_pages: Math.ceil(300 / size) } }) };
+    },
+  } })("@/lib/webshop-orders-api");
+  assert.equal((await reader.fetchCompleteOrders("2026-10-01", "2026-10-03", null)).length, 300);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => call.size === 200 && call.movements === "false"));
+  calls.length = 0;
+  assert.equal((await reader.fetchCompleteOrders("2026-10-01", "2026-10-03", null, true)).length, 300);
+  assert.equal(calls.length, 6);
+  assert.ok(calls.every(call => call.size === 50 && call.movements === "true"));
+});

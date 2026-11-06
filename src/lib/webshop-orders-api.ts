@@ -104,7 +104,8 @@ function applyOrderFilters(params: URLSearchParams, dateFrom: string, dateTo: st
 
 export async function fetchCompleteOrders(dateFrom: string, dateTo: string, synced: string | null, withMovements = false) {
   const orders: ApiOrder[] = [];
-  const firstParams = new URLSearchParams({ page: "1", per_page: String(DETAIL_PAGE_SIZE), with_movements: String(withMovements) });
+  const pageSize = withMovements ? DETAIL_PAGE_SIZE : 200;
+  const firstParams = new URLSearchParams({ page: "1", per_page: String(pageSize), with_movements: String(withMovements) });
   applyOrderFilters(firstParams, dateFrom, dateTo, synced);
   const first = await fetchOrders(firstParams);
   orders.push(...first.data);
@@ -114,7 +115,7 @@ export async function fetchCompleteOrders(dateFrom: string, dateTo: string, sync
   for (let startPage = 2; startPage <= first.meta.total_pages; startPage += 6) {
     const requests: Array<Promise<ApiResponse>> = [];
     for (let page = startPage; page < Math.min(startPage + 6, first.meta.total_pages + 1); page += 1) {
-      const params = new URLSearchParams({ page: String(page), per_page: String(DETAIL_PAGE_SIZE), with_movements: String(withMovements) });
+      const params = new URLSearchParams({ page: String(page), per_page: String(pageSize), with_movements: String(withMovements) });
       applyOrderFilters(params, dateFrom, dateTo, synced);
       requests.push(fetchOrders(params));
     }
