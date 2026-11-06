@@ -328,6 +328,16 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
   export MALLOC_TRIM_THRESHOLD_="${MALLOC_TRIM_THRESHOLD_:-131072}"
   export MALLOC_MMAP_THRESHOLD_="${MALLOC_MMAP_THRESHOLD_:-131072}"
+  # Prefer an installed allocator only for this child process.
+  JEMALLOC_LIBRARY="${JEMALLOC_LIBRARY:-/lib/x86_64-linux-gnu/libjemalloc.so.2}"
+  if [ "${DASHBOARD_NODE_ALLOCATOR:-auto}" = "system" ]; then
+    export LD_PRELOAD=""
+    export MALLOC_CONF=""
+  elif [ -f "$JEMALLOC_LIBRARY" ] && [ -z "${LD_PRELOAD:-}" ]; then
+    export LD_PRELOAD="$JEMALLOC_LIBRARY"
+    export MALLOC_CONF="${MALLOC_CONF:-dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2}"
+    echo "  dashboard allocator: jemalloc"
+  fi
   export VERCEL_GIT_COMMIT_SHA="$(git rev-parse HEAD)"
   if [ -z "$PM2_NAME" ]; then
     PM2_NAME=$(pm2 jlist 2>/dev/null \
