@@ -323,6 +323,11 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     . "$APP_DIR/.env"
     set +a
   fi
+  # Keep large snapshot buffers releasable on glibc-based small-memory VPS hosts.
+  # These are process-local; do not change allocators for Redis or companion services.
+  export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+  export MALLOC_TRIM_THRESHOLD_="${MALLOC_TRIM_THRESHOLD_:-131072}"
+  export MALLOC_MMAP_THRESHOLD_="${MALLOC_MMAP_THRESHOLD_:-131072}"
   export VERCEL_GIT_COMMIT_SHA="$(git rev-parse HEAD)"
   if [ -z "$PM2_NAME" ]; then
     PM2_NAME=$(pm2 jlist 2>/dev/null \
