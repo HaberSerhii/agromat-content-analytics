@@ -9,10 +9,17 @@ import type { SalesChannel } from "@/lib/sales-order-origin";
 
 type Product = { code: string; name: string; url: string; brand: string; category: string; orders: number; qty: number; revenue: number };
 type Bucket = { label: string; docs: number; goods: number; revenue: number; avgMargin: null };
+const productIndexes = new WeakMap<ProductLite[], { byId: Map<string, ProductLite>; byRef: Map<string, ProductLite>; byCode: Map<string, ProductLite> }>();
+function indexesForProducts(products: ProductLite[]) {
+  let indexes = productIndexes.get(products);
+  if (!indexes) {
+    indexes = { byId: new Map(products.map(p => [String(p.id), p])), byRef: new Map(products.filter(p => p.goodsRef).map(p => [String(p.goodsRef), p])), byCode: new Map(products.filter(p => p.code).map(p => [String(p.code), p])) };
+    productIndexes.set(products, indexes);
+  }
+  return indexes;
+}
 export function receivedSales(orders: ApiOrder[], products: ProductLite[], categories: ReadonlyMap<string, { category: string; categoryKey: string; brand: string }>, channel: SalesChannel, filter: { segment?: string; categories?: string[]; from?: string; to?: string; details?: boolean } = {}) {
-  const byId = new Map(products.map(p => [String(p.id), p]));
-  const byRef = new Map(products.filter(p => p.goodsRef).map(p => [String(p.goodsRef), p]));
-  const byCode = new Map(products.filter(p => p.code).map(p => [String(p.code), p]));
+  const { byId, byRef, byCode } = indexesForProducts(products);
   const groups = { brands: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>(), categories: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>() };
   const totals = { docs: 0, goods: 0, revenue: 0 };
   const byDate = new Map<string, { date: string; docs: number; goods: number; revenue: number }>();

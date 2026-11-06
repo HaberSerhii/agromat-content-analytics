@@ -157,7 +157,7 @@ export async function getServerResult<T>(options: {
       entry.lastAccess = Date.now();
       counters.loadMs += performance.now() - started;
       if (managed(options.namespace) && cache.get(options.key) === entry) {
-        entry.bytes = estimatedCacheBytes(value, budgetBytes());
+        entry.bytes = estimatedCacheBytes(value, Math.min(budgetBytes(), 16 * 1024 * 1024));
         const maxEntry = Math.min(budgetBytes(), 16 * 1024 * 1024);
         if (entry.bytes > maxEntry) { cache.delete(options.key); counters.oversized++; }
         trimServerResultCaches();

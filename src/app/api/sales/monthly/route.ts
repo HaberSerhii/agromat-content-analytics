@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   try {
     const result = params.get("measure") !== "received"
       ? await readSalesMonthlyBuckets(all, { channel, businessSegment: segment, statuses: params.getAll("status") }, dimension)
-      : await readDashboardReport("received-monthly-v1", JSON.stringify({ to, count, compare, channel, segment, dimension, syncedAt: await readLiteSyncedAt() }), 15 * 60_000, async () => {
+      : await readDashboardReport("received-monthly-v2", JSON.stringify({ to, count, compare, channel, segment, syncedAt: await readLiteSyncedAt() }), 15 * 60_000, async () => {
         const [products, dimensions] = await Promise.all([readAllLite(), readSalesProductDimensionLookup()]);
         const result = [];
         // Two contiguous source reads, not one upstream pagination job per month.
@@ -37,11 +37,11 @@ export async function GET(request: Request) {
           for (const period of range) {
             const monthOrders = (byMonth.get(period.from.slice(0,7)) || []).filter(order => kyivDay.format(new Date(order.date)) <= period.to);
             const summary = receivedSales(monthOrders, products, dimensions, channel, { segment, details: false });
-            result.push({ ...period, items: summary[dimension].items });
+            result.push({ ...period, brands: summary.brands.items, categories: summary.categories.items });
           }
         }
         return result;
-      });
+      }).then(result => ({ ...result, value: result.value.map(period => ({ from: period.from, to: period.to, items: period[dimension] })) }));
     const months = periods.map((p, i) => ({ ...p, current: result.value[i].items, previous: compare ? result.value[i + periods.length].items : [] }));
     return NextResponse.json(months, { headers: { "Cache-Control": "private, no-store", "X-Agromat-Cache": result.status, "Server-Timing": `monthly;dur=${(performance.now()-start).toFixed(1)}` } });
   } catch { return NextResponse.json({ error: "Не вдалося завантажити помісячні продажі" }, { status: 502 }); }

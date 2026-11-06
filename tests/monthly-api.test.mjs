@@ -14,7 +14,7 @@ test("received monthly endpoint reads two contiguous periods, skips product deta
     "@/lib/products-store": { readAllLite: async () => [], readLiteSyncedAt: async () => "v1" },
     "@/lib/received-sales": { receivedSales: (orders, products, dimensions, channel, filter) => {
       summaries.push(filter);
-      return { brands: { items: orders.map(order => ({ label: "Brand", docs: 1, goods: 2, revenue: order.id })) } };
+      return { brands: { items: orders.map(order => ({ label: "Brand", docs: 1, goods: 2, revenue: order.id })) }, categories: { items: [] } };
     } },
     "@/lib/dashboard-report-cache": { readDashboardReport: async (namespace, key, ttl, load) => ({ value: await load(), status: "miss" }) },
     "@/lib/ga4-marketing-report": { validateGa4Dates: (from, to) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error("date"); } },
