@@ -1,5 +1,7 @@
 "use client";
 
+import SalesMonthlyTable from "@/components/SalesMonthlyTable";
+
 import type { receivedSales } from "@/lib/received-sales";
 
 import type { SalesChannel } from "@/lib/sales-order-origin";
@@ -2341,6 +2343,8 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
               </div>
             )}
 
+
+            {(view === "brands" || view === "categories") && <SalesMonthlyTable dimension={view} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} measure={orderMeasure} segment={selectedDocumentSegment} categories={selectedSalesCategory} statuses={selectedStatuses} />}
 
             {(view === "brands" || view === "categories") && orderMeasure === "received" && <ReceivedRanking dimension={view} from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} />}
 
