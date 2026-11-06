@@ -10,6 +10,7 @@ function setup({ authenticated = true, availability = { dataTo: '2026-09-13', pe
     '@/lib/dashboard-auth': { isDashboardRequest: () => authenticated },
     '@/lib/cpo-analytics/store': {
       readCpoAvailability: async () => availability,
+      readDiagnosticSnapshot: async () => null,
       cpoImportProgress: async () => 5000,
       readCpoCube: async selection => { reads.push(selection); return { cube: {}, compressedBytes: 100 }; },
       saveDiagnosticSnapshot: async (...args) => { saves.push(args); return `${process.cwd()}/data/test.json.gz`; },
@@ -63,4 +64,14 @@ test('missing snapshots retain import progress in GET and POST', async () => {
     assert.equal(response.body.code, 'cpo_snapshot_missing');
     assert.match(response.body.error, /5\D?000/);
   }
+});
+
+test('repeated CPO reads reuse the completed report instead of rebuilding the cube', async () => {
+  const route = setup();
+  const first = await route.POST(request({}));
+  const second = await route.POST(request({}));
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(route.reads.length, 1);
+  assert.equal(route.saves.length, 1);
 });

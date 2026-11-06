@@ -9,7 +9,7 @@ import type { SalesChannel } from "@/lib/sales-order-origin";
 
 type Product = { code: string; name: string; url: string; brand: string; category: string; orders: number; qty: number; revenue: number };
 type Bucket = { label: string; docs: number; goods: number; revenue: number; avgMargin: null };
-export function receivedSales(orders: ApiOrder[], products: ProductLite[], categories: ReadonlyMap<string, { category: string; categoryKey: string; brand: string }>, channel: SalesChannel, filter: { segment?: string; categories?: string[]; from?: string; to?: string } = {}) {
+export function receivedSales(orders: ApiOrder[], products: ProductLite[], categories: ReadonlyMap<string, { category: string; categoryKey: string; brand: string }>, channel: SalesChannel, filter: { segment?: string; categories?: string[]; from?: string; to?: string; details?: boolean } = {}) {
   const byId = new Map(products.map(p => [String(p.id), p]));
   const byRef = new Map(products.filter(p => p.goodsRef).map(p => [String(p.goodsRef), p]));
   const byCode = new Map(products.filter(p => p.code).map(p => [String(p.code), p]));
@@ -61,6 +61,7 @@ export function receivedSales(orders: ApiOrder[], products: ProductLite[], categ
         g.bucket.docs = g.docs.size;
         g.bucket.goods += Number(item.quantity) || 0;
         g.bucket.revenue += Number(item.line_total) || 0;
+        if (filter.details === false) continue;
         const product = g.products.get(code) || { code, name: p?.name || item.name || "Без назви", url: p?.url || item.url || "", brand, category, orders: 0, qty: 0, revenue: 0 };
         const docs = g.productDocs.get(code) || new Set<number>();
         docs.add(order.id); g.productDocs.set(code, docs);

@@ -180,8 +180,8 @@ async function buildCatalogPayload(
 
     const liveCatalogData = Promise.all([readAllLite(), readLiteSyncedAt()])
       .then(([products, liveSyncedAt]) => ({ products, syncedAt: liveSyncedAt }))
-      .catch(() => {
-        const disk = readDiskSnapshot();
+      .catch(async () => {
+        const disk = await readDiskSnapshot();
         return { products: disk?.products ?? [], syncedAt: disk?.syncedAt ?? null };
       });
     const [allLivePromotions, liveCatalog] = await Promise.all([

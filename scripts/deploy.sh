@@ -55,6 +55,15 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   git reset --hard origin/main
   echo "  HEAD: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
+  if [ -n "${RELEASE_ARCHIVE:-}" ]; then
+    CURRENT_STEP="verify prebuilt revision"
+    RELEASE_REVISION=$(tar -xOf "$RELEASE_ARCHIVE" REVISION | tr -d '\r\n')
+    if [ "$RELEASE_REVISION" != "$(git rev-parse HEAD)" ]; then
+      echo "❌ Prebuilt artifact does not match the pushed revision"
+      exit 1
+    fi
+  fi
+
   # Wipe any stale build artefacts BEFORE install. `next build` emits the
   # cryptic "[TypeError: generate is not a function]" when it tries to reuse
   # a partial .next/ OR a half-installed node_modules from a prior failed
@@ -63,17 +72,13 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
   # ~30–40s extra per deploy, worth it for determinism.
   CURRENT_STEP="clean .next/ + node_modules"
   echo "▸ $CURRENT_STEP"
-  rm -rf .next node_modules
-
-  CURRENT_STEP="npm ci (clean install from lockfile)"
-  echo "▸ $CURRENT_STEP"
-  # Use `ci` not `install` — deterministic and recovers from prior broken state.
-  # CRITICAL: this script is spawned by /api/admin/deploy, which runs *inside* the
-  # Next.js standalone server where NODE_ENV=production. Under that env `npm ci`
-  # omits devDependencies → only ~46 packages install (instead of ~384) and
-  # `next build` dies with the cryptic "[TypeError: generate is not a function]"
-  # (typescript/tailwind/postcss live in devDependencies). Force dev deps in.
-  NODE_ENV=development npm ci --include=dev --no-audit --no-fund
+  rm -rf .next
+  if [ -z "${RELEASE_ARCHIVE:-}" ]; then
+    rm -rf node_modules
+    CURRENT_STEP="npm ci (clean install from lockfile)"
+    echo "▸ $CURRENT_STEP"
+    NODE_ENV=development npm ci --include=dev --no-audit --no-fund
+  fi
 
   CURRENT_STEP="ensure persistent snapshot directory"
   echo "▸ $CURRENT_STEP"
@@ -128,11 +133,16 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     echo "  BIGQUERY_RESULT_CACHE_DIR not set — using app-local data/bigquery-cache"
   fi
 
-  CURRENT_STEP="npm run build"
-  echo "▸ $CURRENT_STEP"
-  # The production VPS has 2 GB RAM. Node's detected default heap (~1 GB)
-  # is too small for Next.js type-checking even though swap is available.
-  NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=1536}" npm run build
+  if [ -n "${RELEASE_ARCHIVE:-}" ]; then
+    CURRENT_STEP="install prebuilt Linux release"
+    echo "▸ $CURRENT_STEP"
+    mkdir -p .next
+    tar -xzf "$RELEASE_ARCHIVE" -C .next
+  else
+    CURRENT_STEP="npm run build"
+    echo "▸ $CURRENT_STEP"
+    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=1536}" npm run build
+  fi
 
   # Next.js standalone output needs static/ + public/ + .env copied into the
   # standalone tree — `next build` does not do this automatically. Mirrors the
@@ -313,6 +323,7 @@ trap 'echo "❌ FAILED at: $CURRENT_STEP (exit $?)"' ERR
     . "$APP_DIR/.env"
     set +a
   fi
+  export VERCEL_GIT_COMMIT_SHA="$(git rev-parse HEAD)"
   if [ -z "$PM2_NAME" ]; then
     PM2_NAME=$(pm2 jlist 2>/dev/null \
       | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const a=JSON.parse(d||'[]');const m=a.find(p=>p.pm2_env&&p.pm2_env.pm_cwd&&p.pm2_env.pm_cwd.startsWith('$APP_DIR'));if(m)console.log(m.name)}catch(e){}})" \

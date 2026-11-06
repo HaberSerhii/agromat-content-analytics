@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readAllLite } from "@/lib/products-store";
 import { getServerResult } from "@/lib/server-result-cache";
+import { readCartSnapshot } from "@/lib/cart-snapshot-store";
 import type { ApiCart } from "@/lib/cart-types";
 
 function configuration() {
@@ -11,43 +12,17 @@ function configuration() {
   return { base, scope, headers: { "X-API-Key": apiKey, Accept: "application/json" } };
 }
 
-export async function loadCartSnapshot(refresh = false) {
+export async function loadCartSnapshot(refresh = false, filter: { from?: string; to?: string; cartId?: number } = {}) {
   const { base, scope, headers } = configuration();
-  return (await getServerResult({
-    namespace: "sales-carts", key: scope, ttlMs: 30_000, maxEntries: 2, refresh,
-    load: async () => {
-      // A shared load must survive an individual browser request being cancelled.
-      const signal = AbortSignal.timeout(45_000);
-      const pageData = async (page: number) => {
-        const response = await fetch(`${base}/carts/?page=${page}&per_page=50`, {
-          headers, cache: "no-store", signal,
-        });
-        if (!response.ok) throw new Error(`Carts API: HTTP ${response.status}`);
-        const payload = await response.json();
-        if (!Array.isArray(payload.data) || !Number.isInteger(payload.meta?.total_pages) || payload.meta.total_pages < 0)
-          throw new Error("Некоректна відповідь Carts API");
-        if (payload.meta.total_pages > 100)
-          throw new Error("Обсяг кошиків перевищує ліміт повного завантаження. Потрібна серверна синхронізація.");
-        return { data: payload.data as ApiCart[], totalPages: payload.meta.total_pages as number };
-      };
-      const first = await pageData(1);
-      const collected = new Map(first.data.map(cart => [cart.id, cart]));
-      let totalPages = first.totalPages;
-      for (let page = 2; page <= totalPages;) {
-        const count = Math.min(4, totalPages - page + 1);
-        const pages = await Promise.all(Array.from({ length: count }, (_, index) => pageData(page + index)));
-        for (const result of pages) {
-          totalPages = Math.max(totalPages, result.totalPages);
-          for (const cart of result.data) collected.set(cart.id, cart);
-        }
-        page += count;
-      }
-      return {
-        data: [...collected.values()].map(cart => ({ ...cart, items: cart.items.map(item => ({ ...item, url: trustedProductUrl(item.url) })) })),
-        fetched_at: new Date().toISOString(),
-      };
-    },
-  })).value;
+  const pageData = async (page: number) => {
+    const response = await fetch(`${base}/carts/?page=${page}&per_page=200`, { headers, cache: "no-store", signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`Carts API: HTTP ${response.status}`);
+    const payload = await response.json();
+    if (!Array.isArray(payload.data) || !Number.isInteger(payload.meta?.total_pages) || payload.meta.total_pages < 0) throw new Error("Некоректна відповідь Carts API");
+    return { data: payload.data as ApiCart[], totalPages: payload.meta.total_pages as number };
+  };
+  const saved = await readCartSnapshot(scope, pageData, refresh, filter);
+  return { ...saved, data: saved.data.map(cart => ({ ...cart, items: cart.items.map(item => ({ ...item, url: trustedProductUrl(item.url) })) })) };
 }
 
 function trustedProductUrl(value: string | null | undefined) {

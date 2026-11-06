@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Некоректний ID кошика" }, { status: 400 });
   }
   try {
-    const snapshot = await loadCartSnapshot(params.get("refresh") === "1");
+    const snapshot = await loadCartSnapshot(params.get("refresh") === "1", cartId !== null ? { cartId: Number(cartId) } : { from, to });
     if (cartId !== null) {
       const cart = snapshot.data.find(row => row.id === Number(cartId));
       if (!cart) return NextResponse.json({ error: "Кошик не знайдено" }, { status: 404 });
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
       return (!from || date >= from) && (!to || date <= to);
     });
     if (data.some(cart => cart.currency !== "UAH")) throw new Error("У вибірці є інша валюта; сумування потребує окремого розрахунку.");
-    return NextResponse.json({ data, fetched_at: snapshot.fetched_at }, { headers: { "Cache-Control": "private, no-store" } });
+    return NextResponse.json({ data, fetched_at: snapshot.fetched_at, stale: snapshot.stale }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Не вдалося завантажити кошики" }, { status: 502 });
   }

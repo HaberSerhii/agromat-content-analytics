@@ -488,7 +488,14 @@ declare global {
 //   3. Try disk snapshot; if its embedded syncedAt+count match Redis's probe,
 //      use it (saves the ~6s 31-shard pipeline).
 //   4. Last resort: pipeline all shards from Redis, repopulate disk for next time.
+let litePending: Promise<ProductLite[]> | undefined;
 export async function readAllLite(): Promise<ProductLite[]> {
+  if (litePending) return litePending;
+  const load = loadAllLite();
+  litePending = load;
+  try { return await load; } finally { if (litePending === load) litePending = undefined; }
+}
+async function loadAllLite(): Promise<ProductLite[]> {
   const redis = getRedis();
   const cache = global._productsLiteCache;
   const now = Date.now();
@@ -517,7 +524,7 @@ export async function readAllLite(): Promise<ProductLite[]> {
   // syncedAt matches what Redis just reported, the data is canonical and we
   // skip the expensive 31-shard pipeline. (Note: Redis's K.liteCount is the
   // shard count, not the product count — so we key freshness on syncedAt alone.)
-  const disk = readDiskSnapshot();
+  const disk = await readDiskSnapshot();
   if (disk && syncedAt && disk.syncedAt === syncedAt) {
     const out: ProductLite[] = [];
     for (const p of disk.products) {
@@ -548,7 +555,7 @@ export async function readAllLite(): Promise<ProductLite[]> {
   }
   global._productsLiteCache = { ts: now, key, data: out };
   // Self-heal: backfill disk cache so future cold loads skip this Redis pipeline.
-  if (syncedAt) writeDiskSnapshot(out, syncedAt);
+  if (syncedAt) await writeDiskSnapshot(out, syncedAt);
   return out;
 }
 
@@ -576,7 +583,7 @@ export async function writeAllLite(products: ProductLite[], syncedAt: string): P
   invalidateServerResults("product-dashboard-json");
   // Mirror to disk so the next cold load skips the 31-shard Redis pipeline.
   // Sync I/O is OK here — sync already takes minutes; an extra ~100ms is noise.
-  writeDiskSnapshot(products, syncedAt);
+  await writeDiskSnapshot(products, syncedAt);
   updateInactiveTracking(products, syncedAt);
   return shardCount;
 }
@@ -589,6 +596,18 @@ export async function readLiteSyncedAt(): Promise<string | null> {
 // Compact full-derived index for mandatory-attribute checks in the product list.
 // The lite snapshot only stores attributesCount, so missing required attributes
 // need this productId → present attribute ids map.
+function internAttributeIndex(entries: Iterable<[number, { id: number; name: string }[]]>) {
+  const descriptors = new Map<number, Map<string, { id: number; name: string }>>();
+  const result = new Map<number, { id: number; name: string }[]>();
+  for (const [id, attributes] of entries) result.set(id, attributes.map(attribute => {
+    let names = descriptors.get(attribute.id);
+    if (!names) { names = new Map(); descriptors.set(attribute.id, names); }
+    let descriptor = names.get(attribute.name);
+    if (!descriptor) { descriptor = { id: attribute.id, name: attribute.name }; names.set(attribute.name, descriptor); }
+    return descriptor;
+  }));
+  return result;
+}
 export async function readProductAttributeIndex(): Promise<Map<number, { id: number; name: string }[]>> {
   const redis = getRedis();
   const syncedAt = ((await redis.get(K.liteSyncAt)) as string | null) ?? "";
@@ -611,7 +630,7 @@ export async function readProductAttributeIndex(): Promise<Map<number, { id: num
       if (compactRaw) {
         try {
           const compact = JSON.parse(compactRaw) as { syncedAt: string; entries: [number, { id: number; name: string }[]][] };
-          if (compact.syncedAt === key && Array.isArray(compact.entries)) return new Map(compact.entries);
+          if (compact.syncedAt === key && Array.isArray(compact.entries)) return internAttributeIndex(compact.entries);
         } catch { /* Older installations can rebuild from full shards. */ }
       }
       const pipe = redis.pipeline();
@@ -628,7 +647,7 @@ export async function readProductAttributeIndex(): Promise<Map<number, { id: num
           }
         } catch { /* skip corrupted shard */ }
       }
-      return out;
+      return internAttributeIndex(out);
     },
   });
   if ((global._productsAttrGeneration ?? 0) === generation) global._productsAttrIndexCache = { ts: now, key, data };

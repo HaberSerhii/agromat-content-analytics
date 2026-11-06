@@ -1,9 +1,11 @@
+import { getServerResult } from "@/lib/server-result-cache";
+import { runDashboardWork } from "@/lib/dashboard-work";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { isDashboardRequest } from "@/lib/dashboard-auth";
 import { buildCpoDiagnostic } from "@/lib/cpo-analytics/engine";
 import { currentKyivIdentity } from "@/lib/cpo-analytics/periods";
-import { readCpoAvailability, readCpoCube, saveDiagnosticSnapshot, cpoImportProgress } from "@/lib/cpo-analytics/store";
+import { readCpoAvailability, readCpoCube, readDiagnosticSnapshot, saveDiagnosticSnapshot, cpoImportProgress } from "@/lib/cpo-analytics/store";
 import type { CpoPeriodKind } from "@/lib/cpo-analytics/types";
 
 export const dynamic = "force-dynamic";
@@ -55,8 +57,12 @@ export async function POST(request: Request) {
     }
     // The validated selection is always present, even for an omitted period.
     if (selectedPeriod === undefined || selectedYear === undefined) return missingSnapshot();
+    const cached = await getServerResult({ namespace: "cpo-diagnostic-v2", key: `${availability.savedAt}:${periodKind}:${selectedYear}:${selectedPeriod}`, ttlMs: 60 * 60_000, maxEntries: 4, load: async () => {
+      const saved = await readDiagnosticSnapshot(availability.savedAt, periodKind, selectedPeriod, selectedYear);
+      if (saved) return saved;
+      return runDashboardWork(async () => {
     const stored = await readCpoCube({ kind: periodKind, period: selectedPeriod, year: selectedYear });
-    if (!stored) return missingSnapshot();
+    if (!stored) throw new Error("Знімок CPO недоступний");
     const result = buildCpoDiagnostic({
       cube: stored.cube,
       cubeCompressedBytes: stored.compressedBytes,
@@ -66,6 +72,10 @@ export async function POST(request: Request) {
     });
     const snapshotFile = await saveDiagnosticSnapshot(result, periodKind, selectedPeriod, selectedYear);
     result.storage.diagnosticSnapshotPath = path.relative(process.cwd(), snapshotFile);
+    return result;
+      });
+    } });
+    const result = cached.value;
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Не вдалося виконати діагностику CPO";

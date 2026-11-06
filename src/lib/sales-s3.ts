@@ -1763,44 +1763,34 @@ export async function readSalesWebshopOrders(filter?: SalesDateFilter): Promise<
 }
 
 /** Historical goods metadata keeps received and shipped rankings on the same dimensions. */
-export async function readSalesProductDimensionLookup() {
-  const { rows } = await readCachedSalesRows();
-  const lookup = new Map<string, { category: string; categoryKey: string; brand: string }>();
-  for (const row of rows) for (const item of row.items) {
-    if (item.code) lookup.set(String(item.code), { category: item.category, categoryKey: item.categoryKey || "", brand: item.brand });
-  }
-  return lookup;
-}
-
-/** ERP classification is authoritative; include all cached documents, regardless of date or shipment. */
-export async function readSalesProductCategoryLookup(): Promise<Map<string, string>> {
-  const { rows } = await readCachedSalesRows();
-  const lookup = new Map<string, string>();
-  for (const row of rows) for (const item of row.items) {
-    if (item.code && item.categoryKey) lookup.set(String(item.code), item.categoryKey);
-  }
-  return lookup;
-}
-
-export async function readSalesWebshopReturnLookup(): Promise<Map<string, SalesWebshopReturnInfo>> {
-  const { rows } = await readCachedSalesRows();
-  const returns = new Map<string, SalesWebshopReturnInfo>();
-
+type SalesIndexes = {
+  dimensions: Map<string, { category: string; categoryKey: string; brand: string }>;
+  categories: Map<string, string>;
+  returns: Map<string, SalesWebshopReturnInfo>;
+  managers: Map<string, string>;
+};
+const salesIndexes = new WeakMap<ParsedSalesRow[], SalesIndexes>();
+function indexesFor(rows: ParsedSalesRow[]): SalesIndexes {
+  const cached = salesIndexes.get(rows);
+  if (cached) return cached;
+  const indexes: SalesIndexes = { dimensions: new Map(), categories: new Map(), returns: new Map(), managers: buildSalesWebshopManagerLookup(rows) };
   for (const row of rows) {
-    if (!row.webshopId || !(row.hasReturns || row.returnSum > 0 || row.returnGoodsCodes.length > 0)) continue;
-    returns.set(row.webshopId, {
-      webshopId: row.webshopId,
-      docsRef: row.docsRef,
-      number: row.number,
-      returnSum: row.returnRowSums.length
-        ? row.returnRowSums.reduce((sum, value) => sum + value, 0)
-        : row.returnSum,
+    for (const item of row.items) {
+      if (item.code) indexes.dimensions.set(String(item.code), { category: item.category, categoryKey: item.categoryKey || "", brand: item.brand });
+      if (item.code && item.categoryKey) indexes.categories.set(String(item.code), item.categoryKey);
+    }
+    if (row.webshopId && (row.hasReturns || row.returnSum > 0 || row.returnGoodsCodes.length > 0)) indexes.returns.set(row.webshopId, {
+      webshopId: row.webshopId, docsRef: row.docsRef, number: row.number,
+      returnSum: row.returnRowSums.length ? row.returnRowSums.reduce((sum, value) => sum + value, 0) : row.returnSum,
       returnGoodsCodes: row.returnGoodsCodes,
     });
   }
-
-  return returns;
+  salesIndexes.set(rows, indexes);
+  return indexes;
 }
+export async function readSalesProductDimensionLookup() { return indexesFor((await readCachedSalesRows()).rows).dimensions; }
+export async function readSalesProductCategoryLookup() { return indexesFor((await readCachedSalesRows()).rows).categories; }
+export async function readSalesWebshopReturnLookup() { return indexesFor((await readCachedSalesRows()).rows).returns; }
 
 function buildSalesWebshopManagerLookup(rows: ParsedSalesRow[]): Map<string, string> {
   const managers = new Map<string, string>();
@@ -1816,7 +1806,7 @@ function buildSalesWebshopManagerLookup(rows: ParsedSalesRow[]): Map<string, str
 
 export async function readSalesWebshopManagerLookup(): Promise<Map<string, string>> {
   const { rows } = await readCachedSalesRows();
-  return buildSalesWebshopManagerLookup(rows);
+  return indexesFor(rows).managers;
 }
 
 export async function readSalesCategoryProducts(
@@ -2359,3 +2349,42 @@ export async function readReviewPeriodSales(input: { from: string; to: string; p
   const { rows } = await readCachedSalesRows();
   return summarizeReviewPeriodSales(rows.filter(row => !isExcludedAnalyticsOrder(row)), input);
 }
+
+/** One source traversal for all requested months; no managers/status/plan/product detail work. */
+export async function readSalesMonthlyBuckets(periods: { from: string; to: string }[], filter: SalesDateFilter, dimension: "brands" | "categories") {
+  const { rows, source } = await readCachedSalesRows();
+  const version = JSON.stringify(source);
+  const { readDashboardReport } = await import("@/lib/dashboard-report-cache");
+  return readDashboardReport("sales-monthly-v1", JSON.stringify({ version, periods, filter, dimension }), 15 * 60_000, async () => {
+    return buildMonthlyRows(await scopeRowsToChannel(rows, filter), periods, filter, dimension);
+  });
+}
+
+
+function buildMonthlyRows(rows: ParsedSalesRow[], periods: { from: string; to: string }[], filter: SalesDateFilter, dimension: "brands" | "categories") {
+    const indexed = new Map(periods.map(period => [period.from.slice(0, 7), { ...period, buckets: new Map<string, MutableBucket>() }]));
+    const codeFilter = new Set(getEffectiveFilter(filter).productCodes);
+    for (const sourceRow of rows) {
+      const period = indexed.get(sourceRow.createdDate.slice(0, 7));
+      if (!period || !matchesSalesChannel(sourceRow, filter.channel || "all") || !isDimensionOrderInPeriod(sourceRow, period) || isExcludedAnalyticsOrder(sourceRow)) continue;
+      let row = goodsOnlySalesRow(sourceRow);
+      if (!row) continue;
+      if (filter.businessSegment && filter.businessSegment !== "Усі") {
+        const codes = new Set(row.items.filter(item => matchesSalesSegment(classifySalesCategory(item.categoryKey || ""), filter.businessSegment)).map(item => Number(item.code)));
+        if (!codes.size) continue;
+        row = scopeSalesRowToProductCodes(row, codes);
+        if (!row) continue;
+      }
+      row = scopeSalesRowToProductCodes(row, codeFilter);
+      if (!row) continue;
+      const seen = new Set<string>();
+      for (const item of netSalesItems(row)) {
+        const label = dimension === "brands" ? item.brand : item.category;
+        addBucket(period.buckets, label, row, item.revenue, item.qty || 1, !seen.has(label));
+        seen.add(label);
+      }
+    }
+    return [...indexed.values()].map(({ from, to, buckets }) => ({ from, to, items: finishBuckets(buckets) }));
+}
+
+export async function readSalesDataVersion() { return JSON.stringify((await readCachedSalesRows()).source); }

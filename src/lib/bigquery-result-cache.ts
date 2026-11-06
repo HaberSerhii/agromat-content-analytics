@@ -1,3 +1,4 @@
+import { getServerResult } from "@/lib/server-result-cache";
 import { createHash } from "crypto";
 import { promises as fs } from "node:fs";
 import { promisify } from "node:util";
@@ -11,20 +12,8 @@ type CacheEnvelope<T> = {
   value: T;
 };
 
-const memoryCache = new Map<string, { value: unknown; expiresAt: number }>();
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
-const MAX_MEMORY_ENTRIES = 32;
-function remember(key: string, value: unknown) {
-  const now = Date.now();
-  for (const [name, entry] of memoryCache)
-    if (entry.expiresAt <= now) memoryCache.delete(name);
-  memoryCache.delete(key);
-  while (memoryCache.size >= MAX_MEMORY_ENTRIES)
-    memoryCache.delete(memoryCache.keys().next().value!);
-  memoryCache.set(key, { value, expiresAt: now + 60 * 60_000 });
-}
-const inFlight = new Map<string, Promise<unknown>>();
 const DEFAULT_RETENTION_DAYS = 35;
 const MAX_FILES_PER_NAMESPACE = 500;
 
@@ -140,28 +129,12 @@ export async function readThroughBigQueryCache<T>(options: {
   key: string;
   load: () => Promise<T>;
 }): Promise<T> {
-  const compositeKey = `${options.namespace}:${options.key}`;
-  const cached = memoryCache.get(compositeKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    memoryCache.delete(compositeKey);
-    memoryCache.set(compositeKey, cached);
-    return cached.value as T;
-  }
-  memoryCache.delete(compositeKey);
-  const pending = inFlight.get(compositeKey);
-  if (pending) return pending as Promise<T>;
-
-  const work = (async () => {
+  const result = await getServerResult<T>({ namespace: `bigquery-${options.namespace}`, key: options.key, ttlMs: 60 * 60_000, maxEntries: 8, load: async () => {
     const diskValue = await readDisk<T>(options.namespace, options.key);
-    if (diskValue != null) {
-      remember(compositeKey, diskValue);
-      return diskValue;
-    }
+    if (diskValue != null) return diskValue;
     const value = await options.load();
-    remember(compositeKey, value);
     await writeDisk(options.namespace, options.key, value);
     return value;
-  })().finally(() => inFlight.delete(compositeKey));
-  inFlight.set(compositeKey, work);
-  return work;
+  } });
+  return result.value;
 }

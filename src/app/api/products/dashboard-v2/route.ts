@@ -1,3 +1,4 @@
+import { runDashboardWork } from "@/lib/dashboard-work";
 import { isActivatedInRange } from "@/lib/product-overview-drilldown";
 import { normalizePromotionCodes } from "@/lib/promotion-product-selection";
 import { isInactiveProduct, readInactiveTracking } from "@/lib/product-inactive-tracking";
@@ -1779,13 +1780,15 @@ async function dashboardResponse(input: DashboardFilters) {
     ? { value: JSON.stringify(await buildDashboard(filters)), status: "bypass" }
     : await getServerResult({
         namespace: "product-dashboard-json",
-        key: `${dateInKyiv()}:${JSON.stringify(filters)}`,
-        ttlMs: 30_000,
+        key: `${dateInKyiv()}:${await readLiteSyncedAt()}:${JSON.stringify(filters)}`,
+        ttlMs: 15 * 60_000,
         staleMs: filters.view === "products" ? PRODUCT_RESPONSE_STALE_MS : 0,
         maxEntries: 48,
-        load: async () => JSON.stringify(await buildDashboard(filters)),
+        load: () => runDashboardWork(async () => JSON.stringify(await buildDashboard(filters))),
       });
-  return new NextResponse(result.value, { headers: {
+  const response = JSON.parse(result.value);
+  response.syncState = await readSyncState();
+  return new NextResponse(JSON.stringify(response), { headers: {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "private, no-store",
     "X-Agromat-Cache": result.status,

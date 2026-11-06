@@ -1,3 +1,4 @@
+import { getServerResult } from "@/lib/server-result-cache";
 import type { SalesWebshopReturnInfo } from "@/lib/sales-s3";
 import type { OrderOrigin } from "@/lib/orders-origin";
 import type { MarketingAttribution } from "@/lib/order-marketing-attribution";
@@ -85,7 +86,7 @@ export async function fetchOrders(params: URLSearchParams) {
   // The trailing slash is required: the upstream redirect from /orders drops query parameters.
   const response = await fetch(`${baseUrl}/orders/?${params.toString()}`, {
     headers: { Accept: "application/json", "X-API-Key": apiKey },
-    cache: "no-store",
+    cache: "no-store", signal: AbortSignal.timeout(30_000),
   });
   const payload = await response.json().catch(() => null) as ApiResponse | { message?: string; error?: string } | null;
   if (!response.ok || !payload || !("data" in payload)) {
@@ -124,3 +125,8 @@ export async function fetchCompleteOrders(dateFrom: string, dateTo: string, sync
   return orders.filter((order) => orderInDateRange(order.date, dateFrom, dateTo));
 }
 
+
+export async function readBaseOrders(from: string, to: string) {
+  return getServerResult({ namespace: "webshop-orders-shared-v1", key: JSON.stringify({ from, to }), ttlMs: 15 * 60_000, staleMs: 60_000, maxEntries: 6,
+    load: () => fetchCompleteOrders(from, to, null) });
+}

@@ -1,3 +1,5 @@
+import { promisify } from "node:util";
+import { getServerResult } from "@/lib/server-result-cache";
 // Disk-backed daily snapshots for the promotions catalog.
 //
 // Promotion history is intentionally kept on the VPS rather than in Supabase:
@@ -130,18 +132,16 @@ export function writePromotionsDailySnapshot(
   writeManifest({ version: 1, snapshots: snapshots.filter((entry) => !dropped.has(entry.date)) });
 }
 
-export function readPromotionsDailySnapshot(date: string): PromotionsDailySnapshot | null {
+const gunzipAsync = promisify(zlib.gunzip);
+export async function readPromotionsDailySnapshot(date: string): Promise<PromotionsDailySnapshot | null> {
+  if (!DATE_RE.test(date)) return null;
   try {
-    const compressed = fs.readFileSync(snapshotFile(date));
-    const parsed = JSON.parse(zlib.gunzipSync(compressed).toString("utf-8")) as PromotionsDailySnapshot;
-    if (!DATE_RE.test(parsed.date) || !Array.isArray(parsed.promotions)) return null;
-    return parsed;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.error("[promotions-daily-snapshots] read failed:", error);
-    }
-    return null;
-  }
+    const file = snapshotFile(date), stat = await fs.promises.stat(file);
+    return (await getServerResult({ namespace: "promotion-daily-snapshot", key: `${date}:${stat.mtimeMs}:${stat.size}`, ttlMs: 15 * 60_000, maxEntries: 2, load: async () => {
+      const parsed = JSON.parse((await gunzipAsync(await fs.promises.readFile(file))).toString("utf8")) as PromotionsDailySnapshot;
+      return parsed.date === date && Array.isArray(parsed.promotions) ? parsed : null;
+    } })).value;
+  } catch { return null; }
 }
 
 export function listPromotionsSnapshotDates(): string[] {

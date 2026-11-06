@@ -250,8 +250,8 @@ async function readHistoricalProductMeta(targetDate: string): Promise<Map<number
   if (cached?.key === key) return cached.products;
 
   const products = new Map<number, HistoricalProductMeta>();
-  const historicalSnapshots = await Promise.all(selectedDates.map((date) => readDailySnapshot(date)));
-  for (const snapshot of historicalSnapshots) {
+  for (const date of selectedDates) {
+    const snapshot = await readDailySnapshot(date);
     for (const product of snapshot?.products || []) {
       if (!products.has(product.goodsRef) && product.code) {
         products.set(product.goodsRef, {

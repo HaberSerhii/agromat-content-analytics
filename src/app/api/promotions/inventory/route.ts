@@ -29,9 +29,9 @@ export async function GET(request: Request) {
       load: async (): Promise<PromotionInventory> => {
         const target = date === today
           ? { date, capturedAt: new Date().toISOString(), promotions: await fetchAllPromotions() }
-          : readPromotionsDailySnapshot(date);
+          : await readPromotionsDailySnapshot(date);
         if (target && date === today) writePromotionsDailySnapshot(date, selectPromotionsForDailySnapshot(target.promotions, date), target.capturedAt);
-        const baseline = readPromotionsDailySnapshot(previousDate);
+        const baseline = await readPromotionsDailySnapshot(previousDate);
         let allowedCodes = await readPricePositionCodes(pricePosition);
         if (segment !== "all") {
           const segments = await readPromotionProductSegments();

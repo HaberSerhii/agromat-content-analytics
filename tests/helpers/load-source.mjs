@@ -45,6 +45,7 @@ export function sourceLoader({
         URL,
         URLSearchParams,
         Buffer,
+        AbortSignal,
         performance,
         global: {},
         ...globals,

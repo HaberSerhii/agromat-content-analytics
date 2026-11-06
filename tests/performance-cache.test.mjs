@@ -140,3 +140,19 @@ test("persistent datasets preserve Map/Set and enforce age on restart", async (t
   now = 1600;
   assert.equal(await readPersistentResult("test-base", 500), null);
 });
+
+test("a global byte budget evicts across namespaces and idle expiration frees values", async () => {
+  const { serverResultCacheStats, trimServerResultCaches, estimatedCacheBytes } = await import("../src/lib/server-result-cache.ts");
+  const old = process.env.DASHBOARD_RESULT_CACHE_MB;
+  process.env.DASHBOARD_RESULT_CACHE_MB = "1";
+  try {
+    putServerResult({ namespace: "test-budget-a", key: "a", value: "x".repeat(350_000), ttlMs: 60_000 });
+    putServerResult({ namespace: "test-budget-b", key: "b", value: "x".repeat(350_000), ttlMs: 60_000 });
+    assert.ok(serverResultCacheStats().estimatedBytes <= 1024 * 1024);
+    assert.equal((await getServerResult({ namespace: "test-budget-a", key: "a", ttlMs: 1000, load: async () => "reloaded" })).status, "miss");
+    trimServerResultCaches(Date.now() + 120_000);
+    assert.equal(serverResultCacheStats().namespaces.find(item => item.name === "test-budget-b").entries, 0);
+    const cycle = {}; cycle.self = cycle;
+    assert.ok(Number.isFinite(estimatedCacheBytes(cycle)));
+  } finally { if (old === undefined) delete process.env.DASHBOARD_RESULT_CACHE_MB; else process.env.DASHBOARD_RESULT_CACHE_MB = old; }
+});

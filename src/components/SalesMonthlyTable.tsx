@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import SalesDimensionSelect from "@/components/SalesDimensionSelect";
 import { fetchApiJson } from "@/lib/read-api-json";
-import { monthlyPeriods, priorYearDate, revenueChange, salesCsv, sortMonthlyRows, type MonthlySort } from "@/lib/sales-monthly";
+import { revenueChange, salesCsv, sortMonthlyRows, type MonthlySort } from "@/lib/sales-monthly";
 import type { SalesChannel } from "@/lib/sales-order-origin";
 
 type Bucket = { label: string; revenue: number; docs: number; goods: number };
@@ -11,10 +11,10 @@ type Month = { from: string; to: string; current: Bucket[]; previous: Bucket[] }
 const money = (value: number) => value.toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const monthLabel = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("uk-UA", { month: "long", year: "numeric", timeZone: "UTC" });
 
-export default function SalesMonthlyTable({ dimension, to, channel, compare, refresh, measure, segment, categories, statuses, metric, selected, onSelectionChange }: {
+export default function SalesMonthlyTable({ dimension, to, channel, compare, refresh, measure, segment, statuses, metric, selected, onSelectionChange }: {
   dimension: "brands" | "categories"; to: string; channel: SalesChannel; compare: boolean; refresh: number;
   selected: string[]; onSelectionChange: (values: string[]) => void;
-  metric: "docs" | "goods" | "revenue"; measure: "received" | "shipped"; segment: string; categories: string[]; statuses: string[];
+  metric: "docs" | "goods" | "revenue"; measure: "received" | "shipped"; segment: string; statuses: string[];
 }) {
   const unit = metric === "docs" ? "замовлення" : metric === "goods" ? "шт." : "грн";
   const format = (value: number) => metric === "revenue" ? money(value) : value.toLocaleString("uk-UA", { maximumFractionDigits: 3 });
@@ -25,37 +25,18 @@ export default function SalesMonthlyTable({ dimension, to, channel, compare, ref
   const [months, setMonths] = useState<Month[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const categoryKey = JSON.stringify(categories), statusKey = JSON.stringify(statuses);
+  const statusKey = JSON.stringify(statuses);
   const windowSize = count === 12 ? Number(to.slice(5, 7)) : count;
   useEffect(() => {
     const controller = new AbortController();
     setMonths(null); setError(null);
-    const periods = monthlyPeriods(to, windowSize);
-    async function load(from: string, end: string) {
-      const params = new URLSearchParams({ from, to: end, channel, compact: "1" });
-      if (selectedSegment !== "Усі") params.set("segment", selectedSegment);
-      (JSON.parse(categoryKey) as string[]).forEach(value => params.append("sales_category", value));
-      (JSON.parse(statusKey) as string[]).forEach(value => params.append("status", value));
-      const payload = await fetchApiJson<{ summary: { brands: Bucket[]; categories: Bucket[] }; brands: { items: Bucket[] }; categories: { items: Bucket[] } }>(`/api/sales${measure === "received" ? "/received" : ""}?${params}`, { signal: controller.signal, cache: "no-store" });
-      return measure === "received" ? payload[dimension].items : payload.summary[dimension];
-    }
-    async function run() {
-      // Keep historical requests bounded to avoid flooding the sales source.
-      const result: Month[] = [];
-      let cursor = 0;
-      await Promise.all(Array.from({ length: Math.min(3, periods.length) }, async () => {
-        while (cursor < periods.length && !controller.signal.aborted) {
-          const index = cursor++, period = periods[index];
-          const current = await load(period.from, period.to);
-          const previous = needsPrevious ? await load(priorYearDate(period.from), priorYearDate(period.to)) : [];
-          result[index] = { ...period, current, previous };
-        }
-      }));
-      if (!controller.signal.aborted) setMonths(result);
-    }
-    run().catch(reason => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "Не вдалося завантажити помісячні продажі"); controller.abort(); } });
+    const params = new URLSearchParams({ to, count: String(windowSize), channel, dimension, measure, segment: selectedSegment, compare: needsPrevious ? "1" : "0" });
+    (JSON.parse(statusKey) as string[]).forEach(value => params.append("status", value));
+    fetchApiJson<Month[]>(`/api/sales/monthly?${params}`, { signal: controller.signal, cache: "no-store" })
+      .then(value => { if (!controller.signal.aborted) setMonths(value); })
+      .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не вдалося завантажити помісячні продажі"); });
     return () => controller.abort();
-  }, [to, windowSize, channel, needsPrevious, refresh, measure, selectedSegment, categoryKey, statusKey, dimension, retry]);
+  }, [to, windowSize, channel, needsPrevious, refresh, measure, selectedSegment, statusKey, dimension, retry]);
   const allRows = useMemo(() => {
     if (!months) return [];
     const labels = new Set(months.flatMap(month => [...month.current, ...month.previous].map(item => item.label)));

@@ -1,3 +1,5 @@
+import { readDashboardReport } from "@/lib/dashboard-report-cache";
+import { runDashboardWork } from "@/lib/dashboard-work";
 import { BigQuery } from "@google-cloud/bigquery";
 import { NextResponse } from "next/server";
 import { promises as fs } from "node:fs";
@@ -512,6 +514,15 @@ export async function POST(request: Request) {
       ? Math.max(1, Number(today.slice(5, 7)) - 1)
       : Math.max(1, isoWeekNumber(today) - 1);
     const selectedPeriod = Math.round(Number(input.period || defaultPeriod));
+    const signature = await fs.stat(auditCubeFile()).catch(() => null);
+    if (signature) {
+      const cached = await readDashboardReport("bigquery-audit-report-v1", `${signature.mtimeMs}:${signature.size}:${periodKind}:${selectedPeriod}:${selectedYear}`, 60 * 60_000, () => runDashboardWork(async () => {
+        const stored = await readAuditCube();
+        if (!stored) throw new Error("Не вдалося прочитати знімок аудиту");
+        return renderAudit(stored, periodKind, selectedPeriod, selectedYear, "saved");
+      }));
+      return NextResponse.json(cached.value);
+    }
     let stored = await readAuditCube();
     let source: "bigquery" | "saved" = "saved";
     if (input.buildSnapshot === true && !stored) {

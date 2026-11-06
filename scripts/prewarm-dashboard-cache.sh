@@ -32,6 +32,11 @@ if [ -z "${CRON_SECRET:-}" ]; then
   exit 1
 fi
 
+if ! curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:${APP_PORT}/sales"; then
+  echo "$(date -Iseconds) application not ready; prewarm deferred" >> "$LOG"
+  exit 0
+fi
+
 failed=0
 pending_warms=()
 warm_request() {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { validateGa4Dates } from "@/lib/ga4-marketing-report";
-import { fetchCompleteOrders } from "@/lib/webshop-orders-api";
+import { readBaseOrders } from "@/lib/webshop-orders-api";
 import { readAllLite } from "@/lib/products-store";
 import { readSalesProductDimensionLookup } from "@/lib/sales-s3";
 import { normalizeSalesChannel } from "@/lib/sales-order-origin";
@@ -16,10 +16,11 @@ export async function GET(req: Request) {
   const segment = params.get("segment") || "";
   const categories = params.getAll("sales_category");
   try {
-    const { value } = await getServerResult({ namespace: "received-sales-v3", key: JSON.stringify({ from, to, channel, segment, categories }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
-      const [orders, products, dimensions] = await Promise.all([getServerResult({ namespace: "received-raw-orders-v1", key: JSON.stringify({ from, to }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 8, load: () => fetchCompleteOrders(from, to, null) }).then(result => result.value), readAllLite(), readSalesProductDimensionLookup()]);
+    const started = performance.now();
+    const { value, status } = await getServerResult({ namespace: "received-sales-v3", key: JSON.stringify({ from, to, channel, segment, categories }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
+      const [orders, products, dimensions] = await Promise.all([readBaseOrders(from, to).then(result => result.value), readAllLite(), readSalesProductDimensionLookup()]);
       return receivedSales(orders, products, dimensions, channel, { from, to, segment, categories });
     } });
-    return NextResponse.json(value, { headers: { "Cache-Control": "private, no-store" } });
+    return NextResponse.json(value, { headers: { "Cache-Control": "private, no-store", "X-Agromat-Cache": status, "Server-Timing": `received;dur=${(performance.now() - started).toFixed(1)}` } });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Не вдалося завантажити замовлення" }, { status: 500 }); }
 }

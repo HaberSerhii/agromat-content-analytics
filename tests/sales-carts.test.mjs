@@ -1,11 +1,17 @@
-import test from "node:test";
+import test, { after } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const temporary = [];
+after(() => temporary.forEach(dir => rmSync(dir, { recursive: true, force: true })));
 import assert from "node:assert/strict";
 import { sourceLoader } from "./helpers/load-source.mjs";
 
 function route({ authorized = true, pages = [], catalog = [], fetchPage, readCatalog } = {}) {
   const calls = [];
+  const directory = mkdtempSync(path.join(os.tmpdir(), "carts-store-")); temporary.push(directory);
   const routeModule = sourceLoader({ globals: {
-    process: { env: { AGROMAT_API_KEY: "test" } }, AbortSignal,
+    process: { env: { AGROMAT_API_KEY: "test", DASHBOARD_CACHE_DIR: directory } }, AbortSignal,
     fetch: async url => {
       calls.push(url);
       if (fetchPage) return fetchPage(url);
@@ -40,7 +46,7 @@ test("cart cohorts include the Kyiv final day and load all upstream pages", asyn
   assert.equal(api.calls.length, 2);
 });
 test("invalid periods do not call upstream and oversized datasets are not shown as complete", async () => {
-  const api = route({ pages: [{ data: [], meta: { total_pages: 101 } }] });
+  const api = route({ pages: [{ data: [], meta: { total_pages: 10001 } }] });
   assert.equal((await api.get("from=2026-10-08&to=2026-10-07")).status, 400);
   assert.equal(api.calls.length, 0);
   assert.equal((await api.get("")).status, 502);
@@ -62,7 +68,7 @@ test("list does not wait for the catalog or product URL searches", async () => {
   assert.equal(catalogReads, 0);
 });
 
-test("cold load fetches remaining pages concurrently with a limit of four", async () => {
+test("cold load fetches remaining pages concurrently with a limit of two", async () => {
   let active = 0, peak = 0;
   const api = route({ fetchPage: async url => {
     const page = Number(new URL(url).searchParams.get("page"));
@@ -75,7 +81,7 @@ test("cold load fetches remaining pages concurrently with a limit of four", asyn
   assert.equal(result.status, 200);
   assert.equal(result.body.data.length, 10);
   assert.equal(api.calls.length, 10);
-  assert.equal(peak, 4);
+  assert.equal(peak, 2);
 });
 
 test("period changes reuse the snapshot and explicit refresh fetches fresh carts", async () => {
@@ -139,4 +145,31 @@ test("unauthenticated cart details cannot read the snapshot", async () => {
   const api = route({ authorized: false });
   assert.equal((await api.get("cart_id=1")).status, 401);
   assert.equal(api.calls.length, 0);
+});
+
+test("disk snapshots handle more than 100 pages and only retain the selected cohort", async () => {
+  const api = route({ fetchPage: async url => {
+    const page = Number(new URL(url).searchParams.get("page"));
+    return { ok: true, json: async () => ({ data: [cart(page, page === 105 ? "2026-10-07T10:00:00Z" : "2025-01-01T10:00:00Z")], meta: { total_pages: 110 } }) };
+  } });
+  const result = await api.get("from=2026-10-07&to=2026-10-07");
+  assert.equal(result.status, 200);
+  assert.deepEqual(Array.from(result.body.data, row => row.id), [105]);
+  assert.equal(api.calls.length, 110);
+  const detail = await api.get("cart_id=105");
+  assert.equal(detail.body.data.id, 105);
+  assert.equal(api.calls.filter(url => url.includes("/carts/")).length, 110);
+});
+
+test("failed refresh keeps the last complete on-disk snapshot", async () => {
+  let fail = false;
+  const api = route({ fetchPage: async () => {
+    if (fail) throw new Error("source offline");
+    return { ok: true, json: async () => ({ data: [cart(1, "2026-10-07T10:00:00Z")], meta: { total_pages: 1 } }) };
+  } });
+  await api.get("from=2026-10-07&to=2026-10-07");
+  fail = true;
+  const result = await api.get("from=2026-10-07&to=2026-10-07&refresh=1");
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data[0].id, 1);
 });

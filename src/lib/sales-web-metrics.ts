@@ -1,3 +1,5 @@
+import { readDashboardReport } from "@/lib/dashboard-report-cache";
+import { readSalesDataVersion } from "@/lib/sales-s3";
 import { BigQuery } from "@google-cloud/bigquery";
 import {
   bigQueryCacheDay,
@@ -493,7 +495,7 @@ async function readConversionRankings(range: { from: string; to: string }) {
   };
 }
 
-export async function readSalesWebMetrics(input: {
+async function loadSalesWebMetrics(input: {
   from: string;
   to: string;
 }): Promise<SalesWebMetricsDataset> {
@@ -562,4 +564,10 @@ export async function readSalesWebMetrics(input: {
     conversions,
   };
   return value;
+}
+
+export async function readSalesWebMetrics(input: { from: string; to: string }): Promise<SalesWebMetricsDataset> {
+  const range = normalizeRange(input.from, input.to);
+  const key = JSON.stringify({ day: bigQueryCacheDay(), range, version: await readSalesDataVersion() });
+  return (await readDashboardReport("sales-web-report-v1", key, 15 * 60_000, () => loadSalesWebMetrics(range))).value;
 }

@@ -13,3 +13,6 @@ readAllLite()
     // Non-fatal — the dashboard will warm itself on the first user request.
     console.error("[boot] cache warmup failed (non-fatal):", e);
   });
+
+// Start event-loop observation without retaining request bodies or customer data.
+void import("./lib/dashboard-performance");

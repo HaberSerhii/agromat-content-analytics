@@ -106,11 +106,21 @@ export async function saveDiagnosticSnapshot(
   year: number,
 ): Promise<string> {
   const sourceVersion = safeSnapshotPart(result.sourceCubeSavedAt);
-  const file = path.join(root(), "diagnostics", String(year), `${kind}-${String(period).padStart(2, "0")}-${sourceVersion}.json.gz`);
+  const file = path.join(root(), "diagnostics", "v2", String(year), `${kind}-${String(period).padStart(2, "0")}-${sourceVersion}.json.gz`);
   try {
     await fs.access(file);
   } catch {
     await atomicGzipWrite(file, result);
   }
   return file;
+}
+
+export async function readDiagnosticSnapshot(savedAt: string, kind: CpoPeriodKind, period: number, year: number): Promise<CpoDiagnosticResult | null> {
+  const file = path.join(root(), "diagnostics", "v2", String(year), `${kind}-${String(period).padStart(2, "0")}-${safeSnapshotPart(savedAt)}.json.gz`);
+  try {
+    const value = JSON.parse((await gunzip(await fs.readFile(file))).toString("utf8")) as CpoDiagnosticResult;
+    if (value.sourceCubeSavedAt !== savedAt) return null;
+    value.storage.diagnosticSnapshotPath = path.relative(process.cwd(), file);
+    return value;
+  } catch { return null; }
 }

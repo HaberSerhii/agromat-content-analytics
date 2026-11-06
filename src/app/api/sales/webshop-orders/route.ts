@@ -1,4 +1,4 @@
-import { fetchOrders, fetchCompleteOrders, type ApiOrder } from "@/lib/webshop-orders-api";
+import { fetchOrders, fetchCompleteOrders, readBaseOrders, type ApiOrder } from "@/lib/webshop-orders-api";
 import { matchesOrderSearch } from "@/lib/orders-search";
 import { readAllLite } from "@/lib/products-store";
 import { webshopCategoryRevenue } from "@/lib/webshop-category-revenue";
@@ -264,7 +264,7 @@ export async function GET(req: Request) {
     const p2Namespace = "webshop-orders-background-p2-v1";
     const p2Result = peekServerResult<ApiOrder[]>(p2Namespace, scopeKey);
     const [baseResult, returnLookup, managerLookup, onlinePayments] = await Promise.all([
-      getServerResult({
+      !reviewSales ? readBaseOrders(dateFrom, dateTo) : getServerResult({
         namespace: "webshop-orders-base-15m-v1",
         key: scopeKey,
         ttlMs: SALES_AUTO_REFRESH_MS,

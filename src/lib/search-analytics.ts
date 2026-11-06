@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readDashboardReport } from "@/lib/dashboard-report-cache";
+import { runDashboardWork } from "@/lib/dashboard-work";
 import { BigQuery } from "@google-cloud/bigquery";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 import {
@@ -12,7 +15,7 @@ import type {
   SearchQueryProcessing,
   SearchQueryProduct,
 } from "@/lib/search-analytics-types";
-import { readAllLite, type ProductLite } from "@/lib/products-store";
+import { readAllLite, readLiteSyncedAt, type ProductLite } from "@/lib/products-store";
 
 type SourceQuery = {
   query: string;
@@ -320,7 +323,7 @@ function addSource(
     row.lastSeenAt = item.lastSeenAt;
 }
 
-export async function buildSearchAnalyticsDataset(): Promise<{
+async function loadSearchAnalyticsDataset(): Promise<{
   rows: SearchAnalyticsRow[];
   from: string;
   to: string;
@@ -584,3 +587,9 @@ export async function readMultisearchNoResultsCounts(
 }
 
 export const SEARCH_ANALYTICS_CACHE_TTL_MS = DAY_MS;
+
+export async function buildSearchAnalyticsDataset() {
+  const [syncedAt, sheetRevision, processing, exclusions] = await Promise.all([readLiteSyncedAt(), getSearchSheetRevision(), listSearchQueryProcessing(), listSearchQueryExclusions()]);
+  const key = createHash("sha256").update(JSON.stringify({ day: dateInKyiv(), syncedAt, sheetRevision, processing, exclusions })).digest("hex");
+  return (await readDashboardReport("search-dataset-v1", key, 15 * 60_000, () => runDashboardWork(loadSearchAnalyticsDataset))).value;
+}

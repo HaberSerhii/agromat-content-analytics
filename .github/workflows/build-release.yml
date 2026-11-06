@@ -1,0 +1,29 @@
+name: Build production release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      - name: Package Linux standalone build
+        run: |
+          printf '%s\n' "$GITHUB_SHA" > .next/REVISION
+          cp .next/REVISION .next/standalone/REVISION
+          tar --exclude='.env*' -C .next -czf release.tar.gz standalone static REVISION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-release
+          path: release.tar.gz
+          retention-days: 7
+          if-no-files-found: error

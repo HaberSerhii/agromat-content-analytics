@@ -48,7 +48,7 @@ function loadBuilder(source) {
     }
     return require(name);
   };
-  const js = ts.transpileModule(source + '\nexports.testBuilder = buildDataset;', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const js = ts.transpileModule(source + '\nexports.testBuilder = buildDataset; exports.testBuilder.monthly = buildMonthlyRows;', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function("require", "exports", js)(localRequire, exports);
   return exports.testBuilder;
 }
@@ -60,6 +60,16 @@ test("overview, statuses and cancellation products split mixed orders while pres
   const base = { docsRef: "1", number: "1", createdDate: "2026-10-01", shippedDate: "2026-10-02", seller: "4964", state: "Повністю відвантажений", docsSum: 1000, returnSum: 0, goodsCount: 3, goodsCodes: "1 | 2 | 3", trademarksNames: "", groupRefs: "", goodsNames: "", margin: null, stockm: "", planGroup: "Плитка", cartNumber: "", items: products, goodsCodeNumbers: [1, 2, 3], cancelReason: "Відмова", webshopId: "", marketingProgram: "", hasReturns: false, returnGoodsCodes: [], returnRowSums: [], ownCost: 0, hasOwnCostData: false };
   const rows = [base, { ...base, docsRef: "2", number: "2", shippedDate: null, state: "Скасована" }];
   const args = [rows, {}, { from: "2026-10-01", to: "2026-10-31" }];
+  const periods = [{ from: "2026-10-01", to: "2026-10-31" }, { from: "2026-11-01", to: "2026-11-07" }];
+  const monthlyRows = [...rows, { ...base, docsRef: "cross-month", shippedDate: "2026-11-02" }, { ...base, docsRef: "november", createdDate: "2026-11-01", shippedDate: "2026-11-03", returnSum: 50, returnGoodsCodes: ["2"], returnRowSums: [50] }];
+  for (const dimension of ["brands", "categories"]) for (const segment of [undefined, "Плитка", "Сантехніка", "Будівельна хімія"]) {
+    const monthly = build.monthly(monthlyRows, periods, { businessSegment: segment }, dimension);
+    for (let index = 0; index < periods.length; index++) {
+      const expected = build(monthlyRows, {}, { ...periods[index], businessSegment: segment }).summary[dimension];
+      assert.deepEqual(monthly[index].items, expected, `${dimension}/${segment}/${periods[index].from}`);
+    }
+  }
+
   const categoryRows = rows.map(row => ({ ...row, items: row.items.map((item, index) => ({ ...item, category: ["Плитка підлогова", "Змішувачі", "Живлення"][index] })) }));
   const scoped = build(categoryRows, {}, { ...args[2], businessSegment: "Сантехніка", salesCategory: "Змішувачі" });
   assert.equal(scoped.summary.shippedRevenue, 300);
