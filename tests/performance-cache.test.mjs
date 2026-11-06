@@ -156,3 +156,14 @@ test("a global byte budget evicts across namespaces and idle expiration frees va
     assert.ok(Number.isFinite(estimatedCacheBytes(cycle)));
   } finally { if (old === undefined) delete process.env.DASHBOARD_RESULT_CACHE_MB; else process.env.DASHBOARD_RESULT_CACHE_MB = old; }
 });
+
+test("per-entry limits can be tuned while the global budget remains in force", async () => {
+  let loads = 0;
+  const options = { namespace: "test-entry-limit", key: "value", ttlMs: 10000, load: async () => { loads++; return "x".repeat(1024); } };
+  await getServerResult({ ...options, maxEntryBytes: 128 });
+  await getServerResult({ ...options, maxEntryBytes: 128 });
+  assert.equal(loads, 2);
+  await getServerResult({ ...options, maxEntryBytes: 4096 });
+  await getServerResult({ ...options, maxEntryBytes: 4096 });
+  assert.equal(loads, 3);
+});

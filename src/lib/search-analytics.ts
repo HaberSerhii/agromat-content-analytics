@@ -1,6 +1,7 @@
+import { createMonthlyMetricPool } from "@/lib/search-monthly-cells";
 import { createHash } from "node:crypto";
 import { readDashboardReport } from "@/lib/dashboard-report-cache";
-import { runDashboardWork } from "@/lib/dashboard-work";
+import { runDashboardWork, mapWithConcurrency } from "@/lib/dashboard-work";
 import { BigQuery } from "@google-cloud/bigquery";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 import {
@@ -350,15 +351,11 @@ async function loadSearchAnalyticsDataset(): Promise<{
       loadMultisearchQueries("no-results", from, to, cacheDay),
       loadSheetMappings(cacheDay, sheetRevision),
     ]),
-    Promise.all(
-      months.map((range) =>
-        Promise.allSettled([
-          loadBigQueryQueries(range.from, range.to, cacheDay),
-          loadMultisearchQueries("found", range.from, range.to, cacheDay),
-          loadMultisearchQueries("no-results", range.from, range.to, cacheDay),
-        ]),
-      ),
-    ),
+    mapWithConcurrency(months, 2, range => Promise.allSettled([
+      loadBigQueryQueries(range.from, range.to, cacheDay),
+      loadMultisearchQueries("found", range.from, range.to, cacheDay),
+      loadMultisearchQueries("no-results", range.from, range.to, cacheDay),
+    ])),
   ]);
   const value = <T>(index: number, label: string): T[] => {
     const result = settled[index];
@@ -461,6 +458,7 @@ async function loadSearchAnalyticsDataset(): Promise<{
     cacheDay,
   );
 
+  const monthlyCell = createMonthlyMetricPool();
   for (const row of rows.values()) {
     row.firstSeenAt = discovery[normalizeSearchQuery(row.query)] || cacheDay;
     const stored = [...row.aliasSet]
@@ -505,7 +503,7 @@ async function loadSearchAnalyticsDataset(): Promise<{
         (sum, alias) => sum + (lookup.noResults.get(alias) || 0),
         0,
       );
-      return {
+      return monthlyCell({
         ...range,
         bigQueryCount,
         multisearchFoundCount,
@@ -514,7 +512,7 @@ async function loadSearchAnalyticsDataset(): Promise<{
           bigQueryCount,
           multisearchFoundCount + multisearchNoResultsCount,
         ),
-      };
+      });
     });
   }
 
@@ -591,5 +589,5 @@ export const SEARCH_ANALYTICS_CACHE_TTL_MS = DAY_MS;
 export async function buildSearchAnalyticsDataset() {
   const [syncedAt, sheetRevision, processing, exclusions] = await Promise.all([readLiteSyncedAt(), getSearchSheetRevision(), listSearchQueryProcessing(), listSearchQueryExclusions()]);
   const key = createHash("sha256").update(JSON.stringify({ day: dateInKyiv(), syncedAt, sheetRevision, processing, exclusions })).digest("hex");
-  return (await readDashboardReport("search-dataset-v1", key, 15 * 60_000, () => runDashboardWork(loadSearchAnalyticsDataset))).value;
+  return (await readDashboardReport("search-dataset-v2", key, 15 * 60_000, () => runDashboardWork(loadSearchAnalyticsDataset))).value;
 }

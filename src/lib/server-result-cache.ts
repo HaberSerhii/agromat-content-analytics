@@ -107,6 +107,7 @@ export async function getServerResult<T>(options: {
   maxEntries?: number;
   staleMs?: number;
   refresh?: boolean;
+  maxEntryBytes?: number;
   load: () => Promise<T>;
 }): Promise<{ value: T; status: CacheStatus }> {
   const cache = namespaceCache(options.namespace);
@@ -157,8 +158,8 @@ export async function getServerResult<T>(options: {
       entry.lastAccess = Date.now();
       counters.loadMs += performance.now() - started;
       if (managed(options.namespace) && cache.get(options.key) === entry) {
-        entry.bytes = estimatedCacheBytes(value, Math.min(budgetBytes(), 16 * 1024 * 1024));
-        const maxEntry = Math.min(budgetBytes(), 16 * 1024 * 1024);
+        const maxEntry = Math.min(budgetBytes(), options.maxEntryBytes ?? 16 * 1024 * 1024);
+        entry.bytes = estimatedCacheBytes(value, maxEntry);
         if (entry.bytes > maxEntry) { cache.delete(options.key); counters.oversized++; }
         trimServerResultCaches();
       }

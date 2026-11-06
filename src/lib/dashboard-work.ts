@@ -13,3 +13,15 @@ export async function runDashboardWork<T>(load: () => Promise<T>): Promise<T> {
   }
 }
 export const dashboardWorkStats = () => ({ active, queued: queue.length, completed, totalMs });
+
+export async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, load: (item: T) => Promise<R>): Promise<R[]> {
+  const result = new Array<R>(items.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      result[index] = await load(items[index]);
+    }
+  }));
+  return result;
+}
