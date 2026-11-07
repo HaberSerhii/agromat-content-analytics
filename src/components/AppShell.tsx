@@ -119,6 +119,7 @@ const CpoAnalyticsDashboard = dynamic(
 );
 
 const AbandonedCartsDemo = dynamic(() => import("@/components/AbandonedCartsDemo"), { ssr: false });
+const GroutCalculator = dynamic(() => import("@/components/GroutCalculator"), { ssr: false });
 
 // Renders all sections in a single persistent shell hosted by the root layout.
 // Heavy secondary dashboards stay mounted after their first visit so filters
@@ -177,6 +178,7 @@ export function AppShell() {
       {isBigQueryAudit && <BigQueryAuditDashboard />}
       {isCpoAnalytics && <CpoAnalyticsDashboard />}
       {pathname === "/carts-demo" && <AbandonedCartsDemo />}
+      {process.env.NODE_ENV !== "production" && pathname === "/grout-calculator" && <GroutCalculator />}
     </>
   );
 }

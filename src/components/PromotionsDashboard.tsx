@@ -579,6 +579,9 @@ function SummaryCard({
 
 export function PromotionsDashboard() {
   const [section, setSection] = useState<Section>("overview");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("funnel_period") === "month") setSection("web");
+  }, []);
   const [data, setData] = useState<PromotionsCatalogResponse | null>(null);
   const [historicalPromotions, setHistoricalPromotions] = useState<HistoricalPromotionLink[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);

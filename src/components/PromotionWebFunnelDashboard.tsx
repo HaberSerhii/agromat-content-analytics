@@ -57,9 +57,13 @@ function defaultCustomRange(): { from: string; to: string } {
 
 const DEFAULT_CUSTOM_RANGE = defaultCustomRange();
 
-function periodComparisonCode(periodKind: WebFunnelPeriodKind): string {
+function periodComparisonCode(periodKind: WebFunnelPeriodKind, comparison: WebFunnelComparison): string {
   if (periodKind === "week") return "WoW";
-  if (periodKind === "month") return "MoM";
+  if (periodKind === "month") {
+    const date = new Date(`${comparison.current.from}T12:00:00Z`);
+    date.setUTCMonth(date.getUTCMonth() - 1);
+    return comparison.previous.from === date.toISOString().slice(0, 10) ? "MoM" : "Порівняння";
+  }
   return "Період";
 }
 
@@ -120,13 +124,17 @@ function ComparisonMetricCard({
 }) {
   const currentValue = kind === "cr" ? current.conversionRatePct : current.orderUsers;
   const baselineValue = kind === "cr" ? baseline.conversionRatePct : baseline.orderUsers;
-  const available = current.available && baseline.available && baselineValue != null;
+  const metricAvailable = (period: WebFunnelPeriod, value: number | null) => value != null
+    && (period.available || (kind === "orders" && period.orderSource === "webshop"));
+  const currentAvailable = metricAvailable(current, currentValue);
+  const baselineAvailable = metricAvailable(baseline, baselineValue);
+  const available = currentAvailable && baselineAvailable;
   const delta = available ? relativeDelta(currentValue, baselineValue) : null;
   const absolute = kind === "orders" && available
     ? Number(currentValue) - Number(baselineValue)
     : null;
   const renderValue = (value: number | null, period: WebFunnelPeriod) => {
-    if (!period.available || value == null) return "—";
+    if (!metricAvailable(period, value) || value == null) return "—";
     return kind === "cr" ? formatPct(value, 3) : formatUsers(value);
   };
 
@@ -136,11 +144,11 @@ function ComparisonMetricCard({
         {title}
       </div>
       <div className="mt-3 flex items-baseline justify-center gap-2 font-black tabular-nums">
-        <span style={{ color: baseline.available ? "#118dff" : "var(--text-muted)" }}>
+        <span style={{ color: baselineAvailable ? "#118dff" : "var(--text-muted)" }}>
           {renderValue(baselineValue, baseline)}
         </span>
         <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>vs</span>
-        <span style={{ color: current.available ? "#f7630c" : "var(--text-muted)" }}>
+        <span style={{ color: currentAvailable ? "#f7630c" : "var(--text-muted)" }}>
           {renderValue(currentValue, current)}
         </span>
       </div>
@@ -154,6 +162,17 @@ function ComparisonMetricCard({
   );
 }
 
+function OrderNotes({ comparison }: { comparison: WebFunnelComparison }) {
+  const periods = [comparison.previous, comparison.current, comparison.yearAgo];
+  const notes = [...new Set(periods.map((period) => period.ordersNote).filter(Boolean))];
+  if (!notes.length) return null;
+  return (
+    <div className="mt-3 space-y-1 text-[10px] leading-4" style={{ color: "var(--text-muted)" }}>
+      {notes.map((note) => <p key={note}>{note}</p>)}
+    </div>
+  );
+}
+
 function ComparisonSummary({
   comparison,
   periodKind,
@@ -161,7 +180,7 @@ function ComparisonSummary({
   comparison: WebFunnelComparison;
   periodKind: WebFunnelPeriodKind;
 }) {
-  const periodCode = periodComparisonCode(periodKind);
+  const periodCode = periodComparisonCode(periodKind, comparison);
   return (
     <section className="rounded-2xl border p-4" style={{ borderColor: "var(--border2)", background: "#fff" }}>
       <div className="text-center text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
@@ -184,6 +203,7 @@ function ComparisonSummary({
           Для цієї сторінки немає даних за відповідний період минулого року.
         </div>
       )}
+      <OrderNotes comparison={comparison} />
     </section>
   );
 }
@@ -206,8 +226,8 @@ function FunnelComparisonChart({
   const maxHalf = compact ? 170 : 270;
   const minHalf = compact ? 28 : 48;
   const base = Math.max(1, left.startUsers, right.startUsers);
-  const visualWidth = (value: number) => {
-    if (value <= 0) return minHalf;
+  const visualWidth = (value: number | null) => {
+    if (value == null || value <= 0) return minHalf;
     return Math.max(minHalf, maxHalf * Math.pow(value / base, 0.38));
   };
   const leftWidths = left.stages.map((stage) => visualWidth(stage.users));
@@ -261,6 +281,9 @@ function FunnelComparisonChart({
             const rightConversion = right.stages[index]?.conversionFromPreviousPct ?? null;
             const leftBetter = leftConversion != null && rightConversion != null && leftConversion > rightConversion;
             const rightBetter = leftConversion != null && rightConversion != null && rightConversion > leftConversion;
+            const rightUsers = right.stages[index]?.users ?? null;
+            const leftAvailable = stage.users != null && (left.available || (stage.key === "purchase" && left.orderSource === "webshop"));
+            const rightAvailable = rightUsers != null && (right.available || (stage.key === "purchase" && right.orderSource === "webshop"));
             return (
               <g key={stage.key}>
                 {index === 0 && (
@@ -286,12 +309,12 @@ function FunnelComparisonChart({
                 <polygon
                   points={`${center - leftTop},${y1} ${center},${y1} ${center},${y2} ${center - leftBottom},${y2}`}
                   fill={`url(#${blueId})`}
-                  opacity={left.available ? 0.96 : 0.25}
+                  opacity={leftAvailable ? 0.96 : 0.25}
                 />
                 <polygon
                   points={`${center},${y1} ${center + rightTop},${y1} ${center + rightBottom},${y2} ${center},${y2}`}
                   fill={`url(#${orangeId})`}
-                  opacity={right.available ? 0.96 : 0.25}
+                  opacity={rightAvailable ? 0.96 : 0.25}
                 />
                 {index > 0 && (
                   <line
@@ -321,7 +344,7 @@ function FunnelComparisonChart({
                   fontWeight="900"
                   fill="#10253e"
                 >
-                  {left.available ? formatUsers(stage.users) : "—"}
+                  {leftAvailable && stage.users != null ? formatUsers(stage.users) : "—"}
                 </text>
                 <text
                   x={center + 7}
@@ -331,7 +354,7 @@ function FunnelComparisonChart({
                   fontWeight="900"
                   fill="#10253e"
                 >
-                  {right.available ? formatUsers(right.stages[index]?.users || 0) : "—"}
+                  {rightAvailable && rightUsers != null ? formatUsers(rightUsers) : "—"}
                 </text>
                 {index > 0 && (
                   <>
@@ -385,7 +408,7 @@ function ChannelPanel({
       </div>
       <FunnelComparisonChart comparison={comparison} compact />
       <div className="mt-2 text-center text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--text-dim)" }}>
-        {periodComparisonCode(periodKind)} · {comparison.previous.shortLabel} vs {comparison.current.shortLabel}
+        {periodComparisonCode(periodKind, comparison)} · {comparison.previous.shortLabel} vs {comparison.current.shortLabel}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <ComparisonMetricCard title="CR" baseline={comparison.previous} current={comparison.current} kind="cr" />
@@ -398,6 +421,7 @@ function ChannelPanel({
         <ComparisonMetricCard title="CR" baseline={comparison.yearAgo} current={comparison.current} kind="cr" />
         <ComparisonMetricCard title="Замовлення" baseline={comparison.yearAgo} current={comparison.current} kind="orders" />
       </div>
+      <OrderNotes comparison={comparison} />
     </section>
   );
 }
@@ -437,9 +461,15 @@ export function PromotionWebFunnelDashboard({
     const to = params.get("funnel_to") || "";
     return /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) ? { from, to } : null;
   });
-  const [periodKind, setPeriodKind] = useState<WebFunnelPeriodKind>(initialRange ? "custom" : "week");
-  const [anchor, setAnchor] = useState("");
-  const [comparisonMonth, setComparisonMonth] = useState("");
+  const [initialMonths] = useState(() => {
+    const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+    const anchor = params.get("funnel_anchor") || "";
+    const comparison = params.get("funnel_comparison_month") || "";
+    return params.get("funnel_period") === "month" && /^\d{4}-\d{2}-01$/.test(anchor) && /^\d{4}-\d{2}-01$/.test(comparison) ? { anchor, comparison } : null;
+  });
+  const [periodKind, setPeriodKind] = useState<WebFunnelPeriodKind>(initialMonths ? "month" : initialRange ? "custom" : "week");
+  const [anchor, setAnchor] = useState(initialMonths?.anchor || "");
+  const [comparisonMonth, setComparisonMonth] = useState(initialMonths?.comparison || "");
   const [customFrom, setCustomFrom] = useState(initialRange?.from ?? DEFAULT_CUSTOM_RANGE.from);
   const [customTo, setCustomTo] = useState(initialRange?.to ?? DEFAULT_CUSTOM_RANGE.to);
   const [appliedCustomFrom, setAppliedCustomFrom] = useState(initialRange?.from ?? DEFAULT_CUSTOM_RANGE.from);
@@ -464,7 +494,7 @@ export function PromotionWebFunnelDashboard({
   useEffect(() => {
     if (!appliedUrl) return;
     const controller = new AbortController();
-    const params = new URLSearchParams({ url: appliedUrl, period: periodKind, country_scope: "ua-global-created-orders" });
+    const params = new URLSearchParams({ url: appliedUrl, period: periodKind, country_scope: "ua-global-created-orders-webshop-v2" });
     if (anchor) params.set("anchor", anchor);
     if (periodKind === "month" && comparisonMonth) params.set("comparison_month", comparisonMonth);
     if (periodKind === "custom") {
@@ -542,6 +572,8 @@ export function PromotionWebFunnelDashboard({
     ? data.comparisonsByDevice?.[device] ?? data.comparisons
     : null;
   const comparison = selectedComparisons?.[channel] ?? null;
+  const hasHistoricalWebshopOrders = comparison && [comparison.previous, comparison.current, comparison.yearAgo]
+    .some((period) => period.orderSource === "webshop" || period.orderSource === "unavailable");
 
   return (
     <div className="space-y-4">
@@ -649,7 +681,12 @@ export function PromotionWebFunnelDashboard({
             </span>
           </div>
         )}
-        <p className="mt-2 text-[10px]" style={{ color: "var(--text-muted)" }}>До Checkout — користувачі з України. Замовлення — унікальні transaction_id з purchase та payment_unpaid, усі країни. Повторні події одного замовлення не додаються. Конверсія в замовлення порівнює різні географічні групи.</p>
+        <p className="mt-2 text-[10px]" style={{ color: "var(--text-muted)" }}>
+          До Checkout — користувачі з України, GA4. {hasHistoricalWebshopOrders
+            ? "За жовтень 2025 року, вересень і жовтень та тижні 43–44 2026 року замовлення — з WEB SHOP: унікальні ID замовлень сайту за датою створення (Київ), усі статуси, без маркетплейсів. Дані доступні для всього сайту, усіх каналів і пристроїв без фільтрів джерела та кампанії; для окремих сегментів показано прочерк. CR перераховано за замовленнями WEB SHOP. В інших періодах — унікальні transaction_id з purchase та payment_unpaid у GA4."
+            : "Замовлення — унікальні transaction_id з purchase та payment_unpaid у GA4. Повторні події одного замовлення не додаються."}
+          {" "}Замовлення — усі країни. Конверсія в замовлення порівнює різні географічні групи.
+        </p>
       </section>
 
       {error && (

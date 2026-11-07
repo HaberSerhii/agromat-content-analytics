@@ -1,4 +1,5 @@
 import { PROMOTION_CHANNELS, promotionTrafficFieldsSql, promotionChannelSql } from "@/lib/promotion-traffic";
+import { readWebshopFunnelOrders } from "@/lib/webshop-funnel-orders";
 import { BigQuery } from "@google-cloud/bigquery";
 import {
   bigQueryCacheDay,
@@ -451,51 +452,54 @@ function stageDefinitions(scope: "sitewide" | "page") {
     : stage);
 }
 
-function emptyPeriod(range: PeriodRange, scope: "sitewide" | "page"): WebFunnelPeriod {
-  const stages: WebFunnelStage[] = stageDefinitions(scope).map((stage) => ({
-    key: stage.key,
-    label: stage.label,
-    users: 0,
-    conversionFromPreviousPct: null,
-    conversionFromStartPct: null,
-  }));
-  return {
-    ...range,
-    available: false,
-    stages,
-    startUsers: 0,
-    orderUsers: 0,
-    conversionRatePct: null,
-  };
+// Historical periods whose GA4 order events are incomplete.
+function needsWebshopOrders(range: PeriodRange, kind: WebFunnelPeriodKind): boolean {
+  return (kind === "week" && (
+    (range.from === "2026-10-19" && range.to === "2026-10-25")
+    || (range.from === "2026-10-26" && range.to === "2026-11-01")
+  )) || (kind === "month" && (
+    (range.from === "2025-10-01" && range.to === "2025-10-31")
+    || (range.from === "2026-09-01" && range.to === "2026-09-30")
+    || (range.from === "2026-10-01" && range.to === "2026-10-31")
+  ));
 }
+
+type OrderOverride = {
+  count: number | null;
+  source: "webshop" | "unavailable";
+  note?: string;
+};
 
 function makePeriod(
   range: PeriodRange,
   values: Map<WebFunnelStageKey, number>,
   scope: "sitewide" | "page",
+  orders?: OrderOverride,
 ): WebFunnelPeriod {
   const startUsers = values.get("landing") || 0;
   let previousUsers: number | null = null;
   const stages: WebFunnelStage[] = stageDefinitions(scope).map((stage) => {
-    const users = values.get(stage.key) || 0;
+    const users = stage.key === "purchase" && orders ? orders.count : values.get(stage.key) || 0;
     const result: WebFunnelStage = {
       key: stage.key,
       label: stage.label,
       users,
-      conversionFromPreviousPct: previousUsers && previousUsers > 0 ? (users / previousUsers) * 100 : null,
-      conversionFromStartPct: startUsers > 0 ? (users / startUsers) * 100 : null,
+      conversionFromPreviousPct: users != null && previousUsers != null && previousUsers > 0 ? (users / previousUsers) * 100 : null,
+      conversionFromStartPct: users != null && startUsers > 0 ? (users / startUsers) * 100 : null,
     };
     previousUsers = users;
     return result;
   });
-  const orderUsers = values.get("purchase") || 0;
+  const orderUsers = orders ? orders.count : values.get("purchase") || 0;
   return {
     ...range,
     available: startUsers > 0,
     stages,
     startUsers,
     orderUsers,
-    conversionRatePct: startUsers > 0 ? (orderUsers / startUsers) * 100 : null,
+    orderSource: orders?.source ?? "ga4",
+    ...(orders?.note ? { ordersNote: orders.note } : {}),
+    conversionRatePct: orderUsers != null && startUsers > 0 ? (orderUsers / startUsers) * 100 : null,
   };
 }
 
@@ -518,7 +522,27 @@ export async function readPromotionWebFunnel(input: {
   const utmSource = input.utmSource?.trim().toLocaleLowerCase("uk") ?? "";
   const utmCampaign = input.utmCampaign?.trim().toLocaleLowerCase("uk") ?? "";
   const cacheKey = `${normalizedUrl}:${periodKind}:${periodInfo.ranges[0].from}:${periodInfo.ranges[0].to}:${periodInfo.ranges[1].from}:${periodInfo.ranges[1].to}:${utmSource}:${utmCampaign}`;
-  const rows = await readThroughBigQueryCache<QueryRow[]>({
+  const historicalRanges = periodInfo.ranges.filter((range) => needsWebshopOrders(range, periodKind));
+  const canUseWebshopTotals = scope === "sitewide" && !utmSource && !utmCampaign;
+  const totalsPromise = Promise.all(historicalRanges.map(async (range): Promise<[PeriodKey, OrderOverride]> => {
+    if (!canUseWebshopTotals) return [range.key, {
+      count: null,
+      source: "unavailable",
+      note: "Для цього періоду замовлення WEB SHOP доступні лише для всього сайту без фільтрів джерела та кампанії.",
+    }];
+    try {
+      const count = await readWebshopFunnelOrders({ from: range.from, to: range.to });
+      return [range.key, { count, source: "webshop" }];
+    } catch (error) {
+      console.error("[web-funnel] WEB SHOP orders unavailable:", error);
+      return [range.key, {
+        count: null,
+        source: "unavailable",
+        note: "Не вдалося завантажити замовлення WEB SHOP. Спробуйте оновити дані.",
+      }];
+    }
+  }));
+  const rowsPromise = readThroughBigQueryCache<QueryRow[]>({
     namespace: "promotion-web-funnel",
     key: `v5-ua-funnel-unique-created-orders:${bigQueryCacheDay()}:${getBigQueryProjectId()}:${getBigQueryDatasetId()}:${cacheKey}`,
     load: async () => {
@@ -532,6 +556,9 @@ export async function readPromotionWebFunnel(input: {
       return queryRows as QueryRow[];
     },
   });
+
+  const [rows, historicalOrders] = await Promise.all([rowsPromise, totalsPromise]);
+  const ordersByPeriod = new Map(historicalOrders);
 
   const values = new Map<string, Map<WebFunnelStageKey, number>>();
   for (const row of rows) {
@@ -547,8 +574,16 @@ export async function readPromotionWebFunnel(input: {
       const period = (key: PeriodKey) => {
         const range = rangeMap.get(key);
         if (!range) throw new Error(`Missing ${key} period`);
-        const stageValues = values.get(`${key}:${device}:${channel}`);
-        return stageValues ? makePeriod(range, stageValues, scope) : emptyPeriod(range, scope);
+        const stageValues = values.get(`${key}:${device}:${channel}`) ?? new Map<WebFunnelStageKey, number>();
+        const historicalOrders = ordersByPeriod.get(key);
+        const orders = historicalOrders && (device !== "all" || channel !== "all")
+          ? {
+            count: null,
+            source: "unavailable" as const,
+            note: "Для цього періоду WEB SHOP не має достовірної розбивки замовлень за каналами та пристроями. Оберіть «Всі канали» й «Всі пристрої» для підсумку.",
+          }
+          : historicalOrders;
+        return makePeriod(range, stageValues, scope, orders);
       };
       const comparison: WebFunnelComparison = {
         current: period("current"),

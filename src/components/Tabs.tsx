@@ -7,13 +7,14 @@ const TABS = [
   { href: "/catalog",    label: "Аналіз карток товара", shortLabel: "Картки" },
   { href: "/promotions", label: "Аналіз акційних пропозицій", shortLabel: "Акції" },
   { href: "/sales",      label: "Аналіз продаж", shortLabel: "Продажі" },
+  ...(process.env.NODE_ENV !== "production" ? [{ href: "/grout-calculator", label: "Калькулятор затирки", shortLabel: "Затирка" }] : []),
 ];
 
 export function Tabs() {
   const pathname = usePathname();
   return (
     <nav
-      className="grid w-full min-w-0 grid-cols-4 gap-1 rounded-xl p-0.5 lg:flex lg:w-auto"
+      className={`grid w-full min-w-0 ${process.env.NODE_ENV !== "production" ? "grid-cols-5" : "grid-cols-4"} gap-1 rounded-xl p-0.5 lg:flex lg:w-auto`}
       style={{ background: "var(--bg-input)", border: "1px solid var(--border2)" }}
     >
       {TABS.map((t) => {

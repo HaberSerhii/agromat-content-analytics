@@ -11,7 +11,7 @@ export type WebFunnelStageKey =
 export type WebFunnelStage = {
   key: WebFunnelStageKey;
   label: string;
-  users: number;
+  users: number | null;
   conversionFromPreviousPct: number | null;
   conversionFromStartPct: number | null;
 };
@@ -25,7 +25,9 @@ export type WebFunnelPeriod = {
   available: boolean;
   stages: WebFunnelStage[];
   startUsers: number;
-  orderUsers: number;
+  orderUsers: number | null;
+  orderSource: "ga4" | "webshop" | "unavailable";
+  ordersNote?: string;
   conversionRatePct: number | null;
 };
 
