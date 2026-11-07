@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartTrendSeries } from "@/components/ChartTrendSeries";
+
 import { useEffect, useMemo, useState } from "react";
 import { PromotionMonthlyAnalysis } from "@/components/PromotionMonthlyAnalysis";
 import { PromotionInventoryCards } from "@/components/PromotionInventoryCards";
@@ -109,15 +111,15 @@ function SalesChart({ current, previous, segment }: { current: PromotionSalesDai
   const max = Math.max(1, ...currentValues, ...previousValues) * 1.08;
   const x = (index: number) => left + (index / Math.max(1, current.length - 1)) * (width - left - right);
   const y = (value: number) => top + (height - top - bottom) * (1 - value / max);
-  const path = (values: number[]) => values.map((value, index) => `${index ? "L" : "M"}${x(index)},${y(value)}`).join(" ");
+  const seriesPoints = (values: number[]) => values.map((value, index) => ({ x: x(index), y: y(value) }));
   const selected = hover == null ? null : current[hover];
   const prior = hover == null ? null : previous[hover];
-  return <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm">
-    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4"><div><h2 className="text-sm font-black text-[#26313d]">Ефективність продажів за днями</h2><p className="mt-1 text-[10px] text-[#8a939c]">Поточний період проти відповідного періоду минулого року</p></div><div className="flex gap-4 text-[10px] font-bold"><span className="text-[#118dff]">● Поточний період</span><span className="text-[#f0763d]">┄ Минулий рік</span></div></header>
+  return <section className="analytics-chart-card overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm">
+    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4"><div><h2 className="text-sm font-black text-[#26313d]">Ефективність продажів за днями</h2><p className="mt-1 text-[10px] text-[#8a939c]">Поточний період проти відповідного періоду минулого року</p></div><div className="flex gap-4 text-[10px] font-bold"><span className="text-[#118dff]">● Поточний період</span><span className="text-[#a4adb7]">┄ Минулий рік</span></div></header>
     <div className="relative p-4"><svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Порівняння продажів рік до року">
-      {Array.from({ length: 5 }, (_, index) => { const yy = top + index * ((height - top - bottom) / 4); return <g key={index}><line x1={left} x2={width - right} y1={yy} y2={yy} stroke="#e8ebef" /><text x={left - 9} y={yy + 4} textAnchor="end" fontSize="10" fill="#8a949e">{numberFmt.format(max * (1 - index / 4))}</text></g>; })}
-      <path d={path(previousValues)} fill="none" stroke="#f0763d" strokeWidth="3" strokeDasharray="8 7" />
-      <path d={path(currentValues)} fill="none" stroke="#118dff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      {Array.from({ length: 5 }, (_, index) => { const yy = top + index * ((height - top - bottom) / 4); return <g key={index}><line x1={left} x2={width - right} y1={yy} y2={yy} stroke="#f0f3f6" /><text x={left - 9} y={yy + 4} textAnchor="end" fontSize="10" fill="#8a949e">{numberFmt.format(max * (1 - index / 4))}</text></g>; })}
+      <ChartTrendSeries points={seriesPoints(previousValues)} baseline={height - bottom} comparison />
+      <ChartTrendSeries points={seriesPoints(currentValues)} baseline={height - bottom} />
       {currentValues.map((value, index) => <g key={current[index].date}><circle cx={x(index)} cy={y(value)} r="4" fill="#fff" stroke="#118dff" strokeWidth="3" /><circle cx={x(index)} cy={y(value)} r="14" fill="transparent" className="cursor-pointer" onMouseEnter={() => setHover(index)} onMouseLeave={() => setHover(null)} /></g>)}
       {current.map((day, index) => index % Math.max(1, Math.ceil(current.length / 7)) === 0 ? <text key={`label-${day.date}`} x={x(index)} y={height - 12} textAnchor="middle" fontSize="10" fill="#7f8993">{day.date.slice(5).split("-").reverse().join(".")}</text> : null)}
     </svg>{selected && <div className="pointer-events-none absolute right-6 top-6 min-w-52 rounded-xl border border-[#bcd8f1] bg-white p-3 shadow-xl"><b className="text-xs text-[#26313d]">{fmtDate(selected.date)}</b><div className="mt-2 grid grid-cols-3 gap-2 text-[9px] text-[#7b8691]"><span>Замовлення<b className="block text-xs text-[#34404c]">{segmentBucket(selected, segment).docs}</b></span><span>Товари<b className="block text-xs text-[#34404c]">{numberFmt.format(segmentBucket(selected, segment).qty)}</b></span><span>Продажі<b className="block text-xs text-[#118dff]">{fmtMoney(segmentBucket(selected, segment).revenue)}</b></span></div>{prior && <div className="mt-2 border-t border-[#e5e8eb] pt-2 text-[9px] font-bold text-[#c85f31]">{fmtDate(prior.date)}: {fmtMoney(segmentBucket(prior, segment).revenue)}</div>}</div>}</div>

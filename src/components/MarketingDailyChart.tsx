@@ -1,5 +1,7 @@
 "use client";
-import { useState } from "react";
+
+import { ChartTrendSeries } from "@/components/ChartTrendSeries";
+import { useState, type CSSProperties } from "react";
 import { marketingChartScale } from "@/lib/marketing-chart-scale";
 import type { MarketingDay } from "@/lib/marketing-daily-series";
 
@@ -33,13 +35,13 @@ export function MarketingDailyChart({days, campaign, loading, error, onClear}: {
   const tooltipWidth = 230, tooltipHeight = 100;
   const tooltipX = hovered ? Math.min(width - tooltipWidth - 10, Math.max(left, hovered.x - tooltipWidth / 2)) : 0;
   const tooltipY = hovered ? Math.max(top + 4, hovered.y - tooltipHeight - 14) : 0;
-  return <section className="rounded-xl border p-4" style={{borderColor: "var(--border)", background: "var(--bg-card)"}} aria-busy={loading}>
+  return <section className="analytics-chart-card p-5" style={{borderColor: "var(--border)", background: "var(--bg-card)"}} aria-busy={loading}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="text-sm font-bold">Динаміка за днями</h3>
         <p className="mt-1 break-all text-[11px]" style={{color: "var(--text-dim)"}}>{campaign ? `Кампанія: ${campaign === "missing" ? "Без UTM" : campaign}` : "Усі кампанії"} · {days[0]?.date || ""} — {days.at(-1)?.date || ""}</p>
         {campaign && <button type="button" onClick={onClear} className="mt-1 text-xs font-bold text-[#118dff]">Усі кампанії</button>}
       </div>
-      <div className="flex gap-1 rounded-lg p-1" style={{background: "var(--bg-input)"}} aria-label="Показник графіка">
+      <div className="analytics-chart-controls flex gap-1 p-1" style={{background: "var(--bg-input)", "--chart-accent": chosen.color} as CSSProperties} aria-label="Показник графіка">
         {metrics.map(item => <button key={item.key} type="button" aria-pressed={metric === item.key} onClick={() => { setMetric(item.key); setHoveredDate(null); }} className="rounded-md px-3 py-1.5 text-xs font-bold" style={{background: metric === item.key ? item.color : "transparent", color: metric === item.key ? "white" : "var(--text-dim)"}}>{item.label}</button>)}
       </div>
     </div>
@@ -57,7 +59,7 @@ export function MarketingDailyChart({days, campaign, loading, error, onClear}: {
                 <text x={left - 10} y={y + 4} textAnchor="end" fontSize="10" fill="var(--text-dim)">{metric === "transactions" ? number.format(tick) : shortNumber.format(tick)}</text>
               </g>;
             })}
-            <polyline points={points.map(point => `${point.x},${point.y}`).join(" ")} fill="none" stroke={chosen.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+            <ChartTrendSeries points={points} baseline={top + plotHeight} color={chosen.color} />
             {points.map(({day, x, y}) => <g key={day.date} tabIndex={0} role="button"
               aria-label={`${day.date}: дохід ${number.format(day.revenue)} грн, середній чек ${number.format(day.aov)} грн, транзакції ${number.format(day.transactions)}`}
               onMouseEnter={() => setHoveredDate(day.date)} onFocus={() => setHoveredDate(day.date)} onBlur={() => setHoveredDate(null)}

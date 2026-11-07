@@ -4120,7 +4120,7 @@ export function ProductCardsDashboardV2() {
                     ))}
                   </div>
 
-                  <aside className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white min-[1800px]:row-span-2">
+                  <aside className="analytics-chart-card overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white min-[1800px]:row-span-2">
                     <header className="border-b border-[#e5e8eb] px-4 py-3">
                       <h3 className="text-xs font-black text-[#26313d]">
                         Результат після змін
@@ -4951,7 +4951,7 @@ export function ProductCardsDashboardV2() {
                   {pager}
                 </div>
                 <aside className="space-y-4">
-                  <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                  <section className="analytics-chart-card overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                     <header className="border-b border-[#e5e8eb] px-4 py-3">
                       <h3 className="text-xs font-black text-[#26313d]">
                         Розподіл товарів

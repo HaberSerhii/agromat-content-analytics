@@ -58,3 +58,35 @@ input[type="number"] { -moz-appearance: textfield; }
   border-color: #118dff !important;
   outline: none;
 }
+
+/* Light chart cards: restrained chrome keeps the series and its hover detail in focus. */
+.analytics-chart-card {
+  background: #fff !important;
+  border: 1px solid #e9edf1 !important;
+  border-radius: 24px !important;
+  box-shadow: 0 4px 24px rgb(27 45 64 / 3%) !important;
+  color: #27313c;
+}
+.analytics-chart-card > header,
+.analytics-chart-card > .analytics-chart-header {
+  border-bottom: 0;
+}
+.analytics-chart-card .analytics-chart-total {
+  font-size: clamp(24px, 2.5vw, 34px);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+.analytics-chart-controls {
+  background: transparent !important;
+  border-radius: 999px !important;
+}
+.analytics-chart-controls button {
+  border-radius: 999px !important;
+  border: 1px solid #dce2e8;
+  background: #fff;
+}
+.analytics-chart-controls button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--chart-accent, #118dff) 8%, white) !important;
+  color: var(--chart-accent, #118dff) !important;
+  border-color: var(--chart-accent, #118dff);
+}

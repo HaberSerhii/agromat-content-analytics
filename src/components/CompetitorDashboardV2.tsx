@@ -1488,7 +1488,7 @@ export function CompetitorDashboardV2({ isActive = true }: { isActive?: boolean 
               </div>
 
               <aside className="space-y-4">
-                <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+                <section className="analytics-chart-card overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                   <header className="border-b border-[#e5e8eb] px-4 py-3">
                     <h3 className="text-xs font-black text-[#26313d]">Порушення за конкурентами</h3>
                     <p className="mt-0.5 text-[9px] text-[#8b949e]">Конкурент дешевше Агромат більш ніж на 5%</p>

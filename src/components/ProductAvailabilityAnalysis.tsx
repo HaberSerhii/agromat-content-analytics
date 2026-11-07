@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartTrendSeries } from "@/components/ChartTrendSeries";
+
 import { useEffect, useState } from "react";
 import type { MovementReport } from "@/lib/product-availability-movement-report";
 import type { MovementMetric } from "@/lib/product-availability-movements";
@@ -141,20 +143,20 @@ function AvailabilityChart({ month, days, metric, onMetric, loading }: { month: 
   const x = (index: number) => 65 + index / Math.max(1, days.length - 1) * 885;
   const y = (value: number) => 230 - (value - min) / Math.max(1, max - min) * 190;
   const selected = days.find(day => day.date === selectedDate);
-  return <section aria-label="Щоденна динаміка наявності" className="rounded-2xl border border-[#dfe4ea] bg-white p-5">
+  return <section aria-label="Щоденна динаміка наявності" className="analytics-chart-card p-5">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-bold text-[#27313c]">Динаміка за днями · {monthName(month)}</h2><select aria-label="Показник графіка" value={metric} onChange={event => onMetric(event.target.value as MovementMetric)} className="max-w-full rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-xs">{metrics.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></div>
     <p className="mt-2 text-[11px] text-[#78838e]">Останній знімок кожного дня. Пропущені та майбутні дні не заповнюються. Натисніть точку, щоб побачити значення.</p>
     {loading ? <p role="status" className="py-10 text-sm text-[#78838e]">Завантаження графіка…</p> : <>
       {!values.length && <p className="mt-3 text-xs text-[#78838e]">Немає достатніх знімків для цього показника.</p>}
       <div className="overflow-x-auto"><svg role="img" aria-label={`${metrics.find(item => item.key === metric)?.label}, ${monthName(month)}`} viewBox="0 0 980 275" className="mt-3 w-full min-w-[650px]">
-        {[0,1,2,3,4].map(step => { const value = min + (max - min) * step / 4; return <g key={step}><line x1="65" x2="950" y1={y(value)} y2={y(value)} stroke="#edf0f2" /><text x="55" y={y(value) + 4} textAnchor="end" fill="#78838e" fontSize="11">{Math.round(value).toLocaleString("uk-UA")}</text></g>; })}
+        {[0,1,2,3,4].map(step => { const value = min + (max - min) * step / 4; return <g key={step}><line x1="65" x2="950" y1={y(value)} y2={y(value)} stroke="#f0f3f6" /><text x="55" y={y(value) + 4} textAnchor="end" fill="#78838e" fontSize="11">{Math.round(value).toLocaleString("uk-UA")}</text></g>; })}
+        <ChartTrendSeries points={days.map((day, index) => day.counts?.[metric] == null ? null : { x: x(index), y: y(day.counts[metric] as number) })} baseline={230} />
         {days.map((day, index) => {
-          const value = day.counts?.[metric]; const previous = days[index - 1]?.counts?.[metric];
+          const value = day.counts?.[metric];
           return <g key={day.date}>
             <text x={x(index)} y="255" textAnchor="middle" fill="#78838e" fontSize="10">{index + 1}</text>
             {value != null && <>
-              {previous != null && <line x1={x(index - 1)} y1={y(previous)} x2={x(index)} y2={y(value)} stroke="#118dff" strokeWidth="2" />}
-              <circle role="button" tabIndex={0} aria-label={`${day.date}: ${number(value)}`} cx={x(index)} cy={y(value)} r="5" fill="#118dff" onClick={() => setSelectedDate(day.date)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedDate(day.date); } }}><title>{day.date}: {number(value)}</title></circle>
+              <circle role="button" tabIndex={0} aria-label={`${day.date}: ${number(value)}`} cx={x(index)} cy={y(value)} r="4" fill="#fff" stroke="#118dff" strokeWidth="2" onClick={() => setSelectedDate(day.date)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedDate(day.date); } }}><title>{day.date}: {number(value)}</title></circle>
             </>}
           </g>;
         })}

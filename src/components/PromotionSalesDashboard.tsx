@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartTrendSeries } from "@/components/ChartTrendSeries";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   PromotionSalesBucket,
@@ -167,7 +169,7 @@ function ChartToggle<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
+    <div className="analytics-chart-controls inline-flex gap-1 p-0.5" style={{ borderColor: "var(--border)", background: "var(--bg-input)" }}>
       {options.map((option) => {
         const active = option.value === value;
         return (
@@ -226,11 +228,6 @@ function DailySalesChart({
   const yFor = (value: number) => top + plotHeight - (value / scaleMax) * plotHeight;
   const points = values.map((value, index) => ({ x: xFor(index), y: yFor(value), value }));
   const comparisonPoints = comparisonValues.map((value, index) => ({ x: xFor(index), y: yFor(value), value }));
-  const linePath = points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
-  const comparisonLinePath = comparisonPoints.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
-  const areaPath = points.length
-    ? `${linePath} L${points.at(-1)?.x},${top + plotHeight} L${points[0].x},${top + plotHeight} Z`
-    : "";
   const activeIndex = activeDate ? daily.findIndex((day) => day.date === activeDate) : -1;
   const selectedIndex = daily.length
     ? hoveredIndex == null ? activeIndex : Math.min(hoveredIndex, daily.length - 1)
@@ -250,7 +247,7 @@ function DailySalesChart({
   };
 
   return (
-    <section className="rounded-xl border p-3 sm:p-4" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
+    <section className="analytics-chart-card p-4 sm:p-6" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-sm font-bold" style={{ color: "var(--text)" }}>Динаміка продажів за днями</div>
@@ -259,7 +256,7 @@ function DailySalesChart({
               ? `${selectedPromotionCount} обраних акцій · за датою продажу`
               : "Усі акційні пропозиції · за датою продажу"}
           </div>
-          {yearAgoDaily?.length ? <div className="mt-1 flex items-center gap-3 text-[10px] font-bold"><span style={{ color }}>● Поточний період</span><span style={{ color: "#f0763d" }}>┄ Минулий рік</span></div> : null}
+          {yearAgoDaily?.length ? <div className="mt-1 flex items-center gap-3 text-[10px] font-bold"><span style={{ color }}>● Поточний період</span><span style={{ color: "#a4adb7" }}>┄ Минулий рік</span></div> : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <ChartToggle
@@ -290,19 +287,13 @@ function DailySalesChart({
           aria-label={`Графік продажів за днями: ${measure === "revenue" ? "у гривнях" : "у штуках"}`}
         >
           <title>Динаміка продажів акційних товарів за датою продажу</title>
-          <defs>
-            <linearGradient id="promotion-sales-area" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="0.24" />
-              <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-            </linearGradient>
-          </defs>
           {Array.from({ length: 5 }, (_, index) => {
             const ratio = index / 4;
             const y = top + ratio * plotHeight;
             const value = scaleMax * (1 - ratio);
             return (
               <g key={index}>
-                <line x1={left} x2={width - right} y1={y} y2={y} stroke="var(--border)" strokeWidth="1" />
+                <line x1={left} x2={width - right} y1={y} y2={y} stroke="#f0f3f6" strokeWidth="1" />
                 <text x={left - 9} y={y + 4} textAnchor="end" fontSize="10" fill="var(--text-dim)">
                   {formatValue(value, true).replace(" грн", "").replace(" шт.", "")}
                 </text>
@@ -321,9 +312,8 @@ function DailySalesChart({
               {daily[index] ? fmtShortDate(daily[index].date) : ""}
             </text>
           ))}
-          {areaPath && <path d={areaPath} fill="url(#promotion-sales-area)" pointerEvents="none" />}
-          {comparisonLinePath && <path d={comparisonLinePath} fill="none" stroke="#f0763d" strokeWidth="2.5" strokeDasharray="7 6" strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />}
-          {linePath && <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />}
+          <ChartTrendSeries points={comparisonPoints} baseline={top + plotHeight} comparison />
+          <ChartTrendSeries points={points} baseline={top + plotHeight} color={color} />
           {points.map((point, index) => {
             const active = daily[index].date === activeDate;
             return (
@@ -332,7 +322,7 @@ function DailySalesChart({
                 cx={point.x}
                 cy={point.y}
                 r={active ? 4.5 : 2.5}
-                fill={active ? "var(--bg-card)" : color}
+                fill="#fff"
                 stroke={color}
                 strokeWidth={active ? 3 : 1.5}
                 pointerEvents="none"

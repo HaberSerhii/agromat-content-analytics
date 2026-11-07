@@ -402,7 +402,7 @@ function ChannelPanel({
   periodKind: WebFunnelPeriodKind;
 }) {
   return (
-    <section className="rounded-2xl border p-4" style={{ borderColor: `${color}55`, background: "#fff" }}>
+    <section className="analytics-chart-card p-5" style={{ borderColor: `${color}55`, background: "#fff" }}>
       <div className="border-b pb-2 text-xs font-black uppercase tracking-[0.12em]" style={{ borderColor: `${color}33`, color }}>
         {label}
       </div>
@@ -805,7 +805,7 @@ export function PromotionWebFunnelDashboard({
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(340px,.8fr)]">
             <section
-              className="rounded-2xl border p-2 sm:p-4"
+              className="analytics-chart-card p-3 sm:p-5"
               style={{ background: "#fff", borderColor: "var(--border)", boxShadow: "var(--shadow-sm)" }}
             >
               <FunnelComparisonChart comparison={comparison} />

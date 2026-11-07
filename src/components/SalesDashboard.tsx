@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartTrendSeries } from "@/components/ChartTrendSeries";
+
 import SalesDimensionSelect from "@/components/SalesDimensionSelect";
 import SalesMonthlyTable from "@/components/SalesMonthlyTable";
 
@@ -1098,8 +1100,8 @@ function SalesTrendChart({
   const xLabels = chartLabelIndices(points.length);
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+    <section className="analytics-chart-card overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-3 analytics-chart-header px-5 py-4">
         <div>
           <h2 className="text-sm font-black text-[#26313d]">{received ? "Динаміка Web-shop замовлень" : "Динаміка відвантажень"}</h2>
           <p className="mt-1 text-[10px] text-[#8a939c]">{received ? "За датою створення · усі статуси" : "Лише документи зі статусом «Повністю відвантажений»"}</p>
@@ -1107,7 +1109,7 @@ function SalesTrendChart({
         </div>
         <div className="text-right">
           <div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div>
-          <div className="mt-1 text-sm font-black text-[#26313d]">{fmtMoney(total)}</div>
+          <div className="analytics-chart-total mt-1 font-black text-[#26313d]">{fmtMoney(total)}</div>
         </div>
       </div>
       <div className="p-5">
@@ -1120,7 +1122,7 @@ function SalesTrendChart({
               {axis.ticks.map((value) => <span key={value} className="absolute right-0 -translate-y-1/2 tabular-nums" style={{ top: `${chartY(value, axis.max)}%` }}>{fmtCompactMoney(value)}</span>)}
             </div>
             <div className="min-w-0">
-              <div className="relative h-56 rounded-xl border border-[#edf1f4] bg-[linear-gradient(180deg,#f7fbff_0%,#fff_100%)]">
+              <div className="relative h-56 bg-white">
                 {hovered && (
                   <div className="pointer-events-none absolute top-2 z-20 min-w-[180px] rounded-xl border border-[#cbdfee] bg-white p-3 text-[10px] shadow-lg" style={{ left: `${hoveredLeft}%`, transform: `translateX(${hoveredLeft > 80 ? "-100%" : hoveredLeft < 20 ? "0" : "-50%"})` }}>
                     <div className="font-black text-[#26313d]">{fmtIsoDateShort(hovered.date)}</div>
@@ -1130,11 +1132,11 @@ function SalesTrendChart({
                   </div>
                 )}
                 <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" role="img" aria-label="Графік продажів по днях">
-                  {axis.ticks.map((value) => <line key={value} x1="2" x2="98" y1={chartY(value, axis.max)} y2={chartY(value, axis.max)} stroke="#e7edf3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
-                  <line x1="2" x2="2" y1="8" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                  <line x1="2" x2="98" y1="92" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                  {comparisonCoordinates && <polyline points={comparisonCoordinates} fill="none" stroke="#8a939c" strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />}
-                  <polyline points={coordinates} fill="none" stroke="#118dff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                  {axis.ticks.map((value) => <line key={value} x1="2" x2="98" y1={chartY(value, axis.max)} y2={chartY(value, axis.max)} stroke="#f0f3f6" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
+                  <line x1="2" x2="2" y1="8" y2="92" stroke="#eef1f4" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <line x1="2" x2="98" y1="92" y2="92" stroke="#eef1f4" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  {comparisonCoordinates && <ChartTrendSeries points={comparisonCoordinates.split(" ").map(pair => { const [x,y] = pair.split(",").map(Number); return {x,y}; })} baseline={92} comparison />}
+                  <ChartTrendSeries points={coordinates.split(" ").map(pair => { const [x,y] = pair.split(",").map(Number); return {x,y}; })} baseline={92} color="#118dff" />
                 </svg>
                 {points.map((point, index) => {
                   const x = chartX(index, points.length);
@@ -1190,10 +1192,10 @@ function OrdersTrendChart({
   const yTicks = [1, 0.75, 0.5, 0.25, 0];
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8eb] px-5 py-4">
+    <section className="analytics-chart-card overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-3 analytics-chart-header px-5 py-4">
         <div><h2 className="text-sm font-black text-[#26313d]">Оформлені замовлення по днях</h2><p className="mt-1 text-[10px] text-[#8a939c]">{received ? "Кількість Web-shop замовлень за датою створення" : "Наведіть на точку, щоб побачити кількість і розподіл по менеджерах"}</p>{previousDays && <div className="mt-2 flex gap-4 text-[9px] font-bold text-[#687582]"><span><i className="mr-1 inline-block h-0.5 w-4 bg-[#805ad5] align-middle" />Обраний період</span><span><i className="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-[#8a939c] align-middle" />Минулий рік</span></div>}</div>
-        <div className="text-right"><div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div><div className="mt-1 text-sm font-black text-[#26313d]">{fmtNum(total)} замовлень</div></div>
+        <div className="text-right"><div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">За період</div><div className="analytics-chart-total mt-1 font-black text-[#26313d]">{fmtNum(total)} замовлень</div></div>
       </div>
       <div className="p-5">
         {points.length > 1 ? (
@@ -1205,18 +1207,18 @@ function OrdersTrendChart({
               {yTicks.map((ratio) => <span key={ratio} className="absolute right-0 -translate-y-1/2 tabular-nums" style={{ top: `${8 + (1 - ratio) * 84}%` }}>{fmtNum(Math.round(maxValue * ratio))}</span>)}
             </div>
             <div className="min-w-0">
-              <div className="relative h-56 rounded-xl border border-[#edf1f4] bg-[linear-gradient(180deg,#f7fbff_0%,#fff_100%)]">
+              <div className="relative h-56 bg-white">
                 {hovered && <div className="pointer-events-none absolute top-2 z-20 min-w-[230px] rounded-xl border border-[#d6caed] bg-white p-3 text-[10px] shadow-lg" style={{ left: `${hoveredLeft}%`, transform: `translateX(${hoveredLeft > 80 ? "-100%" : hoveredLeft < 20 ? "0" : "-50%"})` }}>
                   <div className="flex justify-between gap-4 font-black text-[#26313d]"><span>{fmtIsoDateShort(hovered.date)}</span><span>{fmtNum(hovered.docs)} total</span></div>
                   <div className="mt-2 space-y-1 border-t border-[#edf0f2] pt-2">{hovered.managers.map((manager) => <div key={manager.seller} className="flex justify-between gap-4 text-[#6e7a86]"><span className="max-w-[170px] truncate">{manager.seller}</span><b className="text-[#6b46c1]">{fmtNum(manager.docs)}</b></div>)}{!hovered.managers.length && hovered.docs === 0 && <div className="text-[#8a939c]">Замовлень немає</div>}</div>
                   {hoveredPrevious && <div className="mt-2 flex justify-between gap-4 border-t border-[#edf0f2] pt-2 text-[#6e7a86]"><span>{fmtIsoDateShort(hoveredPrevious.date)} · рік тому</span><b>{fmtNum(hoveredPrevious.docs)}</b></div>}
                 </div>}
                 <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" role="img" aria-label="Графік оформлених замовлень по днях">
-                  {yTicks.map((ratio) => <line key={ratio} x1="2" x2="98" y1={8 + (1 - ratio) * 84} y2={8 + (1 - ratio) * 84} stroke="#e7edf3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
-                  <line x1="2" x2="2" y1="8" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                  <line x1="2" x2="98" y1="92" y2="92" stroke="#b8c3cd" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                  {comparisonCoordinates && <polyline points={comparisonCoordinates} fill="none" stroke="#8a939c" strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />}
-                  <polyline points={coordinates} fill="none" stroke="#805ad5" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                  {yTicks.map((ratio) => <line key={ratio} x1="2" x2="98" y1={8 + (1 - ratio) * 84} y2={8 + (1 - ratio) * 84} stroke="#f0f3f6" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />)}
+                  <line x1="2" x2="2" y1="8" y2="92" stroke="#eef1f4" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <line x1="2" x2="98" y1="92" y2="92" stroke="#eef1f4" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  {comparisonCoordinates && <ChartTrendSeries points={comparisonCoordinates.split(" ").map(pair => { const [x,y] = pair.split(",").map(Number); return {x,y}; })} baseline={92} comparison />}
+                  <ChartTrendSeries points={coordinates.split(" ").map(pair => { const [x,y] = pair.split(",").map(Number); return {x,y}; })} baseline={92} color="#805ad5" />
                 </svg>
                 {points.map((point, index) => {
                   const x = chartX(index, points.length);
