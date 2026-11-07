@@ -6,7 +6,7 @@ import { readPersistentResult, writePersistentResult } from "@/lib/persistent-re
 /** Only compact, derived reports belong here, never copies of raw order history. */
 export function readDashboardReport<T>(namespace: string, key: string, ttlMs: number, load: () => Promise<T>) {
   const name = `${namespace}-${createHash("sha256").update(key).digest("hex")}`;
-  const options = { namespace, key, ttlMs, maxEntries: 8, maxEntryBytes: namespace === "search-dataset-v2" ? 48 * 1024 * 1024 : 16 * 1024 * 1024, load: async (): Promise<T> => {
+  const options = { namespace, key, ttlMs, maxEntries: namespace === "search-dataset-v2" ? 1 : 8, maxEntryBytes: namespace === "search-dataset-v2" ? 64 * 1024 * 1024 : 16 * 1024 * 1024, load: async (): Promise<T> => {
     const saved = await readPersistentResult<T>(name, ttlMs);
     if (saved) { options.ttlMs = Math.max(1, saved.createdAt + ttlMs - Date.now()); return saved.value; }
     const value = await load();
