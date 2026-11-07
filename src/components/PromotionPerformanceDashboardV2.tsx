@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { selectPromotionDimensions } from "@/lib/promotion-dimension-search";
 import { PromotionInventoryCards } from "@/components/PromotionInventoryCards";
 import type {
   PromotionSalesBucket,
@@ -135,7 +136,9 @@ function DimensionTable({ type, items, from, to, pricePosition, channel }: { typ
   const [expanded, setExpanded] = useState<string | null>(null);
   const [products, setProducts] = useState<PromotionSalesProductSummary[]>([]);
   const [loading, setLoading] = useState(false);
-  const maxRevenue = Math.max(1, ...items.map((item) => item.revenue));
+  const [search, setSearch] = useState("");
+  const selection = selectPromotionDimensions(items, search);
+  const maxRevenue = Math.max(1, ...selection.items.map((item) => item.revenue));
   useEffect(() => {
     if (!expanded) { setProducts([]); return; }
     const controller = new AbortController();
@@ -147,7 +150,13 @@ function DimensionTable({ type, items, from, to, pricePosition, channel }: { typ
       .finally(() => setLoading(false));
     return () => controller.abort();
   }, [expanded, from, pricePosition, to, type, channel]);
-  return <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm"><div className="border-b border-[#e5e8eb] px-5 py-4"><h2 className="text-sm font-black text-[#26313d]">{type === "brand" ? "Акційний брендовий аналіз" : "Акційний категорійний аналіз"}</h2><p className="mt-1 text-[10px] text-[#8a939c]">Натисніть на рядок, щоб побачити товари</p></div><div>{items.map((item) => <div key={item.label} className="border-b border-[#edf0f2] last:border-0"><button type="button" onClick={() => setExpanded((value) => value === item.label ? null : item.label)} className="grid w-full items-center gap-3 px-5 py-3 text-left hover:bg-[#fbfcfd] sm:grid-cols-[minmax(180px,1fr)_110px_150px_1fr_24px]"><b className="truncate text-[11px] text-[#34404c]">{item.label}</b><span className="text-right text-[10px] font-bold text-[#68737e]">{numberFmt.format(item.productCount)} товарів</span><span className="text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</span><span className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><span className="block h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></span><span className="text-center font-black text-[#118dff]">{expanded === item.label ? "−" : "+"}</span></button>{expanded === item.label && <div className="bg-[#f7f9fb] px-5 py-3">{loading ? <div className="py-4 text-center text-[10px] text-[#7f8993]">Завантаження товарів…</div> : <div className="grid gap-2">{products.map((product) => <a key={`${product.code}-${product.name}`} href={product.url} target="_blank" rel="noreferrer" className="grid gap-2 rounded-lg border border-[#dfe4ea] bg-white px-3 py-2 no-underline sm:grid-cols-[90px_1fr_90px_140px]"><b className="text-[10px] text-[#118dff]">{product.code}</b><span className="truncate text-[10px] font-semibold text-[#45515d]">{product.name}</span><span className="text-right text-[10px] text-[#68737e]">{numberFmt.format(product.qty)} шт.</span><b className="text-right text-[10px] text-[#087a55]">{fmtMoney(product.revenue)}</b></a>)}</div>}</div>}</div>)}</div></section>;
+  return <div className="space-y-4">
+    <div className="grid gap-3 md:grid-cols-3" aria-label="Показники знайдених позицій">
+      <Kpi eyebrow={type === "brand" ? "Брендів" : "Категорій"} value={numberFmt.format(selection.count)} meta="У поточній вибірці" color="#118dff" />
+      <Kpi eyebrow="Акційних товарів" value={numberFmt.format(selection.productCount)} meta="У поточній вибірці" color="#6d5bd0" />
+      <Kpi eyebrow="Продажі акційних товарів" value={fmtMoney(selection.revenue)} meta="За вибраний період" color="#0f9d72" />
+    </div>
+    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm"><div className="border-b border-[#e5e8eb] px-5 py-4"><h2 className="text-sm font-black text-[#26313d]">{type === "brand" ? "Акційний брендовий аналіз" : "Акційний категорійний аналіз"}</h2><p className="mt-1 text-[10px] text-[#8a939c]">Натисніть на рядок, щоб побачити товари</p><input type="search" aria-label={type === "brand" ? "Пошук брендів" : "Пошук категорій"} placeholder={type === "brand" ? "Знайти бренд…" : "Знайти категорію…"} value={search} onChange={event => setSearch(event.target.value)} className="mt-3 h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-xs outline-none focus:border-[#118dff]" /></div><div>{selection.items.map((item) => <div key={item.label} className="border-b border-[#edf0f2] last:border-0"><button type="button" onClick={() => setExpanded((value) => value === item.label ? null : item.label)} className="grid w-full items-center gap-3 px-5 py-3 text-left hover:bg-[#fbfcfd] sm:grid-cols-[minmax(180px,1fr)_110px_150px_1fr_24px]"><b className="truncate text-[11px] text-[#34404c]">{item.label}</b><span className="text-right text-[10px] font-bold text-[#68737e]">{numberFmt.format(item.productCount)} товарів</span><span className="text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</span><span className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><span className="block h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></span><span className="text-center font-black text-[#118dff]">{expanded === item.label ? "−" : "+"}</span></button>{expanded === item.label && <div className="bg-[#f7f9fb] px-5 py-3">{loading ? <div className="py-4 text-center text-[10px] text-[#7f8993]">Завантаження товарів…</div> : <div className="grid gap-2">{products.map((product) => <a key={`${product.code}-${product.name}`} href={product.url} target="_blank" rel="noreferrer" className="grid gap-2 rounded-lg border border-[#dfe4ea] bg-white px-3 py-2 no-underline sm:grid-cols-[90px_1fr_90px_140px]"><b className="text-[10px] text-[#118dff]">{product.code}</b><span className="truncate text-[10px] font-semibold text-[#45515d]">{product.name}</span><span className="text-right text-[10px] text-[#68737e]">{numberFmt.format(product.qty)} шт.</span><b className="text-right text-[10px] text-[#087a55]">{fmtMoney(product.revenue)}</b></a>)}</div>}</div>}</div>)}</div>{!selection.count && <p className="px-5 py-8 text-center text-xs text-[#78838e]">Нічого не знайдено</p>}</section></div>;
 }
 
 export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }: { view: PromotionPerformanceView; pricePosition?: PromotionPricePosition }) {
@@ -190,8 +199,8 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
     {toolbar}
     {view === "overview" && <><div className="flex justify-end"><SegmentControl value={segment} onChange={setSegment} /></div><div className="grid gap-3 md:grid-cols-3"><PromotionInventoryCards date={to} segment={segment} pricePosition={pricePosition} /><Kpi eyebrow="Продажі акційних товарів" value={fmtMoney(revenue)} meta={`${numberFmt.format(qty)} шт. · ${numberFmt.format(docs)} замовлень`} color="#0f9d72" /></div><SalesChart current={selectedDaily} previous={previous?.summary.daily ?? []} segment={segment} /></>}
     {view === "promotions" && <><section className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm"><div className="flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Пошук акції</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID або назва акційної програми" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none" /></label><SegmentControl value={segment} onChange={setSegment} /></div></section><PromotionTable items={data.summary.promotions} query={query} segment={segment} /></>}
-    {view === "brands" && <DimensionTable type="brand" items={data.summary.brands} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
-    {view === "categories" && <DimensionTable type="category" items={data.summary.categories} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
+    {view === "brands" && <DimensionTable key="brands" type="brand" items={data.summary.brands} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
+    {view === "categories" && <DimensionTable key="categories" type="category" items={data.summary.categories} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
     {error && <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
   </div>;
 }
