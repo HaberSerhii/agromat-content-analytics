@@ -173,6 +173,7 @@ type SalesDataset = {
     segments: BucketSummary[];
     shippedSegments: BucketSummary[];
     categoryOptions: Array<{ label: string; segment: string }>;
+    brandOptions: Array<{ label: string; segment: string; category: string }>;
     otherSalesGroups: Array<{ label: string; revenue: number }>;
     otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: BucketSummary[];
@@ -416,15 +417,17 @@ function ProgressBar({ value, color }: { value: number; color: string }) {
 }
 
 type ReceivedOverviewData = ReturnType<typeof receivedSales>["overview"];
-function ReceivedOverview({ from, to, channel, compare, refresh, segment, categories, onSegmentChange, onCategoriesChange, plan }: {
+function ReceivedOverview({ from, to, channel, compare, refresh, segment, categories, onSegmentChange, onCategoriesChange, brands, onBrandsChange, plan }: {
   from: string; to: string; channel: SalesChannel; compare: boolean; refresh: number;
   segment: DocumentSegment; categories: string[]; onSegmentChange: (value: DocumentSegment) => void; onCategoriesChange: (value: string[]) => void;
+  brands: string[]; onBrandsChange: (value: string[]) => void;
   plan: SalesDataset["summary"]["plan"];
 }) {
   const [data, setData] = useState<ReceivedOverviewData | null>(null);
   const [prior, setPrior] = useState<ReceivedOverviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [priorLoading, setPriorLoading] = useState(false);
+  const [brandOptions, setBrandOptions] = useState<ReceivedOverviewData["brandOptions"]>([]);
   const [options, setOptions] = useState<Array<{ label: string; segment: string }>>([]);
   useEffect(() => {
     const controller = new AbortController();
@@ -432,20 +435,21 @@ function ReceivedOverview({ from, to, channel, compare, refresh, segment, catego
     const load = async (start: string, end: string) => {
       const params = new URLSearchParams({ from: start, to: end, channel, segment });
       categories.forEach(category => params.append("sales_category", category));
+      brands.forEach(brand => params.append("sales_brand", brand));
       return (await fetchApiJson<{ overview: ReceivedOverviewData }>(`/api/sales/received?${params}`, { signal: controller.signal, cache: "no-store" })).overview;
     };
-    load(from, to).then(value => { if (!controller.signal.aborted) { setData(value); setOptions(value.categoryOptions); } })
+    load(from, to).then(value => { if (!controller.signal.aborted) { setData(value); setOptions(value.categoryOptions); setBrandOptions(value.brandOptions); } })
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не вдалося завантажити Web-shop замовлення"); });
     if (compare) load(shiftIsoYear(from, -1), shiftIsoYear(to, -1))
       .then(value => { if (!controller.signal.aborted) setPrior(value); })
       .catch(() => {})
       .finally(() => { if (!controller.signal.aborted) setPriorLoading(false); });
     return () => controller.abort();
-  }, [from, to, channel, compare, refresh, segment, categories]);
+  }, [from, to, channel, compare, refresh, segment, categories, brands]);
   const hint = (value: number, previous: number | undefined, formatter: (value: number) => string = fmtMoney) => !compare ? "Порівняння вимкнено" : priorLoading ? "Завантаження порівняння…" : previous === undefined ? "Порівняння недоступне" : yearComparisonHint(value, previous, formatter);
   const target = segment === "Усі" ? plan.plan : plan.segments.find(item => item.segment === segment)?.plan;
   return <div className="space-y-4">
-    <DocumentSegmentFilter value={segment} onChange={value => { onSegmentChange(value); onCategoriesChange([]); }} category={categories} onCategoryChange={onCategoriesChange} categories={options} />
+    <DocumentSegmentFilter value={segment} onChange={value => { onSegmentChange(value); onCategoriesChange([]); }} category={categories} onCategoryChange={onCategoriesChange} categories={options} brands={brands} brandOptions={brandOptions} onBrandsChange={onBrandsChange} />
     {error ? <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</div> : !data ? <div role="status" className="p-5 text-sm">Завантаження Web-shop замовлень…</div> : <>
       <section className="rounded-2xl border border-[#9cccf6] bg-[#eef7ff] p-5">
         <h2 className="text-sm font-black">Web-shop замовлення · за обраний період</h2>
@@ -906,26 +910,31 @@ function StatusFilter({
   );
 }
 
-function DocumentSegmentFilter({ value, onChange, category, categories, onCategoryChange }: {
+function DocumentSegmentFilter({ value, onChange, category, categories, onCategoryChange, brands, brandOptions, onBrandsChange }: {
   value: DocumentSegment; onChange: (value: DocumentSegment) => void;
   category: string[]; categories: Array<{ label: string; segment: string }>; onCategoryChange: (value: string[]) => void;
+  brands: string[]; brandOptions: Array<{ label: string; segment: string; category: string }>; onBrandsChange: (value: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [brandsOpen, setBrandsOpen] = useState(false);
+  const brandsRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!open) return;
+    if (!open && !brandsOpen) return;
     const outside = (event: PointerEvent) => {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!brandsRef.current?.contains(event.target as Node)) setBrandsOpen(false);
     };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { setOpen(false); setBrandsOpen(false); } };
     document.addEventListener("pointerdown", outside);
     document.addEventListener("keydown", escape);
     return () => {
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("keydown", escape);
     };
-  }, [open]);
+  }, [open, brandsOpen]);
   const options = [...new Set(categories.filter(item => value === "Усі" || item.segment === value).map(item => item.label))];
+  const availableBrands = [...new Set([...brands, ...brandOptions.filter(item => (value === "Усі" || item.segment === value) && (!category.length || category.includes(item.category))).map(item => item.label)])].sort((a, b) => a.localeCompare(b, "uk"));
   return (
     <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm">
       <div>
@@ -953,6 +962,23 @@ function DocumentSegmentFilter({ value, onChange, category, categories, onCatego
               <span>{label}</span>
             </label>)}
             {!options.length && <p className="px-2 py-3">Немає доступних категорій</p>}
+          </div>
+        </div>}
+      </div>
+      <div ref={brandsRef} className="relative flex items-center gap-2 text-[10px] font-bold text-[#687582]">
+        <span>Бренди</span>
+        <button type="button" aria-label="Бренди продажів" aria-expanded={brandsOpen} onClick={() => setBrandsOpen(current => !current)} className="flex h-[34px] max-w-[320px] items-center gap-3 rounded-lg border border-[#d8dde3] bg-[#f7f9fb] px-3 text-[10px] font-bold text-[#687582] focus-visible:outline-[#118dff]">
+          <span className="truncate">{brands.length === 0 ? "Усі бренди" : brands.length === 1 ? brands[0] : `Брендів обрано: ${brands.length}`}</span>
+          <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" className="h-3 w-3 shrink-0"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+        {brandsOpen && <div role="group" aria-label="Вибір брендів" className="absolute right-0 top-full z-30 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-lg border border-[#d8dde3] bg-white shadow-lg">
+          <button type="button" onClick={() => onBrandsChange([])} className="w-full border-b border-[#d8dde3] px-3 py-2.5 text-left text-[10px] font-bold text-[#118dff] hover:bg-[#eef7ff]">Усі бренди · скинути вибір</button>
+          <div className="max-h-64 overflow-y-auto p-1">
+            {availableBrands.map(label => <label key={label} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-[10px] hover:bg-[#eef7ff]">
+              <input type="checkbox" checked={brands.includes(label)} onChange={event => onBrandsChange(event.target.checked ? [...brands, label] : brands.filter(item => item !== label))} className="h-3.5 w-3.5 shrink-0 accent-[#118dff]" />
+              <span>{label}</span>
+            </label>)}
+            {!availableBrands.length && <p className="px-2 py-3">Немає доступних брендів</p>}
           </div>
         </div>}
       </div></div>
@@ -1684,8 +1710,9 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [selectedManager, setSelectedManager] = useState<string | null>(null);
   const [selectedDocumentSegment, setSelectedDocumentSegment] = useState<DocumentSegment>("Усі");
   const [selectedSalesCategory, setSelectedSalesCategory] = useState<string[]>([]);
+  const [selectedSalesBrands, setSelectedSalesBrands] = useState<string[]>([]);
   const hasCategoryFilter = ["overview", "department", "statuses", "cancellations"].includes(view);
-  const salesScope = hasCategoryFilter ? JSON.stringify([selectedDocumentSegment, selectedSalesCategory]) : "";
+  const salesScope = hasCategoryFilter ? JSON.stringify([selectedDocumentSegment, selectedSalesCategory, selectedSalesBrands]) : "";
   const [selectedCancelReason, setSelectedCancelReason] = useState<CancelReasonSummary | null>(null);
   const hasLoadedRef = useRef(false);
   const webshopScopeRef = useRef("");
@@ -1723,7 +1750,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     setCategoryProducts({});
     setBrandProducts({});
     setSelectedCancelReason(null);
-  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory]);
+  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory, selectedSalesBrands]);
 
   useEffect(() => {
     setSelectedCancelReason(null);
@@ -1749,6 +1776,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     if (salesScope) {
       if (selectedDocumentSegment !== "Усі") params.set("segment", selectedDocumentSegment);
       selectedSalesCategory.forEach(category => params.append("sales_category", category));
+      selectedSalesBrands.forEach(brand => params.append("sales_brand", brand));
     }
     selectedStatuses.forEach((status) => params.append("status", status));
     const request = fetchApiJson<SalesDataset>(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
@@ -1774,7 +1802,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory]);
+  }, [dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory, selectedSalesBrands]);
 
   useEffect(() => {
     if (!compareWithPreviousYear || !dateFrom || !dateTo) {
@@ -1793,6 +1821,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
     if (salesScope) {
       if (selectedDocumentSegment !== "Усі") params.set("segment", selectedDocumentSegment);
       selectedSalesCategory.forEach(category => params.append("sales_category", category));
+      selectedSalesBrands.forEach(brand => params.append("sales_brand", brand));
     }
     selectedStatuses.forEach((status) => params.append("status", status));
     setComparisonLoading(true);
@@ -1816,7 +1845,7 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
       alive = false;
       controller.abort();
     };
-  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory]);
+  }, [compareWithPreviousYear, dateFrom, dateTo, selectedStatuses, salesChannel, refreshTick, salesScope, selectedDocumentSegment, selectedSalesCategory, selectedSalesBrands]);
 
   useEffect(() => {
     if (view !== "webshop" || !webshopOrders || webshopOrders.meta.movements_included) return;
@@ -2227,9 +2256,9 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
 
             {(view === "overview" || view === "brands" || view === "categories") && <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Тип замовлень">{([ ["received", "Web-shop · Надходження"], ["shipped", "Факт виконання · Відвантажені"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderMeasure === value} onClick={() => setOrderMeasure(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${orderMeasure === value ? "bg-[#118dff] text-white" : "bg-white text-[#586572]"}`}>{label}</button>)}</div>}
 
-            {view === "overview" && orderMeasure === "received" && <ReceivedOverview from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} segment={selectedDocumentSegment} categories={selectedSalesCategory} onSegmentChange={setSelectedDocumentSegment} onCategoriesChange={setSelectedSalesCategory} plan={plan} />}
+            {view === "overview" && orderMeasure === "received" && <ReceivedOverview from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} segment={selectedDocumentSegment} categories={selectedSalesCategory} onSegmentChange={setSelectedDocumentSegment} onCategoriesChange={setSelectedSalesCategory} brands={selectedSalesBrands} onBrandsChange={setSelectedSalesBrands} plan={plan} />}
 
-            {hasCategoryFilter && !(view === "overview" && orderMeasure === "received") && <DocumentSegmentFilter value={selectedDocumentSegment} onChange={segment => { setSelectedDocumentSegment(segment); setSelectedSalesCategory([]); }} category={selectedSalesCategory} onCategoryChange={setSelectedSalesCategory} categories={data.summary.categoryOptions || []} />}
+            {hasCategoryFilter && !(view === "overview" && orderMeasure === "received") && <DocumentSegmentFilter value={selectedDocumentSegment} onChange={segment => { setSelectedDocumentSegment(segment); setSelectedSalesCategory([]); }} category={selectedSalesCategory} onCategoryChange={setSelectedSalesCategory} categories={data.summary.categoryOptions || []} brands={selectedSalesBrands} onBrandsChange={setSelectedSalesBrands} brandOptions={data.summary.brandOptions || []} />}
 
             {view === "overview" && orderMeasure === "shipped" && (
               <div className="space-y-4">

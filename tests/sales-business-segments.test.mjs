@@ -71,6 +71,13 @@ test("overview, statuses and cancellation products split mixed orders while pres
   }
 
   const categoryRows = rows.map(row => ({ ...row, items: row.items.map((item, index) => ({ ...item, category: ["Плитка підлогова", "Змішувачі", "Живлення"][index] })) }));
+  const brandRows = categoryRows.map(row => ({ ...row, items: row.items.map((item, index) => ({ ...item, brand: ["A", "B", "C"][index] })) }));
+  const brandScoped = build(brandRows, {}, { ...args[2], salesBrand: ["B", "C"] });
+  assert.equal(brandScoped.summary.shippedRevenue, 400);
+  assert.equal(brandScoped.summary.shippedGoods, 2);
+  assert.equal(brandScoped.summary.brandOptions.length, 3);
+  assert.equal(brandScoped.summary.cancelReasons[0].revenue, 400);
+  assert.equal(build(brandRows, {}, { ...args[2], salesBrand: ["B"], salesCategory: ["Живлення"] }).summary.shippedRevenue, 0);
   const scoped = build(categoryRows, {}, { ...args[2], businessSegment: "Сантехніка", salesCategory: "Змішувачі" });
   assert.equal(scoped.summary.shippedRevenue, 300);
   assert.equal(scoped.summary.shippedGoods, 1);

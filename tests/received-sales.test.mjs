@@ -82,3 +82,21 @@ test("monthly segment filters isolate flooring and chemistry lines inside mixed 
   assert.deepEqual(Array.from(chemistry.brands.products.A, x => x.category), ["Клей"]);
   assert.equal(receivedSales(orders, products, metadata, "site", { segment: "Плитка" }).brands.items.length, 0);
 });
+
+test("brand multiselect intersects category filters and keeps options available", () => {
+  const metadata = new Map([
+    ["101", { category: "Ванни", categoryKey: "002", brand: "A" }],
+    ["102", { category: "Плитка", categoryKey: "001", brand: "B" }],
+  ]);
+  const selected = receivedSales(orders, products, metadata, "all", { brands: ["B"] }).overview;
+  assert.equal(selected.docs, 1);
+  assert.equal(selected.goods, 1);
+  assert.equal(selected.revenue, 100);
+  assert.equal(selected.brandOptions.length, 2);
+  const multiple = receivedSales(orders, products, metadata, "all", { brands: ["A", "B"] }).overview;
+  assert.equal(multiple.docs, 2);
+  assert.equal(multiple.revenue, 400);
+  const intersection = receivedSales(orders, products, metadata, "all", { brands: ["B"], categories: ["Ванни"] }).overview;
+  assert.equal(intersection.docs, 0);
+  assert.equal(intersection.revenue, 0);
+});

@@ -18,13 +18,14 @@ function indexesForProducts(products: ProductLite[]) {
   }
   return indexes;
 }
-export function receivedSales(orders: ApiOrder[], products: ProductLite[], categories: ReadonlyMap<string, { category: string; categoryKey: string; brand: string }>, channel: SalesChannel, filter: { segment?: string; categories?: string[]; from?: string; to?: string; details?: boolean } = {}) {
+export function receivedSales(orders: ApiOrder[], products: ProductLite[], categories: ReadonlyMap<string, { category: string; categoryKey: string; brand: string }>, channel: SalesChannel, filter: { segment?: string; categories?: string[]; brands?: string[]; from?: string; to?: string; details?: boolean } = {}) {
   const { byId, byRef, byCode } = indexesForProducts(products);
   const groups = { brands: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>(), categories: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>() };
   const totals = { docs: 0, goods: 0, revenue: 0 };
   const byDate = new Map<string, { date: string; docs: number; goods: number; revenue: number }>();
   const segments = new Map<string, { label: string; docs: number; goods: number; revenue: number }>();
   const categoryOptions = new Map<string, { label: string; segment: string }>();
+  const brandOptions = new Map<string, { label: string; segment: string; category: string }>();
   const otherGroups = new Map<string, number>();
   const seen = new Set<number>();
   for (const order of orders) {
@@ -47,8 +48,10 @@ export function receivedSales(orders: ApiOrder[], products: ProductLite[], categ
       const classification = metadata?.categoryKey ? classifySalesCategory(metadata.categoryKey)
         : { segment: catalog === "tile" ? "Плитка" : catalog === "plumbing" ? "Сантехніка" : "Інше", otherGroup: null };
       categoryOptions.set(category, { label: category, segment: classification.segment });
+      brandOptions.set(JSON.stringify([brand, classification.segment, category]), { label: brand, segment: classification.segment, category });
       if (!matchesSalesSegment(classification, filter.segment)) continue;
       if (filter.categories?.length && !filter.categories.includes(category)) continue;
+      if (filter.brands?.length && !filter.brands.includes(brand)) continue;
       matched = true;
       const qty = Number(item.quantity) || 0, revenue = Number(item.line_total) || 0;
       orderGoods += qty; orderRevenue += revenue;
@@ -86,7 +89,7 @@ export function receivedSales(orders: ApiOrder[], products: ProductLite[], categ
   const result = (dimension: keyof typeof groups) => ({ items: [...groups[dimension].values()].map(g => g.bucket), products: Object.fromEntries([...groups[dimension]].map(([label, g]) => [label, [...g.products.values()]])) });
   return { brands: result("brands"), categories: result("categories"), overview: {
     ...totals, averageCheck: totals.docs ? totals.revenue / totals.docs : null,
-    segments: [...segments.values()], categoryOptions: [...categoryOptions.values()],
+    segments: [...segments.values()], categoryOptions: [...categoryOptions.values()], brandOptions: [...brandOptions.values()],
     otherGroups: [...otherGroups].map(([label, revenue]) => ({ label, revenue })),
     byDate: fillSalesDateSeries([...byDate.values()], filter.from || null, filter.to || null),
   } };

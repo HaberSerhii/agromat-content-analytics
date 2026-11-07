@@ -14,12 +14,13 @@ export async function GET(req: Request) {
   try { validateGa4Dates(from, to); } catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
   const channel = normalizeSalesChannel(params.get("channel"));
   const segment = params.get("segment") || "";
+  const brands = params.getAll("sales_brand");
   const categories = params.getAll("sales_category");
   try {
     const started = performance.now();
-    const { value, status } = await getServerResult({ namespace: "received-sales-v3", key: JSON.stringify({ from, to, channel, segment, categories }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
+    const { value, status } = await getServerResult({ namespace: "received-sales-v3", key: JSON.stringify({ from, to, channel, segment, categories, brands }), ttlMs: SALES_AUTO_REFRESH_MS, maxEntries: 16, load: async () => {
       const [orders, products, dimensions] = await Promise.all([readBaseOrders(from, to).then(result => result.value), readAllLite(), readSalesProductDimensionLookup()]);
-      return receivedSales(orders, products, dimensions, channel, { from, to, segment, categories });
+      return receivedSales(orders, products, dimensions, channel, { from, to, segment, categories, brands });
     } });
     return NextResponse.json(value, { headers: { "Cache-Control": "private, no-store", "X-Agromat-Cache": status, "Server-Timing": `received;dur=${(performance.now() - started).toFixed(1)}` } });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Не вдалося завантажити замовлення" }, { status: 500 }); }

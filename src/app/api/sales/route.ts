@@ -35,6 +35,7 @@ async function salesResponse(filter: SalesDateFilter, compact: boolean, refresh 
       compact,
       businessSegment: filter.businessSegment,
       salesCategory: filter.salesCategory,
+      salesBrand: filter.salesBrand,
       from: filter.from || "",
       to: filter.to || "",
       productCodes: Array.isArray(filter.productCodes)
@@ -81,6 +82,7 @@ export async function GET(req: Request) {
   return salesResponse({
     businessSegment: url.searchParams.get("segment") || undefined,
     salesCategory: url.searchParams.getAll("sales_category"),
+    salesBrand: url.searchParams.getAll("sales_brand"),
     from: url.searchParams.get("from") || undefined,
     to: url.searchParams.get("to") || undefined,
     productCodes: positionCodes

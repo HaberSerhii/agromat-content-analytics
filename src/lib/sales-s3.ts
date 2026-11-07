@@ -260,6 +260,7 @@ export type SalesDataset = {
     segments: SalesBucketSummary[];
     shippedSegments: SalesBucketSummary[];
     categoryOptions: Array<{ label: string; segment: BusinessSegment }>;
+    brandOptions: Array<{ label: string; segment: BusinessSegment; category: string }>;
     otherSalesGroups: Array<{ label: string; revenue: number }>;
     otherSalesRemainder: Array<{ label: string; revenue: number }>;
     brands: SalesBucketSummary[];
@@ -351,6 +352,7 @@ export type SalesDateFilter = {
   channel?: SalesChannel;
   businessSegment?: string;
   salesCategory?: string | string[];
+  salesBrand?: string[];
 };
 
 export type SalesDatasetOptions = {
@@ -1103,14 +1105,21 @@ function buildDataset(
     .map(item => { const segment = classifySalesCategory(item.categoryKey || "").segment;
       return [`${segment}:${item.category}`, { label: item.category, segment }] as const; }))).values()]
     .sort((a, b) => a.label.localeCompare(b.label, "uk"));
+  const brandOptions = [...new Map(rows.flatMap(row => row.items.filter(item => !isSalesPlanService(item)).map(item => {
+    const segment = classifySalesCategory(item.categoryKey || "").segment;
+    const label = item.brand || "Без бренда";
+    return [JSON.stringify([segment, item.category, label]), { label, segment, category: item.category }] as const;
+  }))).values()].sort((a, b) => a.label.localeCompare(b.label, "uk"));
+  const selectedBrands = new Set(dateFilter?.salesBrand || []);
   const selectedCategories = new Set((Array.isArray(dateFilter?.salesCategory) ? dateFilter.salesCategory : [dateFilter?.salesCategory]).filter(Boolean));
-  if (dateFilter?.businessSegment || selectedCategories.size) {
+  if (dateFilter?.businessSegment || selectedCategories.size || selectedBrands.size) {
     rows = rows.flatMap(sourceRow => {
       const row = goodsOnlySalesRow(sourceRow);
       if (!row) return [];
       const codes = new Set(row.items.filter(item =>
         matchesSalesSegment(classifySalesCategory(item.categoryKey || ""), dateFilter?.businessSegment)
         && (!selectedCategories.size || selectedCategories.has(item.category))
+        && (!selectedBrands.size || selectedBrands.has(item.brand || "Без бренда"))
       ).map(item => Number(item.code)));
       if (!codes.size) return [];
       const scoped = scopeSalesRowToProductCodes(row, codes);
@@ -1557,6 +1566,7 @@ function buildDataset(
       months: monthList,
       segments: segmentList,
       categoryOptions,
+      brandOptions,
       shippedSegments: finishSegmentBuckets(shippedSegments),
       otherSalesGroups: [...otherSalesGroups].map(([label, revenue]) => ({ label, revenue })),
       otherSalesRemainder: [...otherSalesRemainder].map(([label, revenue]) => ({ label, revenue })).sort((a, b) => b.revenue - a.revenue),
