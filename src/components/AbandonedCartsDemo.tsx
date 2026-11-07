@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { filterCartSearch } from "@/lib/cart-search";
 import CartProducts from "./CartProducts";
 import { checkoutLabels, fieldValue } from "@/lib/cart-fields";
 import { downloadAbandonedCarts, type CartExportPeriod } from "@/lib/cart-export";
@@ -65,7 +66,8 @@ export default function AbandonedCartsDemo({ apiCarts, exportPeriod }: { apiCart
   }, [selected]);
   const [sort, setSort] = useState("total");
   const [page, setPage] = useState(1);
-  const originalCohort = useMemo(() => liveCarts ?? carts.filter(c => c.day < Number(period)), [period, liveCarts]);
+  const periodCohort = useMemo(() => liveCarts ?? carts.filter(c => c.day < Number(period)), [period, liveCarts]);
+  const originalCohort = useMemo(() => filterCartSearch(periodCohort, search), [periodCohort, search]);
   const longCarts = originalCohort.filter(c => durationHours(c) >= Number(longThreshold));
   const cohort = originalCohort.filter(c => longMode === "all" || (longMode === "only" ? durationHours(c) >= Number(longThreshold) : durationHours(c) < Number(longThreshold)));
   const ipGroups = new Map<string, { count: number; long: number; max: number }>();
@@ -79,7 +81,7 @@ export default function AbandonedCartsDemo({ apiCarts, exportPeriod }: { apiCart
   const amount = abandoned.reduce((n, c) => n + c.total, 0);
   const contactable = abandoned.filter(c => c.contact);
   const checkout = abandoned.filter(c => c.stage > 0);
-  const rows = cohort.filter(c => (status === "all" || c.status === status) && (stage === "all" || c.stage === Number(stage)) && (!contacts || c.contact) && `${c.id} ${c.product} ${c.sku} ${c.promo_code ?? ""} ${c.name} ${c.raw?.ip || ""}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => sort === "total" ? b.total - a.total : sort === "duration" ? durationHours(b) - durationHours(a) : b.hours - a.hours);
+  const rows = cohort.filter(c => (status === "all" || c.status === status) && (stage === "all" || c.stage === Number(stage)) && (!contacts || c.contact)).sort((a, b) => sort === "total" ? b.total - a.total : sort === "duration" ? durationHours(b) - durationHours(a) : b.hours - a.hours);
   const pageCount = Math.max(1, Math.ceil(rows.length / 8));
   const currentPage = Math.min(page, pageCount);
   const reached = stages.map((_, i) => cohort.filter(c => c.stage >= i).length);
@@ -140,7 +142,7 @@ export default function AbandonedCartsDemo({ apiCarts, exportPeriod }: { apiCart
       <div className={s.panelHead}><div><h2>{live ? "Реєстр кошиків" : "Кошики, що потребують уваги"}</h2><p>Відкрийте рядок, щоб переглянути товари та введені поля</p></div><span className={s.tag}>{rows.length} у вибірці</span></div>
       <div className={s.stageSwitch} role="group" aria-label="Фільтр за максимально досягнутим етапом">{["Усі етапи", ...stages].map((label, i) => {
         const value = i === 0 ? "all" : String(i - 1);
-        const count = cohort.filter(c => (status === "all" || c.status === status) && (!contacts || c.contact) && `${c.id} ${c.product} ${c.sku} ${c.promo_code ?? ""} ${c.name} ${c.raw?.ip || ""}`.toLowerCase().includes(search.toLowerCase()) && (value === "all" || c.stage === Number(value))).length;
+        const count = cohort.filter(c => (status === "all" || c.status === status) && (!contacts || c.contact) && (value === "all" || c.stage === Number(value))).length;
         return <button key={value} aria-pressed={stage === value} onClick={() => { setStage(value); resetPage(); }}>{label}<span>{count}</span></button>;
       })}</div>
       <p className={s.stageHelp}>Фільтр показує кошики, для яких цей етап є найдальшим досягнутим. Інші фільтри зберігаються.</p>
