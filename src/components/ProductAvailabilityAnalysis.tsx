@@ -1,8 +1,9 @@
 "use client";
 
+import { chartMonthChange } from "@/lib/chart-month-change";
 import { ChartTrendSeries } from "@/components/ChartTrendSeries";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { MovementReport } from "@/lib/product-availability-movement-report";
 import type { MovementMetric } from "@/lib/product-availability-movements";
 import { salesCsv } from "@/lib/sales-monthly";
@@ -136,32 +137,60 @@ export function ProductAvailabilityAnalysis() {
 function AvailabilityChart({ month, days, metric, onMetric, loading }: { month: string; days: NonNullable<MovementReport["months"][number]>["days"]; metric: MovementMetric; onMetric: (metric: MovementMetric) => void; loading: boolean }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const values = days.flatMap(day => day.counts?.[metric] == null ? [] : [day.counts[metric] as number]);
+  const first = days.find(day => day.counts?.[metric] != null);
+  const last = days.slice().reverse().find(day => day.counts?.[metric] != null);
   const low = values.length ? Math.min(...values) : 0;
   const high = values.length ? Math.max(...values) : 1;
-  const padding = Math.max(1, (high - low) * .15);
+  const padding = Math.max(1, (high - low) * .25);
   const min = Math.max(0, low - padding), max = high + padding;
-  const x = (index: number) => 65 + index / Math.max(1, days.length - 1) * 885;
-  const y = (value: number) => 230 - (value - min) / Math.max(1, max - min) * 190;
-  const selected = days.find(day => day.date === selectedDate);
-  return <section aria-label="Щоденна динаміка наявності" className="analytics-chart-card p-5">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-bold text-[#27313c]">Динаміка за днями · {monthName(month)}</h2><select aria-label="Показник графіка" value={metric} onChange={event => onMetric(event.target.value as MovementMetric)} className="max-w-full rounded-lg border border-[#d8dde3] bg-white px-3 py-2 text-xs">{metrics.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></div>
-    <p className="mt-2 text-[11px] text-[#78838e]">Останній знімок кожного дня. Пропущені та майбутні дні не заповнюються. Натисніть точку, щоб побачити значення.</p>
+  const x = (index: number) => 56 + index / Math.max(1, days.length - 1) * 894;
+  const y = (value: number) => 215 - (value - min) / Math.max(1, max - min) * 170;
+  const selected = days.find(day => day.date === selectedDate && day.counts?.[metric] != null);
+  const baseline = first?.counts?.[metric];
+  const changeText = (value: number | null | undefined) => {
+    const change = chartMonthChange(value, baseline);
+    if (change == null) return baseline === 0 ? "База: 0 · % не визначено" : "Немає бази для порівняння";
+    return `${change > 0 ? "+" : ""}${change.toLocaleString("uk-UA", { maximumFractionDigits: 2 })}%`;
+  };
+  const color = metric === "inactive" || metric === "promoInactive" ? "#ef7d22" : metric === "promoActive" ? "#16aa76" : "#118dff";
+  const shortLabels = { active: "Активні", inactive: "Неактивні", promoActive: "Акційні · активні", promoInactive: "Акційні · неактивні" };
+  const dateLabel = (date: string) => date.split("-").reverse().join(".");
+  const selectedIndex = selected ? days.indexOf(selected) : -1;
+  const tooltipX = Math.max(58, Math.min(710, x(selectedIndex) - 90));
+  return <section aria-label="Щоденна динаміка наявності" className="analytics-chart-card px-5 py-6 sm:px-7">
+    <div className="flex flex-wrap items-start justify-between gap-5">
+      <div><h2 className="text-xs font-bold text-[#78838e]">Динаміка за днями · {monthName(month)}</h2>
+        <div className="mt-2 flex flex-wrap items-baseline gap-3"><strong className="text-4xl font-black tracking-tight text-[#27313c]">{loading ? "—" : number(last?.counts?.[metric])}</strong>{!loading && last && <span className="text-xs font-bold" style={{ color }}>{changeText(last.counts?.[metric])}</span>}</div>
+        <p className="mt-2 text-[11px] text-[#78838e]">{metrics.find(item => item.key === metric)?.label}</p>
+      </div>
+      <div role="group" aria-label="Показник графіка" className="analytics-chart-controls flex flex-wrap gap-1" style={{ "--chart-accent": color } as CSSProperties}>{metrics.map(item => <button type="button" key={item.key} aria-pressed={metric === item.key} onClick={() => { onMetric(item.key); setSelectedDate(null); }} className="px-3 py-1.5 text-[11px] font-bold text-[#78838e]">{shortLabels[item.key]}</button>)}</div>
+    </div>
+    <p className="mt-4 text-[11px] text-[#8b949e]">{first ? `${first.date.endsWith("-01") ? "База на початок місяця" : "База: перший доступний знімок"} · ${dateLabel(first.date)} · ${number(baseline)}. ` : ""}Пунктир — база. Наведіть на точку для значення та зміни у %. Майбутні дні й пропуски порожні.</p>
     {loading ? <p role="status" className="py-10 text-sm text-[#78838e]">Завантаження графіка…</p> : <>
       {!values.length && <p className="mt-3 text-xs text-[#78838e]">Немає достатніх знімків для цього показника.</p>}
-      <div className="overflow-x-auto"><svg role="img" aria-label={`${metrics.find(item => item.key === metric)?.label}, ${monthName(month)}`} viewBox="0 0 980 275" className="mt-3 w-full min-w-[650px]">
-        {[0,1,2,3,4].map(step => { const value = min + (max - min) * step / 4; return <g key={step}><line x1="65" x2="950" y1={y(value)} y2={y(value)} stroke="#f0f3f6" /><text x="55" y={y(value) + 4} textAnchor="end" fill="#78838e" fontSize="11">{Math.round(value).toLocaleString("uk-UA")}</text></g>; })}
-        <ChartTrendSeries points={days.map((day, index) => day.counts?.[metric] == null ? null : { x: x(index), y: y(day.counts[metric] as number) })} baseline={230} />
+      <div className="mt-2 overflow-x-auto"><svg role="group" aria-label={`${metrics.find(item => item.key === metric)?.label}, ${monthName(month)}`} viewBox="0 0 980 255" className="mx-auto w-full min-w-[650px] max-w-[1200px]" onMouseLeave={() => setSelectedDate(null)}>
+        {[0,1,2].map(step => { const value = min + (max - min) * step / 2; return <g key={step}><line x1="56" x2="950" y1={y(value)} y2={y(value)} stroke="#f1f4f6" /><text x="44" y={y(value) + 4} textAnchor="end" fill="#9aa3ac" fontSize="10">{Math.round(value).toLocaleString("uk-UA")}</text></g>; })}
+        {baseline != null && <line x1="56" x2="950" y1={y(baseline)} y2={y(baseline)} stroke="#a4adb7" strokeWidth="1.5" strokeDasharray="1 4" strokeLinecap="round"><title>База на початок місяця: {number(baseline)}</title></line>}
+        <ChartTrendSeries points={days.map((day, index) => day.counts?.[metric] == null ? null : { x: x(index), y: y(day.counts[metric] as number) })} baseline={220} color={color} />
         {days.map((day, index) => {
           const value = day.counts?.[metric];
           return <g key={day.date}>
-            <text x={x(index)} y="255" textAnchor="middle" fill="#78838e" fontSize="10">{index + 1}</text>
-            {value != null && <>
-              <circle role="button" tabIndex={0} aria-label={`${day.date}: ${number(value)}`} cx={x(index)} cy={y(value)} r="4" fill="#fff" stroke="#118dff" strokeWidth="2" onClick={() => setSelectedDate(day.date)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedDate(day.date); } }}><title>{day.date}: {number(value)}</title></circle>
-            </>}
+            <text x={x(index)} y="244" textAnchor="middle" fill="#8b949e" fontSize="10">{index + 1}</text>
+            {value != null && <g role="button" tabIndex={0} aria-label={`${dateLabel(day.date)}: ${number(value)}, ${changeText(value)}`} onMouseEnter={() => setSelectedDate(day.date)} onFocus={() => setSelectedDate(day.date)} onBlur={() => setSelectedDate(null)} onClick={() => setSelectedDate(day.date)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedDate(day.date); } if (event.key === "Escape") setSelectedDate(null); }} className="cursor-pointer outline-none">
+              <circle cx={x(index)} cy={y(value)} r={selectedDate === day.date ? 5 : 3.5} fill="#fff" stroke={color} strokeWidth="2" />
+              <circle cx={x(index)} cy={y(value)} r="13" fill="transparent" />
+            </g>}
           </g>;
         })}
+        {selected && <g role="tooltip" pointerEvents="none" aria-label={`${dateLabel(selected.date)}: ${number(selected.counts?.[metric])}, ${changeText(selected.counts?.[metric])}`}>
+          <line x1={x(selectedIndex)} x2={x(selectedIndex)} y1="35" y2="220" stroke={color} strokeOpacity=".2" strokeDasharray="3 4" />
+          <rect x={tooltipX} y="8" width="256" height="104" rx="12" fill="#fff" stroke="#e2e8ee" />
+          <text x={tooltipX + 14} y="29" fontSize="11" fontWeight="700" fill="#27313c">{dateLabel(selected.date)}</text>
+          <text x={tooltipX + 14} y="51" fontSize="13" fontWeight="700" fill={color}>{number(selected.counts?.[metric])} товарів</text>
+          <text x={tooltipX + 14} y="72" fontSize="11" fill={color}>{changeText(selected.counts?.[metric])}{chartMonthChange(selected.counts?.[metric], baseline) == null ? "" : first?.date.endsWith("-01") ? " від початку місяця" : " від першого знімка"}</text>
+          <text x={tooltipX + 14} y="95" fontSize="10" fill="#78838e">База {first ? dateLabel(first.date) : "—"}: {number(baseline)}</text>
+        </g>}
       </svg></div>
-      {selected && <p aria-live="polite" className="text-xs text-[#586572]">{selected.date.split("-").reverse().join(".")}: <strong>{number(selected.counts?.[metric])}</strong></p>}
     </>}
   </section>;
 }
