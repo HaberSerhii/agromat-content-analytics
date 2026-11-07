@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { selectPromotionDimensions } from "@/lib/promotion-dimension-search";
+import { PromotionMonthlyAnalysis } from "@/components/PromotionMonthlyAnalysis";
 import { PromotionInventoryCards } from "@/components/PromotionInventoryCards";
 import type {
-  PromotionSalesBucket,
   PromotionSalesDailySummary,
   PromotionSalesDataset,
-  PromotionSalesProductSummary,
   PromotionSalesPromotionSummary,
 } from "@/lib/promotion-sales-types";
 import { PROMOTION_SALES_SEGMENTS, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
@@ -132,65 +130,6 @@ function PromotionTable({ items, query, segment }: { items: PromotionSalesPromot
   return <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[880px] border-collapse"><thead className="bg-[#f7f9fb] text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]"><tr><th className="px-4 py-3 text-left">ID P2</th><th className="px-4 py-3 text-left">Акційна програма</th><th className="px-4 py-3 text-left">Період</th><th className="px-4 py-3 text-right">Товарів</th><th className="px-4 py-3 text-right">Продажів</th><th className="px-4 py-3 text-right">Дохід</th><th className="px-4 py-3 text-left">Внесок</th></tr></thead><tbody>{visible.map((item) => <tr key={item.idinc} className="border-t border-[#edf0f2] hover:bg-[#fbfcfd]"><td className="px-4 py-3 text-xs font-black text-[#118dff]">{item.idinc}<div className="text-[8px] font-semibold text-[#9aa2ab]">ID {item.id}</div></td><td className="max-w-[320px] px-4 py-3"><div className="truncate text-[11px] font-bold text-[#34404c]" title={item.name}>{item.name}</div><div className="mt-1 text-[8px] text-[#8b949e]">{item.segments.map((value) => PROMOTION_SALES_SEGMENTS[value]).join(" · ") || "Без сегмента"}</div></td><td className="whitespace-nowrap px-4 py-3 text-[10px] text-[#596571]">{fmtDate(item.startDate)} — {fmtDate(item.endDate)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.productCount)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#45515d]">{numberFmt.format(item.docs)}</td><td className="px-4 py-3 text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</td><td className="w-40 px-4 py-3"><div className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><div className="h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></div></td></tr>)}</tbody></table></div>{!visible.length && <div className="p-12 text-center text-xs text-[#82909d]">Акцій за вибраними умовами не знайдено</div>}</section>;
 }
 
-function DimensionTable({ type, items, from, to, pricePosition, channel }: { type: "brand" | "category"; items: PromotionSalesBucket[]; from: string; to: string; pricePosition: PromotionPricePosition; channel: PromotionSalesChannel }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [products, setProducts] = useState<PromotionSalesProductSummary[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
-  const [format, setFormat] = useState<"table" | "linear">("table");
-  const selection = selectPromotionDimensions(items, search);
-  const maxRevenue = Math.max(1, ...selection.items.map((item) => item.revenue));
-  useEffect(() => {
-    if (!expanded) { setProducts([]); return; }
-    const controller = new AbortController();
-    setLoading(true);
-    fetch(`/api/promotions/sales?${new URLSearchParams({ from, to, view: "products", price_position: pricePosition, channel })}`, { signal: controller.signal })
-      .then((response) => response.json() as Promise<{ products: PromotionSalesProductSummary[] }>)
-      .then((payload) => setProducts(payload.products.filter((product) => type === "brand" ? product.brand === expanded : product.category === expanded)))
-      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setProducts([]); })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
-  }, [expanded, from, pricePosition, to, type, channel]);
-  const toggleExpanded = (label: string) => setExpanded(value => value === label ? null : label);
-  const productDetails = <div className="bg-[#f7f9fb] px-5 py-3">
-    {loading ? <div className="py-4 text-center text-[10px] text-[#7f8993]">Завантаження товарів…</div> : <div className="grid gap-2">
-      {products.map(product => <a key={`${product.code}-${product.name}`} href={product.url} target="_blank" rel="noreferrer" className="grid gap-2 rounded-lg border border-[#dfe4ea] bg-white px-3 py-2 no-underline sm:grid-cols-[90px_1fr_90px_140px]">
-        <b className="text-[10px] text-[#118dff]">{product.code}</b><span className="truncate text-[10px] font-semibold text-[#45515d]">{product.name}</span><span className="text-right text-[10px] text-[#68737e]">{numberFmt.format(product.qty)} шт.</span><b className="text-right text-[10px] text-[#087a55]">{fmtMoney(product.revenue)}</b>
-      </a>)}
-    </div>}
-  </div>;
-  return <div className="space-y-4">
-    <div className="grid gap-3 md:grid-cols-3" aria-label="Показники знайдених позицій">
-      <Kpi eyebrow={type === "brand" ? "Брендів" : "Категорій"} value={numberFmt.format(selection.count)} meta="У поточній вибірці" color="#118dff" />
-      <Kpi eyebrow="Акційних товарів" value={numberFmt.format(selection.productCount)} meta="У поточній вибірці" color="#6d5bd0" />
-      <Kpi eyebrow="Продажі акційних товарів" value={fmtMoney(selection.revenue)} meta="За вибраний період" color="#0f9d72" />
-    </div>
-    <section className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white shadow-sm">
-      <div className="border-b border-[#e5e8eb] px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-sm font-black text-[#26313d]">{type === "brand" ? "Акційний брендовий аналіз" : "Акційний категорійний аналіз"}</h2><p className="mt-1 text-[10px] text-[#8a939c]">Натисніть на рядок, щоб побачити товари</p></div>
-          <div role="group" aria-label="Формат аналізу" className="inline-flex gap-0.5 rounded-lg border border-[#d8dde3] bg-[#f2f5f7] p-0.5">
-            {([["table", "Табличний"], ["linear", "Лінійний"]] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setFormat(value)} aria-pressed={format === value} className={`rounded-md px-3 py-2 text-[10px] font-black transition ${format === value ? "bg-white text-[#0b6fc2] shadow-sm" : "text-[#68737e]"}`}>{label}</button>)}
-          </div>
-        </div>
-        <input type="search" aria-label={type === "brand" ? "Пошук брендів" : "Пошук категорій"} placeholder={type === "brand" ? "Знайти бренд…" : "Знайти категорію…"} value={search} onChange={event => setSearch(event.target.value)} className="mt-3 h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-xs outline-none focus:border-[#118dff]" />
-      </div>
-      {format === "table" ? <div className="overflow-x-auto"><table className="w-full text-left text-xs">
-        <thead className="bg-[#f7f9fb] text-[10px] text-[#78838e]"><tr><th className="px-5 py-3">{type === "brand" ? "Бренд" : "Категорія"}</th><th className="px-5 py-3 text-right">Акційних товарів</th><th className="px-5 py-3 text-right">Продажі, ₴</th><th className="w-12"><span className="sr-only">Товари</span></th></tr></thead>
-        {selection.items.map(item => <tbody key={item.label} className="border-t border-[#edf0f2]">
-          <tr className="hover:bg-[#fbfcfd]"><th className="p-0 font-bold text-[#34404c]"><button type="button" aria-expanded={expanded === item.label} onClick={() => toggleExpanded(item.label)} className="w-full px-5 py-3 text-left">{item.label}</button></th><td className="px-5 py-3 text-right text-[#68737e]">{numberFmt.format(item.productCount)}</td><td className="whitespace-nowrap px-5 py-3 text-right font-black text-[#087a55]">{moneyFmt.format(item.revenue)}</td><td className="pr-5 text-center"><button type="button" aria-label={`Товари: ${item.label}`} aria-expanded={expanded === item.label} onClick={() => toggleExpanded(item.label)} className="px-2 py-3 font-black text-[#118dff]">{expanded === item.label ? "−" : "+"}</button></td></tr>
-          {expanded === item.label && <tr><td colSpan={4} className="p-0">{productDetails}</td></tr>}
-        </tbody>)}
-      </table></div> : <div>{selection.items.map(item => <div key={item.label} className="border-b border-[#edf0f2] last:border-0">
-        <button type="button" aria-expanded={expanded === item.label} onClick={() => toggleExpanded(item.label)} className="grid w-full items-center gap-3 px-5 py-3 text-left hover:bg-[#fbfcfd] sm:grid-cols-[minmax(180px,1fr)_110px_150px_1fr_24px]">
-          <b className="truncate text-[11px] text-[#34404c]">{item.label}</b><span className="text-right text-[10px] font-bold text-[#68737e]">{numberFmt.format(item.productCount)} товарів</span><span className="text-right text-xs font-black text-[#087a55]">{fmtMoney(item.revenue)}</span><span className="h-2 overflow-hidden rounded-full bg-[#edf0f3]"><span className="block h-full rounded-full bg-[#118dff]" style={{ width: `${item.revenue / maxRevenue * 100}%` }} /></span><span className="text-center font-black text-[#118dff]">{expanded === item.label ? "−" : "+"}</span>
-        </button>{expanded === item.label && productDetails}
-      </div>)}</div>}
-      {!selection.count && <p className="px-5 py-8 text-center text-xs text-[#78838e]">Нічого не знайдено</p>}
-    </section>
-  </div>;
-}
-
 export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }: { view: PromotionPerformanceView; pricePosition?: PromotionPricePosition }) {
   const initial = useMemo(monthRange, []);
   const [from, setFrom] = useState(initial.from);
@@ -203,7 +142,9 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const dimensionView = view === "brands" || view === "categories";
   useEffect(() => {
+    if (dimensionView) return;
     const controller = new AbortController();
     setLoading(true);
     Promise.all([
@@ -216,9 +157,10 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
       setError("");
     }).catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Помилка завантаження"); }).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [from, pricePosition, to, channel]);
+  }, [from, pricePosition, to, channel, dimensionView]);
 
   const toolbar = <DateToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} channel={channel} onChannel={setChannel} />;
+  if (dimensionView) return <div className="space-y-4">{toolbar}<PromotionMonthlyAnalysis key={view} dimension={view as "brands" | "categories"} to={to} channel={channel} pricePosition={pricePosition} /></div>;
   if (loading || !data || data.filter.channel !== channel) return <div className="space-y-4">{toolbar}{loading
     ? <div role="status" className="rounded-2xl border border-[#dfe4ea] bg-white px-6 py-20 text-center text-xs font-bold text-[#7f8993]">Завантаження продажів…</div>
     : <div role="alert" className="rounded-2xl border border-[#f0b6b6] bg-[#fff1f1] p-5 text-xs font-bold text-[#b73535]">{error || "Дані недоступні"}</div>}</div>;
@@ -231,8 +173,6 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
     {toolbar}
     {view === "overview" && <><div className="flex justify-end"><SegmentControl value={segment} onChange={setSegment} /></div><div className="grid gap-3 md:grid-cols-3"><PromotionInventoryCards date={to} segment={segment} pricePosition={pricePosition} /><Kpi eyebrow="Продажі акційних товарів" value={fmtMoney(revenue)} meta={`${numberFmt.format(qty)} шт. · ${numberFmt.format(docs)} замовлень`} color="#0f9d72" /></div><SalesChart current={selectedDaily} previous={previous?.summary.daily ?? []} segment={segment} /></>}
     {view === "promotions" && <><section className="rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-sm"><div className="flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.12em] text-[#84909b]">Пошук акції</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID або назва акційної програми" className="h-9 w-full rounded-lg border border-[#d8dde3] bg-white px-3 text-[11px] outline-none" /></label><SegmentControl value={segment} onChange={setSegment} /></div></section><PromotionTable items={data.summary.promotions} query={query} segment={segment} /></>}
-    {view === "brands" && <DimensionTable key="brands" type="brand" items={data.summary.brands} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
-    {view === "categories" && <DimensionTable key="categories" type="category" items={data.summary.categories} from={from} to={to} pricePosition={pricePosition} channel={channel} />}
     {error && <div className="rounded-xl border border-[#f0b6b6] bg-[#fff1f1] p-3 text-xs font-semibold text-[#b73535]">{error}</div>}
   </div>;
 }

@@ -1,5 +1,5 @@
 import { summarizeReviewPeriodSales } from "@/lib/review-period-sales";
-import { promotionSalesSegment, promotionCatalogSegment, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
+import { promotionSalesSegment, promotionCatalogSegment, PROMOTION_SALES_SEGMENTS, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import { classifySalesCategory, matchesSalesSegment, splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
 import { normalizeSalesChannel, filterPromotionSalesRows, readRozetkaOrderIds, filterRozetkaSalesRows, type SalesChannel } from "@/lib/sales-order-origin";
 export type { SalesChannel } from "@/lib/sales-order-origin";
@@ -2388,3 +2388,26 @@ function buildMonthlyRows(rows: ParsedSalesRow[], periods: { from: string; to: s
 }
 
 export async function readSalesDataVersion() { return JSON.stringify((await readCachedSalesRows()).source); }
+
+/** Compact promotional monthly report; no product detail or daily series allocation. */
+export async function readPromotionMonthlyBuckets(periods: { from: string; to: string }[], promotions: PromotionSalesPromotionInput[], channel: import("./sales-order-origin").PromotionSalesChannel, dimension: "brands" | "categories", segment: string) {
+  const { rows, source } = await readCachedSalesRows();
+  const { readDashboardReport } = await import("./dashboard-report-cache");
+  const { buildPromotionMonthly } = await import("./promotion-monthly");
+  const key = createHash("sha256").update(JSON.stringify({ source, periods, promotions, channel, dimension, segment })).digest("hex");
+  return readDashboardReport("promotion-monthly-shipped-v1", key, 15 * 60_000, async () => {
+    const scoped = await filterPromotionSalesRows(rows, channel);
+    const periodMonths = new Set(periods.map(period => period.from.slice(0, 7)));
+    function* orders() {
+      for (const row of scoped) {
+        if (canonicalPromotionSalesStatus(row.state) !== "Повністю відвантажений") continue;
+        const created = normalizeShippedDate(row.createdDate);
+        if (!created || !row.shippedDate || !periodMonths.has(row.shippedDate.slice(0, 7))) continue;
+        yield { id: row.docsRef || row.number, created, shipped: row.shippedDate,
+          items: row.items.filter(item => !isSalesPlanService(item)).map(item => ({ code: Number(item.code), brand: item.brand, category: item.category,
+            segment: PROMOTION_SALES_SEGMENTS[promotionSalesSegment(item.categoryKey || "")!] || "Інше", qty: item.qty, revenue: promotionSalesItemRevenue(item) })) };
+      }
+    }
+    return buildPromotionMonthly(orders(), periods, promotions, dimension, "shipped", segment);
+  });
+}
