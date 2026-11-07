@@ -1,3 +1,4 @@
+import { readMovementReport } from "@/lib/product-availability-movement-report";
 import { readDailyAvailabilitySnapshot } from "@/lib/product-availability-daily-store";
 import { buildDailyAvailabilitySnapshot } from "@/lib/product-availability-daily";
 import { readDailySnapshot, readAllLite, readLiteSyncedAt } from "@/lib/products-store";
@@ -25,6 +26,13 @@ export async function POST(request: Request) {
   const filter: AvailabilityFilter = { categories: [...new Set(categories)], brands: [...new Set(brands)], promotion };
   try {
     const months = monthlyPeriods(to, count).map(period => period.from.slice(0, 7));
+    if (body.report === "movements") {
+      const query = body.query ?? "";
+      if (typeof query !== "string" || query.length > 300) return NextResponse.json({ error: "Некоректний пошук" }, { status: 400 });
+      const selection = body.selection;
+      if (selection && (!["active", "inactive", "promoActive", "promoInactive"].includes(selection.metric) || !["total", "added", "removed"].includes(selection.mode))) return NextResponse.json({ error: "Некоректна вибірка" }, { status: 400 });
+      return NextResponse.json(await readMovementReport(months, filter, query, selection), { headers: { "Cache-Control": "private, no-store" } });
+    }
     const yearMonths = analysis === "monthly" && !body.selection ? months.map(month => `${Number(month.slice(0, 4)) - 1}${month.slice(4)}`) : [];
     const loaded = await readAvailabilityReport([...new Set([...months, ...yearMonths])], filter, analysis === "daily");
     const report = { ...loaded, months: loaded.months.filter(item => months.includes(item.month)), previousYear: loaded.months.filter(item => yearMonths.includes(item.month)) };

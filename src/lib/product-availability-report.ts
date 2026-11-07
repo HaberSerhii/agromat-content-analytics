@@ -47,19 +47,19 @@ async function prepare(months: string[], includeDaily: boolean) {
     }
   }
 }
-export async function readAvailabilityReport(months: string[], filter: AvailabilityFilter, includeDaily = false): Promise<AvailabilityReport> {
+export async function readAvailabilityReport(months: string[], filter: AvailabilityFilter, includeDaily = false, summarizeDaily = true): Promise<AvailabilityReport> {
   const work = preparationQueue.catch(() => undefined).then(() => prepare(months, includeDaily));
   preparationQueue = work;
   await work;
   const categories = new Map<string, string>(), brands = new Set<string>();
   const result: AvailabilityReport["months"] = [];
-  const dailyFiles = includeDaily ? await listDailyAvailabilitySnapshots(months) : [];
+  const dailyFiles = includeDaily && summarizeDaily ? await listDailyAvailabilitySnapshots(months) : [];
   const today = availabilityDate(new Date().toISOString());
   for (const month of months) {
     const snapshot = await readAvailabilitySnapshot(month);
     if (snapshot) for (const group of snapshot.groups) { categories.set(group.categoryId, group.category); brands.add(group.brand); }
     let daily;
-    if (includeDaily) {
+    if (includeDaily && summarizeDaily) {
       const files = dailyFiles.filter(file => file.date.startsWith(month) && file.date <= today);
       const expectedDays = month === today.slice(0, 7) ? Number(today.slice(8, 10)) : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
       const { readDashboardReport } = await import("@/lib/dashboard-report-cache");
