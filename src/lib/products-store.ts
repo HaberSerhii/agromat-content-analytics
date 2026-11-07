@@ -896,6 +896,8 @@ export async function writeDailySnapshot(date: string, products: ProductLite[], 
   writeDailySnapshotToDisk(date, products, syncedAt, SNAPSHOT_KEEP_DAYS);
   const { writeAvailabilitySnapshot } = await import("@/lib/product-availability-store");
   await writeAvailabilitySnapshot(products, syncedAt);
+  const { writeDailyAvailabilitySnapshot } = await import("@/lib/product-availability-daily-store");
+  await writeDailyAvailabilitySnapshot(products, syncedAt);
 }
 
 export async function readDailySnapshot(date: string, cache = true): Promise<{ products: ProductLite[]; syncedAt: string | null } | null> {

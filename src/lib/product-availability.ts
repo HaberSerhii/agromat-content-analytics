@@ -5,7 +5,7 @@ export type AvailabilityGroup = { categoryId: string; category: string; brand: s
 export type AvailabilitySnapshot = { version: 1; month: string; date: string; syncedAt: string; groups: AvailabilityGroup[] };
 export type AvailabilityFilter = { categories: string[]; brands: string[]; promotion: "all" | "promo" | "regular" };
 export type AvailabilityReport = {
-  months: Array<{ month: string; date: string | null; syncedAt: string | null; counts: AvailabilityCounts | null }>;
+  months: Array<{ month: string; date: string | null; syncedAt: string | null; counts: AvailabilityCounts | null; daily?: import("./product-availability-daily").DailyAvailabilitySummary }>;
   facets: { categories: Array<{ id: string; name: string }>; brands: string[] };
 };
 export function availabilityDate(timestamp: string) {

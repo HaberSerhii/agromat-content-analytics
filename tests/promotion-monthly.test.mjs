@@ -37,3 +37,14 @@ test("document counts are unique within each dimension even when an order repeat
   assert.equal(report[0].items[0].docs, 1);
   assert.equal(report[0].items[0].goods, 6);
 });
+
+test("calendar summary uses selected dates and counts a mixed-brand order once", async () => {
+  const { buildPromotionPeriodSummary } = await import('../src/lib/promotion-monthly.ts');
+  const samples = [{ id: 'one', created: '2026-11-03', shipped: '2026-11-04', items: [item(1), item(2, 'Grohe', 'Сантехніка')] }, { id: 'outside', created: '2026-10-03', shipped: '2026-10-04', items: [item(1)] }];
+  const period = { from: '2026-11-01', to: '2026-11-07' };
+  const summary = buildPromotionPeriodSummary(samples, period, promotions, 'brands', 'shipped');
+  assert.deepEqual(summary, { count: 2, docs: 1, goods: 4, revenue: 300 });
+  assert.deepEqual(buildPromotionPeriodSummary(samples, period, promotions, 'brands', 'received', 'Усі', [], ' golden '), { count: 1, docs: 1, goods: 2, revenue: 150 });
+  assert.deepEqual(buildPromotionPeriodSummary(samples, period, promotions, 'categories', 'shipped', 'Плитка', ['Сантехніка']), { count: 0, docs: 0, goods: 0, revenue: 0 });
+  assert.equal(buildPromotionPeriodSummary(samples, { from: '2026-11-05', to: '2026-11-07' }, promotions, 'brands', 'shipped').docs, 0);
+});

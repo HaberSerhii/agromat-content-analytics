@@ -160,7 +160,7 @@ export function PromotionPerformanceDashboardV2({ view, pricePosition = "all" }:
   }, [from, pricePosition, to, channel, dimensionView]);
 
   const toolbar = <DateToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} channel={channel} onChannel={setChannel} />;
-  if (dimensionView) return <div className="space-y-4">{toolbar}<PromotionMonthlyAnalysis key={view} dimension={view as "brands" | "categories"} to={to} channel={channel} pricePosition={pricePosition} /></div>;
+  if (dimensionView) return <div className="space-y-4">{toolbar}<PromotionMonthlyAnalysis key={view} dimension={view as "brands" | "categories"} from={from} to={to} channel={channel} pricePosition={pricePosition} /></div>;
   if (loading || !data || data.filter.channel !== channel) return <div className="space-y-4">{toolbar}{loading
     ? <div role="status" className="rounded-2xl border border-[#dfe4ea] bg-white px-6 py-20 text-center text-xs font-bold text-[#7f8993]">Завантаження продажів…</div>
     : <div role="alert" className="rounded-2xl border border-[#f0b6b6] bg-[#fff1f1] p-5 text-xs font-bold text-[#b73535]">{error || "Дані недоступні"}</div>}</div>;

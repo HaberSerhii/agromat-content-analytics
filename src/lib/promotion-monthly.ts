@@ -46,3 +46,28 @@ export function buildPromotionMonthly(
     items: [...buckets.values()].map(({ docs, ...bucket }) => ({ ...bucket, docs: docs.size })),
   }));
 }
+
+export type PromotionPeriodSummary = { count: number; docs: number; goods: number; revenue: number };
+/** Calendar KPIs deduplicate whole orders across all matching dimensions. */
+export function buildPromotionPeriodSummary(orders: Iterable<PromotionMonthlyOrder>, period: { from: string; to: string }, promotions: PromotionSalesPromotionInput[], dimension: "brands" | "categories", measure: "received" | "shipped", segment = "Усі", selected: string[] = [], search = ""): PromotionPeriodSummary {
+  const byCode = new Map<number, PromotionSalesPromotionInput[]>();
+  for (const promotion of promotions) for (const code of new Set(promotion.productCodes)) {
+    const list = byCode.get(code) || []; list.push(promotion); byCode.set(code, list);
+  }
+  const docs = new Set<string>(), labels = new Set<string>(), selection = new Set(selected), query = search.trim().toLocaleLowerCase("uk-UA");
+  let goods = 0, revenue = 0;
+  for (const order of orders) {
+    const date = measure === "received" ? order.created : order.shipped;
+    if (!date || date < period.from || date > period.to) continue;
+    if (measure === "shipped" && (order.created < period.from || order.created > date)) continue;
+    for (const item of order.items) {
+      const label = (dimension === "brands" ? item.brand : item.category) || "Без даних";
+      if (segment !== "Усі" && item.segment !== segment) continue;
+      if (selection.size && !selection.has(label)) continue;
+      if (query && !label.toLocaleLowerCase("uk-UA").includes(query)) continue;
+      if (!(byCode.get(item.code) || []).some(promotion => (!promotion.startDate || order.created >= promotion.startDate) && (!promotion.endDate || order.created <= promotion.endDate) && (!promotion.startDate || date >= promotion.startDate) && (!promotion.endDate || date <= promotion.endDate))) continue;
+      docs.add(order.id); labels.add(label); goods += item.qty; revenue += item.revenue;
+    }
+  }
+  return { count: labels.size, docs: docs.size, goods, revenue };
+}

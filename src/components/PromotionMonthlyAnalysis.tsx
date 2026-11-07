@@ -5,8 +5,8 @@ import SalesMonthlyTable from "@/components/SalesMonthlyTable";
 import type { PromotionSalesChannel } from "@/lib/sales-order-origin";
 import type { PromotionPricePosition } from "@/lib/promotion-price-position";
 
-export function PromotionMonthlyAnalysis({ dimension, to, channel, pricePosition }: {
-  dimension: "brands" | "categories"; to: string; channel: PromotionSalesChannel; pricePosition: PromotionPricePosition;
+export function PromotionMonthlyAnalysis({ dimension, from, to, channel, pricePosition }: {
+  dimension: "brands" | "categories"; from: string; to: string; channel: PromotionSalesChannel; pricePosition: PromotionPricePosition;
 }) {
   const [format, setFormat] = useState<"table" | "rows">("table");
   const [metric, setMetric] = useState<"docs" | "goods" | "revenue">("revenue");
@@ -26,6 +26,6 @@ export function PromotionMonthlyAnalysis({ dimension, to, channel, pricePosition
       <label className="flex items-center gap-2 py-2 text-xs font-bold text-[#586572]"><input type="checkbox" checked={compare} onChange={event => setCompare(event.target.checked)} className="accent-[#118dff]" />Порівняти з минулим роком</label>
       <input type="search" aria-label={dimension === "brands" ? "Пошук брендів" : "Пошук категорій"} placeholder={dimension === "brands" ? "Знайти бренд…" : "Знайти категорію…"} value={query} onChange={event => setQuery(event.target.value)} className="h-9 min-w-[190px] flex-1 rounded-lg border border-[#d8dde3] bg-white px-3 text-xs outline-none focus:border-[#118dff]" />
     </section>
-    <SalesMonthlyTable dimension={dimension} to={to} channel={channel} compare={compare} refresh={0} measure={measure} metric={metric} segment="Усі" statuses={[]} selected={selected} onSelectionChange={setSelected} promotion pricePosition={pricePosition} format={format} query={query} />
+    <SalesMonthlyTable dimension={dimension} from={from} to={to} channel={channel} compare={compare} refresh={0} measure={measure} metric={metric} segment="Усі" statuses={[]} selected={selected} onSelectionChange={setSelected} promotion pricePosition={pricePosition} format={format} query={query} />
   </div>;
 }

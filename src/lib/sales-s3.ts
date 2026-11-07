@@ -2397,8 +2397,12 @@ export async function readPromotionMonthlyBuckets(periods: { from: string; to: s
   const key = createHash("sha256").update(JSON.stringify({ source, periods, promotions, channel, dimension, segment })).digest("hex");
   return readDashboardReport("promotion-monthly-shipped-v1", key, 15 * 60_000, async () => {
     const scoped = await filterPromotionSalesRows(rows, channel);
-    const periodMonths = new Set(periods.map(period => period.from.slice(0, 7)));
-    function* orders() {
+    return buildPromotionMonthly(promotionMonthlyOrders(scoped, periods), periods, promotions, dimension, "shipped", segment);
+  });
+}
+
+function* promotionMonthlyOrders(scoped: ParsedSalesRow[], periods: { from: string; to: string }[]) {
+  const periodMonths = new Set(periods.map(period => period.from.slice(0, 7)));
       for (const row of scoped) {
         if (canonicalPromotionSalesStatus(row.state) !== "Повністю відвантажений") continue;
         const created = normalizeShippedDate(row.createdDate);
@@ -2408,6 +2412,11 @@ export async function readPromotionMonthlyBuckets(periods: { from: string; to: s
             segment: PROMOTION_SALES_SEGMENTS[promotionSalesSegment(item.categoryKey || "")!] || "Інше", qty: item.qty, revenue: promotionSalesItemRevenue(item) })) };
       }
     }
-    return buildPromotionMonthly(orders(), periods, promotions, dimension, "shipped", segment);
-  });
+
+export async function readPromotionPeriodSummary(periods: { from: string; to: string }[], promotions: PromotionSalesPromotionInput[], channel: import("./sales-order-origin").PromotionSalesChannel, dimension: "brands" | "categories", segment: string, selected: string[], search: string) {
+  const { rows, source } = await readCachedSalesRows();
+  const { readDashboardReport } = await import("./dashboard-report-cache");
+  const { buildPromotionPeriodSummary } = await import("./promotion-monthly");
+  const key = createHash("sha256").update(JSON.stringify({ source, periods, promotions, channel, dimension, segment, selected, search })).digest("hex");
+  return readDashboardReport("promotion-period-summary-v1", key, 15 * 60_000, async () => buildPromotionPeriodSummary(promotionMonthlyOrders(await filterPromotionSalesRows(rows, channel), periods), { from: periods[0].from, to: periods.at(-1)!.to }, promotions, dimension, "shipped", segment, selected, search));
 }

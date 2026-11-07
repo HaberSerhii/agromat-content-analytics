@@ -6,13 +6,15 @@ import { fetchApiJson } from "@/lib/read-api-json";
 import { revenueChange, salesCsv, sortMonthlyRows, type MonthlySort } from "@/lib/sales-monthly";
 import type { SalesChannel } from "@/lib/sales-order-origin";
 
+import type { PromotionPeriodSummary } from "@/lib/promotion-monthly";
+
 type Bucket = { label: string; revenue: number; docs: number; goods: number };
 type Month = { from: string; to: string; current: Bucket[]; previous: Bucket[] };
 const money = (value: number) => value.toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const monthLabel = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("uk-UA", { month: "long", year: "numeric", timeZone: "UTC" });
 
-export default function SalesMonthlyTable({ dimension, to, channel, compare, refresh, measure, segment, statuses, metric, selected, onSelectionChange, promotion = false, pricePosition = "all", format: layout = "table", query = "" }: {
-  promotion?: boolean; pricePosition?: string; format?: "table" | "rows"; query?: string;
+export default function SalesMonthlyTable({ dimension, from, to, channel, compare, refresh, measure, segment, statuses, metric, selected, onSelectionChange, promotion = false, pricePosition = "all", format: layout = "table", query = "" }: {
+  from?: string; promotion?: boolean; pricePosition?: string; format?: "table" | "rows"; query?: string;
   dimension: "brands" | "categories"; to: string; channel: SalesChannel; compare: boolean; refresh: number;
   selected: string[]; onSelectionChange: (values: string[]) => void;
   metric: "docs" | "goods" | "revenue"; measure: "received" | "shipped"; segment: string; statuses: string[];
@@ -52,8 +54,21 @@ export default function SalesMonthlyTable({ dimension, to, channel, compare, ref
   }, [months, metric]);
   const normalizedQuery = query.trim().toLocaleLowerCase("uk-UA");
   const rows = sortMonthlyRows(allRows.filter(row => (!selected.length || selected.includes(row.label)) && (!normalizedQuery || row.label.toLocaleLowerCase("uk-UA").includes(normalizedQuery))), sort);
-  const visibleLabels = new Set(rows.map(row => row.label));
-  const totals = (months || []).flatMap(month => month.current).filter(item => visibleLabels.has(item.label)).reduce((sum, item) => ({ goods: sum.goods + item.goods, revenue: sum.revenue + item.revenue }), { goods: 0, revenue: 0 });
+  const [calendarSummary, setCalendarSummary] = useState<{ scope: string; value: PromotionPeriodSummary } | null>(null);
+  const [summaryError, setSummaryError] = useState("");
+  const summaryScope = JSON.stringify({ from: from || `${to.slice(0, 7)}-01`, to, dimension, channel, measure, segment: selectedSegment, price_position: pricePosition, selected, search: query.trim() });
+  useEffect(() => {
+    if (!promotion) return;
+    const controller = new AbortController();
+    setSummaryError("");
+    const timer = window.setTimeout(() => {
+      fetch("/api/promotions/monthly", { method: "POST", headers: { "Content-Type": "application/json" }, body: summaryScope, signal: controller.signal })
+        .then(async response => { const value = await response.json(); if (!response.ok) throw new Error(value.error || "Не вдалося завантажити показники"); if (!controller.signal.aborted) setCalendarSummary({ scope: summaryScope, value }); })
+        .catch(reason => { if (!controller.signal.aborted) setSummaryError(reason instanceof Error ? reason.message : "Помилка показників"); });
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [summaryScope, promotion, retry]);
+  const summary = calendarSummary?.scope === summaryScope && !summaryError ? calendarSummary.value : null;
   function download() {
     if (!months) return;
     const headers = [dimension === "brands" ? "Бренд" : "Категорія", ...months.flatMap(month => [`${monthLabel(month.from)}, ${unit}`, ...(compare ? ["Минулий рік", "Зміна, %"] : [])]), `Разом, ${unit}`, ...(compare ? ["Разом минулий рік", "Зміна разом, %"] : [])];
@@ -66,11 +81,13 @@ export default function SalesMonthlyTable({ dimension, to, channel, compare, ref
     return <><div className="font-bold text-[#168354]">{format(current)}</div>{compare && <div className="mt-2 flex items-center justify-end gap-2 text-[10px]"><span className="text-[#85918d]">{format(previous)}</span><span className={`rounded px-1 ${change === null ? "text-gray-500" : change >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{change === null ? "—" : `${change > 0 ? "+" : ""}${change.toFixed(1)}%`}</span></div>}</>;
   }
   return <>
-    {promotion && <div aria-label="Показники знайдених позицій" className="mb-4 grid gap-3 md:grid-cols-3">{[
-      [dimension === "brands" ? "Брендів" : "Категорій", months ? rows.length.toLocaleString("uk-UA") : "—"],
-      ["Кількість, шт.", months ? totals.goods.toLocaleString("uk-UA", { maximumFractionDigits: 3 }) : "—"],
-      ["Продажі акційних товарів", months ? `${money(totals.revenue)} ₴` : "—"],
+    {promotion && <div aria-label="Показники знайдених позицій" className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
+      [dimension === "brands" ? "Брендів" : "Категорій", summary ? summary.count.toLocaleString("uk-UA") : "—"],
+      ["Замовлень", summary ? summary.docs.toLocaleString("uk-UA") : "—"],
+      ["Кількість товарів", summary ? summary.goods.toLocaleString("uk-UA", { maximumFractionDigits: 3 }) : "—"],
+      ["Сума продажів", summary ? `${money(summary.revenue)} ₴` : "—"],
     ].map(([label, value]) => <article key={label} className="rounded-2xl border border-[#dfe4ea] bg-white p-5"><div className="text-[10px] font-bold text-[#78838e]">{label}</div><strong className="mt-3 block text-2xl font-black text-[#26313d]">{value}</strong></article>)}</div>}
+    {promotion && summaryError && <div role="alert" className="mb-4 text-xs text-red-700">{summaryError}<button type="button" onClick={() => setRetry(value => value + 1)} className="ml-2 underline">Повторити</button></div>}
     <section className="mb-5 overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
     <div className="flex flex-wrap items-center justify-between gap-3 p-5">
       <div><h2 className="text-sm font-bold text-[#27313c]">Помісячні продажі за {dimension === "brands" ? "брендами" : "категоріями"}</h2></div>
