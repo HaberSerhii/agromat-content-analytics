@@ -422,7 +422,10 @@ export async function runSync(): Promise<SyncState> {
     // Per-day snapshot for the "view state on day X" picker. Best-effort.
     try {
       const today = kyivCalendarDate(new Date(startedAt));
-      await writeDailySnapshot(today, lites, startedAt);
+      // A partial API pagination result must not replace a complete monthly
+      // availability observation (or its daily source for later backfill).
+      if (failedPages.length === 0) await writeDailySnapshot(today, lites, startedAt);
+      else console.warn("[products-sync] daily/monthly snapshot skipped: incomplete product pages");
     } catch (e) {
       console.warn("[products-sync] writeDailySnapshot failed:", e instanceof Error ? e.message : e);
     }

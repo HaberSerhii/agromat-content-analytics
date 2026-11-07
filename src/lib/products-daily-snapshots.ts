@@ -129,7 +129,8 @@ const snapshotCache = new Map<string, { signature: string; value: SnapshotValue 
 const snapshotPending = new Map<string, Promise<SnapshotValue | null>>();
 const gunzip = promisify(zlib.gunzip);
 
-export async function readDailySnapshotFromDisk(date: string): Promise<SnapshotValue | null> {
+export async function readDailySnapshotFromDisk(date: string, cache = true): Promise<SnapshotValue | null> {
+  if (!cache) return loadDailySnapshot(date, false);
   const pending = snapshotPending.get(date);
   if (pending) return pending;
   const work = loadDailySnapshot(date).finally(() => snapshotPending.delete(date));
@@ -137,7 +138,7 @@ export async function readDailySnapshotFromDisk(date: string): Promise<SnapshotV
   return work;
 }
 
-async function loadDailySnapshot(date: string): Promise<SnapshotValue | null> {
+async function loadDailySnapshot(date: string, cache = true): Promise<SnapshotValue | null> {
   try {
     const file = snapshotFile(date);
     const stat = await fs.promises.stat(file);
@@ -153,6 +154,7 @@ async function loadDailySnapshot(date: string): Promise<SnapshotValue | null> {
     const snap = JSON.parse(json) as DailySnapshotPayload;
     if (!Array.isArray(snap.products)) return null;
     const value = { products: snap.products, syncedAt: snap.syncedAt ?? null };
+    if (!cache) return value;
     snapshotCache.delete(date);
     // Only the recent comparison and month baseline normally need to be resident.
     while (snapshotCache.size >= 2) snapshotCache.delete(snapshotCache.keys().next().value!);

@@ -894,10 +894,12 @@ export async function pruneOldSnapshots(keep = SNAPSHOT_KEEP_DAYS): Promise<numb
 
 export async function writeDailySnapshot(date: string, products: ProductLite[], syncedAt: string): Promise<void> {
   writeDailySnapshotToDisk(date, products, syncedAt, SNAPSHOT_KEEP_DAYS);
+  const { writeAvailabilitySnapshot } = await import("@/lib/product-availability-store");
+  await writeAvailabilitySnapshot(products, syncedAt);
 }
 
-export async function readDailySnapshot(date: string): Promise<{ products: ProductLite[]; syncedAt: string | null } | null> {
-  return readDailySnapshotFromDisk(date);
+export async function readDailySnapshot(date: string, cache = true): Promise<{ products: ProductLite[]; syncedAt: string | null } | null> {
+  return readDailySnapshotFromDisk(date, cache);
 }
 
 export async function listSnapshotDates(): Promise<{ date: string; syncedAt: string | null }[]> {

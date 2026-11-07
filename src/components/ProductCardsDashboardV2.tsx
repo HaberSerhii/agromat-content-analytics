@@ -5,6 +5,10 @@ import { ResultFilterButton } from "@/components/ResultFilterButton";
 import { OVERVIEW_SEGMENTS } from "@/lib/product-overview-drilldown";
 /* eslint-disable @next/next/no-img-element -- product images come from the Agromat CDN */
 
+import dynamic from "next/dynamic";
+
+const ProductAvailabilityAnalysis = dynamic(() => import("@/components/ProductAvailabilityAnalysis").then(module => module.ProductAvailabilityAnalysis), { ssr: false, loading: () => <p className="p-5 text-xs text-[#78838e]">Завантаження аналізу наявності…</p> });
+
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { parsePromotionProductSelection, type PromotionProductSelection } from "@/lib/promotion-product-selection";
 
@@ -235,6 +239,7 @@ type DashboardResponse = {
 
 type ChartMode = "categories" | "brands" | "statuses";
 type DashboardView =
+  | "availability"
   | "overview"
   | "new"
   | "categories"
@@ -268,6 +273,7 @@ const PROCESSING_FILTER_OPTIONS: FacetRow[] = [
 ];
 const VIEW_ITEMS: Array<{ id: DashboardView; label: string; hint: string }> = [
   { id: "overview", label: "Огляд", hint: "Головна сторінка" },
+  { id: "availability", label: "Аналіз наявності товару", hint: "Активні та неактивні SKU за місяцями" },
   { id: "new", label: "Нові товари", hint: "Уперше з’явилися на сайті" },
   {
     id: "categories",
@@ -2091,7 +2097,7 @@ export function ProductCardsDashboardV2() {
   const appliedPromotionSelection = useRef<string | null>(null);
   const [promotionSelection, setPromotionSelection] = useState<PromotionProductSelection | null>(null);
   const [promotionSelectionError, setPromotionSelectionError] = useState("");
-  const [view, setView] = useState<DashboardView>("overview");
+  const [view, setView] = useState<DashboardView>(() => searchParams.get("view") === "availability" ? "availability" : "overview");
   const [overviewSelection, setOverviewSelection] = useState<OverviewSelection | null>(null);
   const overviewCatalogRef = useRef<HTMLElement>(null);
   const [data, setData] = useState<DashboardResponse | null>(null);
@@ -2204,7 +2210,7 @@ export function ProductCardsDashboardV2() {
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      if (view === "results" || view === "search") {
+      if (view === "results" || view === "search" || view === "availability") {
         setLoading(false);
         setError("");
         return;
@@ -2408,6 +2414,12 @@ export function ProductCardsDashboardV2() {
   const changeView = (next: DashboardView) => {
     setView(next);
     resetFilters();
+    if (next === "availability" || searchParams.has("view")) {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === "availability") params.set("view", "availability");
+      else params.delete("view");
+      router.replace(`${pathname}${params.size ? `?${params}` : ""}`, { scroll: false });
+    }
   };
   const selectOverview = (selection: OverviewSelection) => {
     resetFilters();
@@ -3452,7 +3464,9 @@ export function ProductCardsDashboardV2() {
                   )}
                 </h1>
                 <p className="mt-1 text-xs text-[#737d87]">
-                  {view === "new"
+                  {view === "availability"
+                    ? "Щомісячний стан SKU у наявності, неактивних та акційних товарів."
+                    : view === "new"
                     ? "Нові товари з 01.09.2026 незалежно від статусу, які ще не призначені контент-менеджеру."
                     : view === "categories"
                       ? "Поточний стан контенту категорій та динаміка CTR Каталог → PDP."
@@ -3504,7 +3518,7 @@ export function ProductCardsDashboardV2() {
               </section>
             )}
 
-            {view === "products" ? (
+            {view === "availability" ? <ProductAvailabilityAnalysis /> : view === "products" ? (
               <section className="space-y-4">
                 <div className="grid gap-3 xl:grid-cols-2">
                   <ProductCtrPanel
