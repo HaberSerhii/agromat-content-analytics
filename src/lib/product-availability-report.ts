@@ -16,7 +16,7 @@ async function prepare(months: string[], includeDaily: boolean) {
   }
   for (const [month, entry] of latest) {
     const saved = await readAvailabilitySnapshot(month);
-    if (saved && (!entry.syncedAt || Date.parse(saved.syncedAt) >= Date.parse(entry.syncedAt))) continue;
+    if (saved?.preorderTracked && (!entry.syncedAt || Date.parse(saved.syncedAt) >= Date.parse(entry.syncedAt))) continue;
     const daily = await readDailySnapshot(entry.date, false);
     if (daily?.syncedAt) {
       await writeAvailabilitySnapshot(daily.products, daily.syncedAt);
@@ -37,7 +37,7 @@ async function prepare(months: string[], includeDaily: boolean) {
   if (sync.state === "ok" && !sync.error && sync.startedAt === syncedAt && syncedAt && months.includes(availabilityDate(syncedAt).slice(0, 7))) {
     const saved = await readAvailabilitySnapshot(availabilityDate(syncedAt).slice(0, 7));
     const daily = includeDaily ? (await listDailyAvailabilitySnapshots([availabilityDate(syncedAt).slice(0, 7)])).find(entry => entry.date === availabilityDate(syncedAt)) : null;
-    if (!saved || Date.parse(saved.syncedAt) < Date.parse(syncedAt) || (includeDaily && daily?.syncedAt !== syncedAt)) {
+    if (!saved?.preorderTracked || Date.parse(saved.syncedAt) < Date.parse(syncedAt) || (includeDaily && daily?.syncedAt !== syncedAt)) {
       const products = await readAllLite();
       // The catalogue and observation timestamp must belong to the same sync.
       if (await readLiteSyncedAt() === syncedAt) {

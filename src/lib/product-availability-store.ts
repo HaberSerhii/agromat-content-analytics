@@ -29,7 +29,7 @@ export async function writeAvailabilitySnapshot(products: ProductLite[], syncedA
   const previous = writes.get(snapshot.month) || Promise.resolve();
   const work = previous.catch(() => undefined).then(async () => {
     const current = await readAvailabilitySnapshot(snapshot.month);
-    if (current && Date.parse(current.syncedAt) >= Date.parse(syncedAt)) return current;
+    if (current && (Date.parse(current.syncedAt) > Date.parse(syncedAt) || (current.preorderTracked && current.syncedAt === syncedAt))) return current;
     await fs.mkdir(directory(), { recursive: true });
     const temporary = `${file(snapshot.month)}.${randomUUID()}.tmp`;
     try {

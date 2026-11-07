@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildAvailabilitySnapshot, summarizeAvailability, availabilityDate } from "../src/lib/product-availability.ts";
+import { buildAvailabilitySnapshot, summarizeAvailability, availabilityDate, availabilityYearChange } from "../src/lib/product-availability.ts";
 import { sourceLoader } from "./helpers/load-source.mjs";
 const product = (id, statusId = 5, extra = {}) => ({ id, statusId, categoryId: 10, categoryName: "Плитка", brand: "Golden Tile", isOnSale: false, deleted: false, ...extra });
 const all = { categories: [], brands: [], promotion: "all" };
@@ -11,7 +11,7 @@ const fixture = [product(1, 5, { isOnSale: true }), product(2, 3, { isOnSale: tr
 
 test("only nonarchived in-stock status is active; preorder, archived and absent goods are inactive, IDs count once", () => {
  const snapshot = buildAvailabilitySnapshot(fixture, "2026-11-07T12:00:00Z");
- assert.deepEqual(summarizeAvailability(snapshot, all), { active: 2, inactive: 3, promoActive: 1, promoInactive: 1, total: 5, promo: 2 });
+ assert.deepEqual(summarizeAvailability(snapshot, all), { active: 2, inactive: 3, promoActive: 1, promoInactive: 1, total: 5, promo: 2, preorder: 1 });
  assert.equal(JSON.stringify(snapshot).includes('statusHistory'), false);
 });
 test("multiple categories and brands combine OR within a filter and AND across filters", () => {
@@ -80,4 +80,26 @@ test("partial live sync cannot replace a complete historical observation", async
  const report = await load('@/lib/product-availability-report').readAvailabilityReport(['2026-11'], all);
  assert.equal(writes, 0);
  assert.equal(report.months[0].counts, null);
+});
+
+
+test("preorders exclude archived goods, respect filters, and stay within inactive totals", () => {
+ const snapshot = buildAvailabilitySnapshot([...fixture, product(6, 3, { deleted: true }), product(7, 3)], '2026-11-07T12:00:00Z');
+ assert.equal(summarizeAvailability(snapshot, all).preorder, 2);
+ assert.equal(summarizeAvailability(snapshot, { ...all, promotion: 'promo' }).preorder, 1);
+ assert.equal(summarizeAvailability(snapshot, { ...all, brands: ['Grohe'] }).preorder, 0);
+ assert.equal(summarizeAvailability(snapshot, all).total, 7);
+ const legacy = { ...snapshot, preorderTracked: undefined };
+ assert.equal(summarizeAvailability(legacy, all).preorder, null);
+ assert.equal(summarizeAvailability(buildAvailabilitySnapshot([], '2026-11-07T12:00:00Z'), all).preorder, 0);
+});
+
+test("year change handles growth, decline, missing history and zero baselines", () => {
+ assert.equal(availabilityYearChange(120, 100), 20);
+ assert.equal(availabilityYearChange(75, 100), -25);
+ assert.equal(availabilityYearChange(0, 100), -100);
+ assert.equal(availabilityYearChange(0, 0), 0);
+ assert.equal(availabilityYearChange(5, 0), null);
+ assert.equal(availabilityYearChange(5, null), null);
+ assert.equal(availabilityYearChange(undefined, 10), null);
 });
