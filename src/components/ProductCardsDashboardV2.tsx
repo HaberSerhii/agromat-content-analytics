@@ -1,5 +1,7 @@
 "use client";
 
+import { ProductOverviewPeriod } from "@/components/ProductOverviewPeriod";
+import type { OverviewPeriod } from "@/lib/product-overview-period";
 import { ReviewPeriodSales } from "@/components/ReviewPeriodSales";
 import { ResultFilterButton } from "@/components/ResultFilterButton";
 import { OVERVIEW_SEGMENTS } from "@/lib/product-overview-drilldown";
@@ -121,6 +123,7 @@ type SegmentMetric = {
   deltaSanitary: number;
 };
 type DashboardResponse = {
+  overviewPeriod?: OverviewPeriod | null;
   overviewDrilldown: (OverviewSelection & {
     currentCount: number;
     added: number;
@@ -560,127 +563,6 @@ function Delta({ value, suffix = "" }: { value: number; suffix?: string }) {
       {formatNumber(value)}
       {suffix}
     </span>
-  );
-}
-
-function MetricCard({
-  meta,
-  data,
-  selection,
-  onSelect,
-}: {
-  selection: OverviewSelection | null;
-  onSelect: (selection: OverviewSelection) => void;
-  meta: (typeof METRIC_META)[number];
-  data: DashboardResponse | null;
-}) {
-  const isCtr = meta.key === "ctr";
-  const metric = isCtr ? data?.metrics.ctr : data?.metrics[meta.key];
-
-  return (
-    <article className={`relative rounded-2xl border border-[#dfe4ea] bg-white p-4 shadow-[0_1px_2px_rgba(31,41,55,.05)] ${isCtr ? "col-span-full" : ""}`}>
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-[11px] font-black text-[#626d78]">
-            {meta.label}
-          </h3>
-          <p
-            className="mt-1 line-clamp-1 text-[8px] leading-3 text-[#9aa2aa]"
-            title={meta.note}
-          >
-            {meta.note}
-          </p>
-        </div>
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-sm font-black"
-          style={{ color: meta.tone, background: `${meta.tone}12` }}
-        >
-          {meta.symbol}
-        </span>
-      </div>
-      <div className={`grid grid-cols-2 gap-y-4 divide-x divide-[#e6e9ec] ${isCtr ? "md:grid-cols-3 xl:grid-cols-6" : ""}`}>
-        {(Object.keys(OVERVIEW_SEGMENTS) as Array<keyof typeof OVERVIEW_SEGMENTS>)
-          .map((segment) => {
-          const label = OVERVIEW_SEGMENTS[segment];
-          const counts = (metric as SegmentMetric | undefined)?.segments?.[segment];
-          const ctrSegment = data?.metrics.ctr.segments?.[segment];
-          const value = isCtr ? ctrSegment?.ctr == null ? "—" : `${ctrSegment.ctr.toFixed(2)}%` : formatNumber(counts?.count || 0);
-          const delta = counts?.delta || 0;
-          const ctrChange = ctrSegment?.change;
-          const roundedCtrChange = ctrChange == null ? null : Number(ctrChange.toFixed(2));
-          const active = selection?.metric === meta.key && selection.segment === segment;
-          const disabled = !data || (isCtr && (!data.metrics.ctr.available || value === "—"));
-          return (
-            <div key={segment} className="px-3 first:pl-0">
-              <div className="text-[9px] font-black uppercase tracking-[.14em] text-[#9aa4ae]">{label}</div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={active && selection?.scope === "current"}
-                  aria-label={`${meta.label} · ${label}: показати товари (${value})`}
-                  title="Показати товари, враховані в показнику"
-                  onClick={() => onSelect({ metric: meta.key, segment, scope: "current" })}
-                  className="rounded text-[22px] font-black leading-none tracking-tight text-[#252f3a] underline decoration-dotted decoration-[#b9c6d2] underline-offset-4 hover:text-[#118dff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] aria-pressed:text-[#118dff] disabled:cursor-default disabled:no-underline"
-                >{value}</button>
-                {!isCtr && delta !== 0 && (
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    aria-pressed={active && selection?.scope !== "current"}
-                    aria-label={`${meta.label} · ${label}: показати склад зміни ${delta > 0 ? "+" : ""}${delta}`}
-                    title="Показати товари, що дали плюс і мінус у зміні"
-                    onClick={() => onSelect({ metric: meta.key, segment, scope: "changes" })}
-                    className="rounded-full hover:ring-2 hover:ring-[#9cccf6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] aria-pressed:ring-2 aria-pressed:ring-[#118dff]"
-                  ><Delta value={delta} /></button>
-                )}
-              </div>
-              {isCtr && (
-                <div
-                  className="mt-2 text-[10px] font-bold"
-                  style={{ color: roundedCtrChange == null || roundedCtrChange === 0 ? "#8c959e" : roundedCtrChange > 0 ? "#087a55" : "#bd3b3b" }}
-                  title="Зміна сумарного CTR до такого самого періоду минулого місяця, у відсоткових пунктах. Для товарів, які зараз у наявності."
-                >
-                  {roundedCtrChange == null ? "Немає даних для порівняння" : `${roundedCtrChange > 0 ? "+" : roundedCtrChange < 0 ? "−" : ""}${Math.abs(roundedCtrChange).toFixed(2)} в.п. до минулого місяця`}
-                </div>
-              )}
-              {isCtr && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {([
-                    { scope: "added", label: "Покращились", sign: "+", count: ctrSegment?.improved || 0, color: "#087a55", background: "#e6f5ee" },
-                    { scope: "removed", label: "Погіршились", sign: "−", count: ctrSegment?.declined || 0, color: "#bd3b3b", background: "#fdecec" },
-                  ] as const).map(({ scope, label: directionLabel, sign, count, color, background }) => (
-                    <button
-                      key={scope}
-                      type="button"
-                      disabled={disabled}
-                      aria-pressed={active && selection?.scope === scope}
-                      aria-label={`${meta.label} · ${label}: ${directionLabel.toLowerCase()} ${count} карток — показати товари`}
-                      title={`Показати картки, у яких CTR ${scope === "added" ? "зріс" : "знизився"}`}
-                      onClick={() => onSelect({ metric: "ctr", segment, scope })}
-                      style={{ color, background }}
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-black tabular-nums hover:ring-2 hover:ring-[#9cccf6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#118dff] aria-pressed:ring-2 aria-pressed:ring-[#118dff] disabled:cursor-default"
-                    >
-                      {directionLabel} <span>{sign}{formatNumber(count)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {isCtr && (
-        <div className="mt-3 border-t border-[#eef0f2] pt-2 text-[8px] text-[#8c959e]">
-          Бенчмарк товарів у наявності:{" "}
-          <b className="text-[#596571]">
-            {data?.metrics.ctr.benchmark == null
-              ? "—"
-              : `${data.metrics.ctr.benchmark.toFixed(2)}%`}
-          </b>
-        </div>
-      )}
-    </article>
   );
 }
 
@@ -2098,6 +1980,8 @@ export function ProductCardsDashboardV2() {
   const [promotionSelection, setPromotionSelection] = useState<PromotionProductSelection | null>(null);
   const [promotionSelectionError, setPromotionSelectionError] = useState("");
   const [view, setView] = useState<DashboardView>(() => searchParams.get("view") === "availability" ? "availability" : "overview");
+  const [overviewFrom, setOverviewFrom] = useState(() => new Date().toLocaleDateString('en-CA', {timeZone:'Europe/Kyiv'}).slice(0,7) + '-01');
+  const [overviewTo, setOverviewTo] = useState(() => new Date().toLocaleDateString('en-CA', {timeZone:'Europe/Kyiv'}));
   const [overviewSelection, setOverviewSelection] = useState<OverviewSelection | null>(null);
   const overviewCatalogRef = useRef<HTMLElement>(null);
   const [data, setData] = useState<DashboardResponse | null>(null);
@@ -2189,6 +2073,7 @@ export function ProductCardsDashboardV2() {
   const interventionsLoadedRef = useRef(false);
   const newAssignmentsLoadedRef = useRef(false);
   const loadScopeKey = JSON.stringify([
+    overviewFrom, overviewTo,
     overviewSelection,
     promotionSelection,
     view,
@@ -2221,7 +2106,8 @@ export function ProductCardsDashboardV2() {
       try {
         const progressive = view === "overview" && !overviewAnalyticsLoadedRef.current;
         const requestBody = {
-            overviewSelection,
+            overviewFrom, overviewTo,
+    overviewSelection,
             promotionCodes: promotionSelection?.productCodes ?? null,
             view,
             page,
@@ -2273,7 +2159,8 @@ export function ProductCardsDashboardV2() {
       }
     },
     [
-      overviewSelection,
+      overviewFrom, overviewTo,
+    overviewSelection,
       promotionSelection,
       view,
       page,
@@ -3511,11 +3398,7 @@ export function ProductCardsDashboardV2() {
               </button>
             )}
             {view === "overview" && (
-              <section className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-                {METRIC_META.map((meta) => (
-                  <MetricCard key={meta.key} meta={meta} data={data} selection={overviewSelection} onSelect={selectOverview} />
-                ))}
-              </section>
+              <ProductOverviewPeriod data={data?.overviewPeriod} from={overviewFrom} to={overviewTo} onFrom={setOverviewFrom} onTo={setOverviewTo} loading={loading || analyticsLoading} />
             )}
 
             {view === "availability" ? <ProductAvailabilityAnalysis /> : view === "products" ? (

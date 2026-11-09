@@ -1,3 +1,4 @@
+import { buildOverviewPeriod } from "@/lib/product-overview-period";
 import { runDashboardWork } from "@/lib/dashboard-work";
 import { isActivatedInRange } from "@/lib/product-overview-drilldown";
 import { normalizePromotionCodes } from "@/lib/promotion-product-selection";
@@ -43,6 +44,8 @@ import {
 export const dynamic = "force-dynamic";
 
 type DashboardFilters = {
+  overviewFrom?: string;
+  overviewTo?: string;
   overviewSelection?: OverviewSelection | null;
   includeAnalytics?: boolean;
   view?: "overview" | "new" | "categories" | "products";
@@ -732,6 +735,8 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
       ? Math.min(250_000, Math.max(1, Number(input.limit) || 250_000))
       : Math.min(100, Math.max(1, Number(input.limit) || 15)),
     exportAll,
+    overviewFrom: String(input.overviewFrom || ""),
+    overviewTo: String(input.overviewTo || ""),
     includeAnalytics: input.includeAnalytics !== false,
     search: String(input.search || "").trim(),
     promotionCodes: normalizePromotionCodes(input.promotionCodes),
@@ -1710,9 +1715,17 @@ async function buildDashboard(input: DashboardFilters) {
     };
   }
 
+  const scores = filtered.flatMap(product => {
+    const required = requiredAttrs[String(product.categoryId)] || [];
+    if (!required.length) return [];
+    return [Math.min(100, product.imagesCount / 6 * 100) * .4 + Math.max(0, (required.length - missingRequiredCount(product)) / required.length * 100) * .4 + (product.reviewsCount > 0 ? 20 : 0)];
+  });
+  const overviewPeriod = filters.view === "overview" && filters.includeAnalytics
+    ? await buildOverviewPeriod(filtered, filters.overviewFrom || ranges.currentFrom, filters.overviewTo || today, productEventsTable(), scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null) : null;
   const offset = (filters.page - 1) * filters.limit;
   const outputRows = filters.view === "products" ? productRows : filtered;
   return {
+    overviewPeriod,
     overviewDrilldown,
     currentDate: today,
     monthFrom: ranges.currentFrom,
