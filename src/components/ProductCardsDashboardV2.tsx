@@ -2068,7 +2068,6 @@ export function ProductCardsDashboardV2() {
   const [resultManager, setResultManager] = useState<ContentManager | "">("");
   const [resultMonth, setResultMonth] = useState("");
   const loadRequestRef = useRef(0);
-  const overviewAnalyticsLoadedRef = useRef(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const interventionsLoadedRef = useRef(false);
   const newAssignmentsLoadedRef = useRef(false);
@@ -2104,7 +2103,7 @@ export function ProductCardsDashboardV2() {
       setLoading(true);
       setError("");
       try {
-        const progressive = view === "overview" && !overviewAnalyticsLoadedRef.current;
+        const progressive = view === "overview";
         const requestBody = {
             overviewFrom, overviewTo,
     overviewSelection,
@@ -2144,7 +2143,6 @@ export function ProductCardsDashboardV2() {
           if (!enriched.ok) throw new Error(`HTTP ${enriched.status}`);
           const complete = await enriched.json() as DashboardResponse;
           if (signal?.aborted || requestId !== loadRequestRef.current) return;
-          overviewAnalyticsLoadedRef.current = true;
           setData(complete);
         }
       } catch (cause) {
@@ -3398,7 +3396,7 @@ export function ProductCardsDashboardV2() {
               </button>
             )}
             {view === "overview" && (
-              <ProductOverviewPeriod data={data?.overviewPeriod} from={overviewFrom} to={overviewTo} onFrom={setOverviewFrom} onTo={setOverviewTo} loading={loading || analyticsLoading} />
+              <ProductOverviewPeriod data={data?.overviewPeriod} from={overviewFrom} to={overviewTo} onFrom={setOverviewFrom} onTo={setOverviewTo} loading={loading} analyticsLoading={analyticsLoading} />
             )}
 
             {view === "availability" ? <ProductAvailabilityAnalysis /> : view === "products" ? (

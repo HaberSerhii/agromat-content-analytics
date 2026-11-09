@@ -1,4 +1,5 @@
 "use client";
+import { ProductOverviewTrendChart } from "@/components/ProductOverviewTrendChart";
 import { useState } from "react";
 import type {
   OverviewPeriod,
@@ -34,6 +35,7 @@ export function ProductOverviewPeriod({
   onFrom,
   onTo,
   loading,
+  analyticsLoading,
 }: {
   data: OverviewPeriod | null | undefined;
   from: string;
@@ -41,6 +43,7 @@ export function ProductOverviewPeriod({
   onFrom: (v: string) => void;
   onTo: (v: string) => void;
   loading: boolean;
+  analyticsLoading: boolean;
 }) {
   const [metric, setMetric] = useState<Metric>("ctr");
   const [compare, setCompare] = useState(false);
@@ -49,18 +52,6 @@ export function ProductOverviewPeriod({
   const values = [...current, ...(compare ? previous : [])].flatMap((p) =>
     p[metric] === null ? [] : [p[metric] as number],
   );
-  const max = Math.max(1, ...values);
-  const x = (i: number, length: number) =>
-      50 + (i / Math.max(1, length - 1)) * 900,
-    y = (v: number) => 220 - (v / max) * 180;
-  const path = (points: OverviewPoint[]) =>
-    points
-      .map((p, i) =>
-        p[metric] === null
-          ? ""
-          : `${i === 0 || points[i - 1][metric] === null ? "M" : "L"}${x(i, points.length)},${y(p[metric] as number)}`,
-      )
-      .join(" ");
   return (
     <section className="mb-5 space-y-4" aria-busy={loading}>
       <div className="flex flex-wrap items-end gap-3 rounded-2xl border bg-white p-4">
@@ -100,7 +91,10 @@ export function ProductOverviewPeriod({
             <div key={m.key} className="rounded-2xl border bg-white p-5">
               <h3 className="text-xs font-bold text-slate-500">{m.label}</h3>
               <p className="my-3 text-3xl font-black">
-                {loading ? "…" : format(value, m.key)}
+                {loading ||
+                (analyticsLoading && (m.key === "ctr" || m.key === "atc"))
+                  ? "…"
+                  : format(value, m.key)}
               </p>
               {m.key === "ctr" || m.key === "atc" ? (
                 (["year", "month"] as const).map((period) => {
@@ -128,9 +122,44 @@ export function ProductOverviewPeriod({
           );
         })}
       </div>
-      <div className="rounded-2xl border bg-white p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <h3 className="font-bold">Щоденна динаміка</h3>
+      <div className="analytics-chart-card rounded-2xl border border-[#dfe4ea] bg-white p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-black text-[#26313d]">
+              Щоденна динаміка
+            </h3>
+            <p className="mt-1 text-[10px] text-[#8a939c]">
+              Наведіть на точку, щоб побачити показники за день
+            </p>
+            <div className="mt-2 flex gap-4 text-[9px] font-bold text-[#687582]">
+              <span>
+                <i className="mr-1 inline-block h-0.5 w-4 bg-[#118dff] align-middle" />
+                Обраний період
+              </span>
+              {compare && (
+                <span>
+                  <i className="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-[#8a939c] align-middle" />
+                  Минулий рік
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="ml-auto text-right">
+            <div className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8a939c]">
+              {metric === "contentScore" ? "Поточний стан" : "За період"}
+            </div>
+            <div className="analytics-chart-total mt-1 font-black text-[#26313d]">
+              {loading ||
+              (analyticsLoading && (metric === "ctr" || metric === "atc"))
+                ? "…"
+                : format(
+                    metric === "contentScore"
+                      ? (data?.contentScore ?? null)
+                      : total(current, metric),
+                    metric,
+                  )}
+            </div>
+          </div>
           <label className="flex items-center gap-2 text-xs">
             <input
               type="checkbox"
@@ -153,84 +182,34 @@ export function ProductOverviewPeriod({
           ))}
         </div>
         {values.length > 0 ? (
-          <>
-            <svg
-              viewBox="0 0 1000 260"
-              role="img"
-              aria-label={`Щоденна динаміка: ${metrics.find((m) => m.key === metric)?.label}`}
-              className="w-full"
-            >
-              {[0, 0.5, 1].map((t) => (
-                <g key={t}>
-                  <line
-                    x1="50"
-                    x2="950"
-                    y1={y(max * t)}
-                    y2={y(max * t)}
-                    stroke="#e2e8f0"
-                  />
-                  <text x="0" y={y(max * t)} fontSize="12" fill="#64748b">
-                    {format(max * t, metric)}
-                  </text>
-                </g>
-              ))}
-              <path
-                d={path(current)}
-                fill="none"
-                stroke="#118dff"
-                strokeWidth="3"
-              />
-              {compare && (
-                <path
-                  d={path(previous)}
-                  fill="none"
-                  stroke="#94a3b8"
-                  strokeWidth="2"
-                  strokeDasharray="6 5"
-                />
-              )}
-              {current.map(
-                (p, i) =>
-                  p[metric] !== null && (
-                    <circle
-                      key={p.date}
-                      cx={x(i, current.length)}
-                      cy={y(p[metric] as number)}
-                      r="3"
-                      fill="#118dff"
-                    >
-                      <title>
-                        {p.date}: {format(p[metric], metric)}
-                      </title>
-                    </circle>
-                  ),
-              )}
-              <text x="50" y="250" fontSize="12">
-                {from}
-              </text>
-              <text x="950" y="250" textAnchor="end" fontSize="12">
-                {to}
-              </text>
-            </svg>
-            <p className="text-xs text-slate-500">
-              Синя лінія — вибраний період
-              {compare ? " · Пунктир — відповідний період торік" : ""}
-            </p>
-          </>
+          <div className="mt-6">
+            <ProductOverviewTrendChart
+              key={metric + from + to}
+              current={current}
+              previous={previous}
+              metric={metric}
+              label={metrics.find((m) => m.key === metric)!.label}
+              compare={compare}
+            />
+          </div>
         ) : (
           <p className="py-12 text-center text-sm text-slate-500">
-            {loading
+            {loading ||
+            (analyticsLoading && (metric === "ctr" || metric === "atc"))
               ? "Завантаження…"
               : metric === "contentScore"
                 ? "Історичні щоденні значення Content Score ще не збережені. Поточний стан наведено вище."
                 : "Немає даних за вибраний період"}
           </p>
         )}
-        {data && !data.analyticsAvailable && (
-          <p className="mt-3 text-xs text-amber-700">
-            Аналітика GA4 недоступна. CTR та ATC не підміняються нулями.
-          </p>
-        )}
+        {data &&
+          data.analyticsLoaded !== false &&
+          !analyticsLoading &&
+          !data.analyticsAvailable && (
+            <p className="mt-3 text-xs text-amber-700">
+              Аналітика GA4 недоступна. CTR та ATC не підміняються нулями.
+            </p>
+          )}
       </div>
     </section>
   );

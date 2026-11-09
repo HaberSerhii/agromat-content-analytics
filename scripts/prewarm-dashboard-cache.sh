@@ -97,10 +97,10 @@ read -r promotion_week_from promotion_week_to < <(node -e '
     "http://127.0.0.1:${APP_PORT}/api/products?page=1&limit=50&status_ids=5%2C3&sort_by=firstSeenAt&sort_dir=desc"
   warm_url \
     "product_cards_v2_overview" \
-    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&page=1&limit=15&statusId=5&analytics=0"
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&overviewFrom=$(TZ=Europe/Kyiv date +%Y-%m-01)&overviewTo=$(TZ=Europe/Kyiv date +%Y-%m-%d)&page=1&limit=15&statusId=5&analytics=0"
   warm_url \
     "product_cards_v2_overview_analytics" \
-    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&page=1&limit=15&statusId=5"
+    "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=overview&overviewFrom=$(TZ=Europe/Kyiv date +%Y-%m-01)&overviewTo=$(TZ=Europe/Kyiv date +%Y-%m-%d)&page=1&limit=15&statusId=5"
   warm_url \
     "product_cards_v2_products" \
     "http://127.0.0.1:${APP_PORT}/api/products/dashboard-v2?view=products&page=1&limit=15&statusId=5&processingStatus=unprocessed"

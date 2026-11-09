@@ -787,6 +787,7 @@ async function buildDashboard(input: DashboardFilters) {
   const needsSnapshots =
     filters.view === "overview" || filters.view === "categories";
   const needsAttributes =
+    filters.view === "overview" ||
     filters.view === "new" ||
     filters.view === "categories" ||
     filters.view === "products";
@@ -844,7 +845,7 @@ async function buildDashboard(input: DashboardFilters) {
     productPerformanceDataset,
   ] = await Promise.all([
     comparisonDate ? readDailySnapshot(comparisonDate) : Promise.resolve(null),
-    filters.view === "overview" && (filters.includeAnalytics || filters.overviewSelection?.metric === "ctr")
+    filters.view === "overview" && ((!filters.overviewFrom && filters.includeAnalytics) || filters.overviewSelection?.metric === "ctr")
       ? readCtr(products, today, syncedAt)
       : Promise.resolve<CtrSummary>({
           cohorts: buildOverviewCohorts([], []),
@@ -1720,8 +1721,8 @@ async function buildDashboard(input: DashboardFilters) {
     if (!required.length) return [];
     return [Math.min(100, product.imagesCount / 6 * 100) * .4 + Math.max(0, (required.length - missingRequiredCount(product)) / required.length * 100) * .4 + (product.reviewsCount > 0 ? 20 : 0)];
   });
-  const overviewPeriod = filters.view === "overview" && filters.includeAnalytics
-    ? await buildOverviewPeriod(filtered, filters.overviewFrom || ranges.currentFrom, filters.overviewTo || today, productEventsTable(), scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null) : null;
+  const overviewPeriod = filters.view === "overview"
+    ? await buildOverviewPeriod(filtered, filters.overviewFrom || ranges.currentFrom, filters.overviewTo || today, productEventsTable(), scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null, filters.includeAnalytics) : null;
   const offset = (filters.page - 1) * filters.limit;
   const outputRows = filters.view === "products" ? productRows : filtered;
   return {
@@ -1818,6 +1819,8 @@ export async function GET(request: Request) {
         scope: params.get("overviewScope"),
       }),
       includeAnalytics: params.get("analytics") !== "0",
+      overviewFrom: params.get("overviewFrom") || undefined,
+      overviewTo: params.get("overviewTo") || undefined,
       view: (params.get("view") || "overview") as DashboardFilters["view"],
       page: Number(params.get("page")) || 1,
       limit: Number(params.get("limit")) || 15,
