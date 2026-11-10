@@ -1,3 +1,4 @@
+import type { ContentScoreChange } from "@/lib/product-content-history";
 import { BigQuery } from "@google-cloud/bigquery";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 import type { ProductLite } from "@/lib/products-store";
@@ -17,6 +18,8 @@ export type OverviewPeriod = {
   year: OverviewPoint[];
   month: OverviewPoint[];
   contentScore: number | null;
+  contentScoreChange?: ContentScoreChange;
+  contentScoreError?: string;
   analyticsAvailable: boolean;
   analyticsLoaded?: boolean;
 };

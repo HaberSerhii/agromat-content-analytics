@@ -1,3 +1,4 @@
+import { contentScoreChange, readProductContentHistory } from "@/lib/product-content-history";
 import { buildProductDailyDynamics, type DailyProductPoint } from "@/lib/product-daily-dynamics";
 import { buildOverviewPeriod } from "@/lib/product-overview-period";
 import { runDashboardWork } from "@/lib/dashboard-work";
@@ -1719,13 +1720,29 @@ async function buildDashboard(input: DashboardFilters) {
     };
   }
 
-  const scores = filtered.flatMap(product => {
+  const scoreForProduct = (product: ProductLite) => {
     const required = requiredAttrs[String(product.categoryId)] || [];
-    if (!required.length) return [];
-    return [Math.min(100, product.imagesCount / 6 * 100) * .4 + Math.max(0, (required.length - missingRequiredCount(product)) / required.length * 100) * .4 + (product.reviewsCount > 0 ? 20 : 0)];
-  });
+    if (!required.length) return null;
+    return Math.round((Math.min(100, product.imagesCount / 6 * 100) * .4 + Math.max(0, (required.length - missingRequiredCount(product)) / required.length * 100) * .4 + (product.reviewsCount > 0 ? 20 : 0)) * 10) / 10;
+  };
+  const scores = filtered.map(scoreForProduct).filter((score): score is number => score != null);
   const overviewPeriod = filters.view === "overview"
     ? await buildOverviewPeriod(filtered, filters.overviewFrom || ranges.currentFrom, filters.overviewTo || today, productEventsTable(), scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null, filters.includeAnalytics) : null;
+  if (overviewPeriod) {
+    // Save the whole catalog, then compare the current selection on each saved day.
+    const yesterday = new Date(`${today}T12:00:00Z`);
+    yesterday.setUTCDate(yesterday.getUTCDate()-1);
+    const historyFrom = [overviewPeriod.year[0]?.date, overviewPeriod.month[0]?.date, overviewPeriod.from, `${today.slice(0,7)}-01`, yesterday.toISOString().slice(0,10)].filter((date): date is string => Boolean(date)).sort()[0];
+    const historyDates = [...overviewPeriod.current, ...overviewPeriod.year, ...overviewPeriod.month].map(point => point.date);
+    historyDates.push(yesterday.toISOString().slice(0,10));
+    for (let day = 1; day <= Number(today.slice(8)); day++) historyDates.push(`${today.slice(0,8)}${String(day).padStart(2,"0")}`);
+    const history = await readProductContentHistory(today, filtered.map(product => product.code), products.map(product => ({ code: product.code, contentScore: scoreForProduct(product) })), historyFrom, today, historyDates);
+    overviewPeriod.contentScoreChange = contentScoreChange(today, overviewPeriod.contentScore, history.scores);
+    overviewPeriod.contentScoreError = history.error;
+    for (const series of [overviewPeriod.current, overviewPeriod.year, overviewPeriod.month]) {
+      for (const point of series) point.contentScore = history.scores.get(point.date) ?? null;
+    }
+  }
   const offset = (filters.page - 1) * filters.limit;
   const outputRows = filters.view === "products" ? productRows : filtered;
   return {

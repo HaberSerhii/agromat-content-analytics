@@ -1,6 +1,5 @@
 import { BigQuery } from "@google-cloud/bigquery";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import { readProductContentHistory } from "@/lib/product-content-history";
 import { readThroughBigQueryCache } from "@/lib/bigquery-result-cache";
 
 export type DailyProductPoint = { date: string; impressions: number | null; ctr: number | null; atc: number | null; contentScore: number | null };
@@ -41,22 +40,7 @@ export async function buildProductDailyDynamics(today: string, selected: ScoredP
       });
     } catch { available = false; error = "Не вдалося завантажити денні показники GA4"; }
   }
-  const directory = process.env.PRODUCT_CONTENT_SNAPSHOTS_DIR || path.join(path.dirname(process.env.PRODUCT_SNAPSHOTS_DIR || path.join(process.cwd(), "data", "product-snapshots")), "product-content-snapshots");
-  const current = Object.fromEntries(all.map(row => [row.code, row.contentScore]));
-  try {
-    await fs.mkdir(directory, { recursive: true });
-    const temporary = path.join(directory, `${today}.${process.pid}.${crypto.randomUUID()}.tmp`);
-    await fs.writeFile(temporary, JSON.stringify(current));
-    await fs.rename(temporary, path.join(directory, `${today}.json`));
-  } catch { error = [error, "Не вдалося зберегти денний CS"].filter(Boolean).join(" · "); }
-  const scores = new Map<string, number | null>();
-  for (let day = 1; day <= Number(today.slice(8)); day++) {
-    const date = `${today.slice(0,8)}${String(day).padStart(2,"0")}`;
-    let snapshot: Record<string, number | null>;
-    try { snapshot = date === today ? current : JSON.parse(await fs.readFile(path.join(directory, `${date}.json`), "utf8")); }
-    catch { continue; }
-    const values = selected.map(row => snapshot[row.code]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    scores.set(date, values.length ? values.reduce((sum,value) => sum+value,0)/values.length : null);
-  }
-  return { points: dailyProductPoints(today, rows, scores, available), error };
+  const history = await readProductContentHistory(today, selected.map(row => row.code), all, from, today);
+  error = [error, history.error].filter(Boolean).join(" · ");
+  return { points: dailyProductPoints(today, rows, history.scores, available), error };
 }
