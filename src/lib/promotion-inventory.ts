@@ -16,6 +16,7 @@ export type PromotionInventory = {
   capturedAt: string | null;
   promotions: PromotionInventoryProgram[];
   productCodes: number[];
+  changeDetails: { promotions: { added: PromotionInventoryProgram[]; removed: PromotionInventoryProgram[] }; products: { added: number[]; removed: number[] } } | null;
   changes: { promotions: { added: number; removed: number }; products: { added: number; removed: number } } | null;
 };
 
@@ -47,5 +48,22 @@ export function inventoryChanges(current: ReturnType<typeof inventoryOnDate>, pr
   return {
     promotions: difference(current.promotions.map(program => program.idinc), previous.promotions.map(program => program.idinc)),
     products: difference(current.productCodes, previous.productCodes),
+  };
+}
+
+export function inventoryChangeDetails(current: ReturnType<typeof inventoryOnDate>, previous: ReturnType<typeof inventoryOnDate>) {
+  const currentIds = new Set(current.promotions.map(program => program.idinc));
+  const previousIds = new Set(previous.promotions.map(program => program.idinc));
+  const currentCodes = new Set(current.productCodes);
+  const previousCodes = new Set(previous.productCodes);
+  return {
+    promotions: {
+      added: current.promotions.filter(program => !previousIds.has(program.idinc)),
+      removed: previous.promotions.filter(program => !currentIds.has(program.idinc)),
+    },
+    products: {
+      added: current.productCodes.filter(code => !previousCodes.has(code)),
+      removed: previous.productCodes.filter(code => !currentCodes.has(code)),
+    },
   };
 }

@@ -101,3 +101,21 @@ test('handoff retains more than 5000 exact codes and treats an empty selection a
   assert.equal(parsePromotionProductSelection('invalid'), null);
   assert.deepEqual(plain(normalizePromotionCodes([10,10,-1,'20',1.2])), [10]);
 });
+
+test('change drilldowns contain exact additions and historical removals under the selected filters', async () => {
+  const api = route({ snapshots: {'2026-10-18': [program(1,[10,20]),program(2,[30])]},
+    live: [program(1,[10,30]),program(3,[40])], positionCodes: new Set([10,20,30,40]),
+    segments: new Map([[10,'tile'],[20,'tile'],[30,'tile'],[40,'tile']]) });
+  const result = await api.get('date=2026-10-19&segment=tile&price_position=lower');
+  assert.deepEqual(result.body.changeDetails.products, {added:[40], removed:[20]});
+  assert.deepEqual(result.body.changeDetails.promotions.added.map(p => p.idinc), [3]);
+  assert.deepEqual(result.body.changeDetails.promotions.removed.map(p => [p.idinc,p.name,p.productCount]), [[2,'Акція 2',1]]);
+  for (const kind of ['promotions','products']) {
+    for (const direction of ['added','removed']) {
+      assert.equal(result.body.changeDetails[kind][direction].length, result.body.changes[kind][direction]);
+    }
+  }
+  assert.equal((await route().get('date=2026-10-19')).body.changeDetails, null);
+  const unchanged = await route({snapshots:{'2026-10-18':[program(1,[10,20])]}}).get('date=2026-10-19');
+  assert.deepEqual(unchanged.body.changeDetails, {promotions:{added:[],removed:[]},products:{added:[],removed:[]}});
+});

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchAllPromotions } from "@/lib/products-api";
 import { readPromotionsDailySnapshot, selectPromotionsForDailySnapshot, writePromotionsDailySnapshot } from "@/lib/promotions-daily-snapshots";
-import { inventoryOnDate, inventoryChanges, type PromotionInventory } from "@/lib/promotion-inventory";
+import { inventoryOnDate, inventoryChanges, inventoryChangeDetails, type PromotionInventory } from "@/lib/promotion-inventory";
 import { normalizePromotionPricePosition, readPricePositionCodes } from "@/lib/promotion-price-position";
 import { getServerResult } from "@/lib/server-result-cache";
 import { PROMOTION_SALES_SEGMENTS } from "@/lib/promotion-sales-segments";
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     if (segment !== "all" && !Object.hasOwn(PROMOTION_SALES_SEGMENTS, segment)) return NextResponse.json({ error: "Невідомий сегмент" }, { status: 400 });
     const pricePosition = normalizePromotionPricePosition(params.get("price_position"));
     const { value, status } = await getServerResult({
-      namespace: "promotion-inventory-v1", key: `${date}:${segment}:${pricePosition}`, ttlMs: 60_000, maxEntries: 48,
+      namespace: "promotion-inventory-v2", key: `${date}:${segment}:${pricePosition}`, ttlMs: 60_000, maxEntries: 48,
       load: async (): Promise<PromotionInventory> => {
         const target = date === today
           ? { date, capturedAt: new Date().toISOString(), promotions: await fetchAllPromotions() }
@@ -38,8 +38,10 @@ export async function GET(request: Request) {
           allowedCodes = new Set([...segments].filter(([code, value]) => value === segment && (!allowedCodes || allowedCodes.has(code))).map(([code]) => code));
         }
         const current = inventoryOnDate(target?.promotions ?? [], date, allowedCodes);
+        const prior = baseline ? inventoryOnDate(baseline.promotions, previousDate, allowedCodes) : null;
         return { date, previousDate, available: Boolean(target), changesAvailable: Boolean(target && baseline), capturedAt: target?.capturedAt ?? null,
-          ...current, changes: target && baseline ? inventoryChanges(current, inventoryOnDate(baseline.promotions, previousDate, allowedCodes)) : null };
+          ...current, changeDetails: target && prior ? inventoryChangeDetails(current, prior) : null,
+          changes: target && prior ? inventoryChanges(current, prior) : null };
       },
     });
     return NextResponse.json(value, { headers: { "Cache-Control": "private, no-store", "X-Agromat-Cache": status } });
