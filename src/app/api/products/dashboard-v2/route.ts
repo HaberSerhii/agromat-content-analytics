@@ -1,3 +1,4 @@
+import { buildProductDailyDynamics, type DailyProductPoint } from "@/lib/product-daily-dynamics";
 import { buildOverviewPeriod } from "@/lib/product-overview-period";
 import { runDashboardWork } from "@/lib/dashboard-work";
 import { isActivatedInRange } from "@/lib/product-overview-drilldown";
@@ -1455,6 +1456,7 @@ async function buildDashboard(input: DashboardFilters) {
 
   let productRows: ProductAnalysisRow[] = [];
   let productAnalysis = {
+    daily: { points: [] as DailyProductPoint[], error: "" },
     available: false,
     error: "",
     contentAvailable: Object.keys(requiredAttrs).length > 0,
@@ -1711,6 +1713,7 @@ async function buildDashboard(input: DashboardFilters) {
       available: analysisDataset.available,
       error: analysisDataset.error,
       contentAvailable: analysisDataset.contentAvailable,
+      daily: await buildProductDailyDynamics(today, productRows, enriched, productEventsTable()),
       currentThree: monthConfig.currentThree.map(aggregateMonth),
       lastYear: monthConfig.lastYear.map(aggregateMonth),
     };

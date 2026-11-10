@@ -1,4 +1,6 @@
 "use client";
+import { ProductDailyDynamics } from "@/components/ProductDailyDynamics";
+import type { DailyProductPoint } from "@/lib/product-daily-dynamics";
 
 import { ProductOverviewPeriod } from "@/components/ProductOverviewPeriod";
 import type { OverviewPeriod } from "@/lib/product-overview-period";
@@ -214,6 +216,7 @@ type DashboardResponse = {
     }>;
   };
   productAnalysis: {
+    daily?: { points: DailyProductPoint[]; error: string };
     available: boolean;
     error: string;
     contentAvailable: boolean;
@@ -3415,6 +3418,8 @@ export function ProductCardsDashboardV2() {
                     points={data?.productAnalysis.lastYear || []}
                   />
                 </div>
+
+                <ProductDailyDynamics points={data?.productAnalysis.daily?.points || []} error={data?.productAnalysis.daily?.error} loading={loading} scope={productScopeLabel || "Усі товари"} />
 
                 <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                   {filterBar(true)}
