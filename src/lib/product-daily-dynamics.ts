@@ -18,29 +18,42 @@ export function dailyProductPoints(today: string, rows: EventDay[], scores: Map<
   });
 }
 
+export function previousYearPeriod(today: string) {
+  const year = Number(today.slice(0,4)) - 1;
+  const month = Number(today.slice(5,7));
+  const day = Math.min(Number(today.slice(8)), new Date(Date.UTC(year, month, 0)).getUTCDate());
+  const from = `${year}-${today.slice(5,7)}-01`;
+  return { from, to: `${year}-${today.slice(5,7)}-${String(day).padStart(2,"0")}` };
+}
+
 export async function buildProductDailyDynamics(today: string, selected: ScoredProduct[], all: ScoredProduct[], table: string) {
   const from = `${today.slice(0, 7)}-01`;
+  const year = previousYearPeriod(today);
   const refs = [...new Set(selected.map(row => row.goodsRef))].sort((a,b) => a-b);
   let rows: EventDay[] = [], available = true, error = "";
   if (refs.length) {
     try {
       rows = await readThroughBigQueryCache<EventDay[]>({
-        namespace: "product-daily-dynamics", key: JSON.stringify([today, table, refs]),
+        namespace: "product-daily-dynamics", key: JSON.stringify(["year-v1", today, table, refs]),
         load: async () => {
           const [result] = await new BigQuery({ projectId: process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413" }).query({
             query: `SELECT event_date AS date, COUNTIF(event_name = 'view_item_list') AS impressions,
               COUNTIF(event_name = 'view_item') AS views, COUNTIF(event_name = 'add_to_cart') AS carts
-              FROM ${table} WHERE event_date BETWEEN DATE(@from) AND DATE(@to)
+              FROM ${table} WHERE ((event_date BETWEEN DATE(@from) AND DATE(@to))
+              OR (event_date BETWEEN DATE(@yearFrom) AND DATE(@yearTo)))
               AND SAFE_CAST(NULLIF(TRIM(item_id), '') AS INT64) IN UNNEST(@refs)
               AND event_name IN ('view_item_list','view_item','add_to_cart') GROUP BY event_date`,
-            params: { from, to: today, refs }, location: "EU", maximumBytesBilled: "50000000000",
+            params: { from, to: today, yearFrom: year.from, yearTo: year.to, refs }, location: "EU", maximumBytesBilled: "50000000000",
           });
           return result as EventDay[];
         },
       });
     } catch { available = false; error = "Не вдалося завантажити денні показники GA4"; }
   }
-  const history = await readProductContentHistory(today, selected.map(row => row.code), all, from, today);
+  const requestedDates = [today, year.to].flatMap(end => dailyProductPoints(end, [], new Map(), false).map(point => point.date));
+  const history = await readProductContentHistory(today, selected.map(row => row.code), all, year.from, today, requestedDates);
   error = [error, history.error].filter(Boolean).join(" · ");
-  return { points: dailyProductPoints(today, rows, history.scores, available), error };
+  const yearHasEvents = rows.some(row => (typeof row.date === "string" ? row.date : row.date.value).startsWith(year.from.slice(0,7)));
+  return { points: dailyProductPoints(today, rows, history.scores, available),
+    year: dailyProductPoints(year.to, rows, history.scores, available && yearHasEvents), error };
 }

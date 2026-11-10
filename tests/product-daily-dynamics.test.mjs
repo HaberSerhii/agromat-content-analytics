@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sourceLoader } from './helpers/load-source.mjs';
 
-function setup({ failQuery = false, failWrite = false } = {}) {
+function setup({ failQuery = false, failWrite = false, historicalEvents = false } = {}) {
   const files = new Map([['/snapshots/product-content-snapshots/2026-11-01.json', JSON.stringify({10:20,20:80,30:100})]]);
   let query;
   const { dailyProductPoints, buildProductDailyDynamics } = sourceLoader({ mocks: {
-    '@google-cloud/bigquery': { BigQuery: class { async query(options) { query=options; if (failQuery) throw Error('offline'); return [[{date:{value:'2026-11-01'},impressions:100,views:20,carts:5}]]; } } },
+    '@google-cloud/bigquery': { BigQuery: class { async query(options) { query=options; if (failQuery) throw Error('offline'); return [[{date:{value:'2026-11-01'},impressions:100,views:20,carts:5}, ...(historicalEvents ? [{date:'2025-11-01',impressions:200,views:10,carts:2}] : [])]]; } } },
     '@/lib/bigquery-result-cache': { readThroughBigQueryCache: ({load}) => load() },
     'node:fs': {promises:{ mkdir: async()=>{}, writeFile:async(p,value)=>{if(failWrite)throw Error('disk');files.set(p,value);},rename:async(from,to)=>files.set(to,files.get(from)),readFile:async p=>{if(!files.has(p))throw Error('missing');return files.get(p);} }},
     'node:path': path,
@@ -30,7 +30,7 @@ test('query covers current month and exact selection; CS uses saved day values w
   const {buildProductDailyDynamics,getQuery,files}=setup();
   const all=[{code:10,goodsRef:100,contentScore:60},{code:20,goodsRef:200,contentScore:90},{code:30,goodsRef:300,contentScore:null}];
   const result=await buildProductDailyDynamics('2026-11-03',[all[0]],all,'`project.dataset.events`');
-  assert.deepEqual(plain(getQuery().params),{from:'2026-11-01',to:'2026-11-03',refs:[100]});
+  assert.deepEqual(plain(getQuery().params),{from:'2026-11-01',to:'2026-11-03',yearFrom:'2025-11-01',yearTo:'2025-11-03',refs:[100]});
   assert.deepEqual(plain(result.points.map(p=>p.contentScore)),[20,null,60]);
   assert.equal(result.points[0].ctr,20);
   assert.equal(result.points[0].atc,25);
@@ -48,4 +48,27 @@ test('empty selection does not query all products and failures keep CS usable',a
   assert.equal(failure.points[0].impressions,null);
   assert.equal(failure.points[2].contentScore,60);
   assert.ok(failure.error);
+});
+
+test('year comparison uses identical month/day window and clamps leap day without duplicating it', async()=>{
+ const {previousYearPeriod}=sourceLoader()('@/lib/product-daily-dynamics');
+ assert.deepEqual(plain(previousYearPeriod('2026-11-10')),{from:'2025-11-01',to:'2025-11-10'});
+ assert.deepEqual(plain(previousYearPeriod('2024-02-29')),{from:'2023-02-01',to:'2023-02-28'});
+ const {buildProductDailyDynamics}=setup();
+ const p={code:10,goodsRef:100,contentScore:60};
+ const result=await buildProductDailyDynamics('2026-11-03',[p],[p],'`events`');
+ assert.equal(result.year.length,3);
+ assert.equal(result.year[0].date,'2025-11-01');
+ assert.equal(result.year[0].impressions,null);
+ assert.equal(result.year[0].contentScore,null);
+});
+
+test('past year rates are calculated from its own events for the same selection', async()=>{
+ const {buildProductDailyDynamics}=setup({historicalEvents:true});
+ const p={code:10,goodsRef:100,contentScore:60};
+ const result=await buildProductDailyDynamics('2026-11-03',[p],[p],'`events`');
+ assert.equal(result.points[0].ctr,20);
+ assert.equal(result.year[0].impressions,200);
+ assert.equal(result.year[0].ctr,5);
+ assert.equal(result.year[0].atc,20);
 });

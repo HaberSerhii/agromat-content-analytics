@@ -216,7 +216,7 @@ type DashboardResponse = {
     }>;
   };
   productAnalysis: {
-    daily?: { points: DailyProductPoint[]; error: string };
+    daily?: { points: DailyProductPoint[]; year?: DailyProductPoint[]; error: string };
     available: boolean;
     error: string;
     contentAvailable: boolean;
@@ -3419,7 +3419,7 @@ export function ProductCardsDashboardV2() {
                   />
                 </div>
 
-                <ProductDailyDynamics points={data?.productAnalysis.daily?.points || []} error={data?.productAnalysis.daily?.error} loading={loading} scope={productScopeLabel || "Усі товари"} />
+                <ProductDailyDynamics points={data?.productAnalysis.daily?.points || []} year={data?.productAnalysis.daily?.year || []} error={data?.productAnalysis.daily?.error} loading={loading} scope={productScopeLabel || "Усі товари"} />
 
                 <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                   {filterBar(true)}

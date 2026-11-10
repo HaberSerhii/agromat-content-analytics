@@ -1457,7 +1457,7 @@ async function buildDashboard(input: DashboardFilters) {
 
   let productRows: ProductAnalysisRow[] = [];
   let productAnalysis = {
-    daily: { points: [] as DailyProductPoint[], error: "" },
+    daily: { points: [] as DailyProductPoint[], year: [] as DailyProductPoint[], error: "" },
     available: false,
     error: "",
     contentAvailable: Object.keys(requiredAttrs).length > 0,
