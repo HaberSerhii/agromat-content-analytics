@@ -46,6 +46,7 @@ import {
 export const dynamic = "force-dynamic";
 
 type DashboardFilters = {
+  dailyMonth?: string;
   overviewFrom?: string;
   overviewTo?: string;
   overviewSelection?: OverviewSelection | null;
@@ -737,6 +738,7 @@ function normalizeFilters(input: DashboardFilters): Required<DashboardFilters> {
       ? Math.min(250_000, Math.max(1, Number(input.limit) || 250_000))
       : Math.min(100, Math.max(1, Number(input.limit) || 15)),
     exportAll,
+    dailyMonth: String(input.dailyMonth || ""),
     overviewFrom: String(input.overviewFrom || ""),
     overviewTo: String(input.overviewTo || ""),
     includeAnalytics: input.includeAnalytics !== false,
@@ -1457,7 +1459,7 @@ async function buildDashboard(input: DashboardFilters) {
 
   let productRows: ProductAnalysisRow[] = [];
   let productAnalysis = {
-    daily: { points: [] as DailyProductPoint[], year: [] as DailyProductPoint[], error: "" },
+    daily: { points: [] as DailyProductPoint[], year: [] as DailyProductPoint[], summary: undefined as import("@/lib/product-daily-comparison").DailyComparisons | undefined, error: "" },
     available: false,
     error: "",
     contentAvailable: Object.keys(requiredAttrs).length > 0,
@@ -1714,7 +1716,7 @@ async function buildDashboard(input: DashboardFilters) {
       available: analysisDataset.available,
       error: analysisDataset.error,
       contentAvailable: analysisDataset.contentAvailable,
-      daily: await buildProductDailyDynamics(today, productRows, enriched, productEventsTable()),
+      daily: await buildProductDailyDynamics(today, productRows, enriched, productEventsTable(), filters.dailyMonth || today.slice(0,7)),
       currentThree: monthConfig.currentThree.map(aggregateMonth),
       lastYear: monthConfig.lastYear.map(aggregateMonth),
     };

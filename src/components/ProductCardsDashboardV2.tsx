@@ -1,5 +1,5 @@
 "use client";
-import { ProductDailyDynamics } from "@/components/ProductDailyDynamics";
+import { ProductDailyDynamicsPeriod } from "@/components/ProductDailyDynamicsPeriod";
 import type { DailyProductPoint } from "@/lib/product-daily-dynamics";
 
 import { ProductOverviewPeriod } from "@/components/ProductOverviewPeriod";
@@ -216,7 +216,7 @@ type DashboardResponse = {
     }>;
   };
   productAnalysis: {
-    daily?: { points: DailyProductPoint[]; year?: DailyProductPoint[]; error: string };
+    daily?: { points: DailyProductPoint[]; year?: DailyProductPoint[]; summary?: import("@/lib/product-daily-comparison").DailyComparisons; error: string };
     available: boolean;
     error: string;
     contentAvailable: boolean;
@@ -3419,7 +3419,14 @@ export function ProductCardsDashboardV2() {
                   />
                 </div>
 
-                <ProductDailyDynamics points={data?.productAnalysis.daily?.points || []} year={data?.productAnalysis.daily?.year || []} error={data?.productAnalysis.daily?.error} loading={loading} scope={productScopeLabel || "Усі товари"} />
+                <ProductDailyDynamicsPeriod data={data?.productAnalysis.daily} loading={loading} scope={productScopeLabel || "Усі товари"} filters={JSON.stringify({
+                  promotionCodes: promotionSelection?.productCodes ?? null, search, bulkIds,
+                  categoryId: categoryId ? Number(categoryId) : null, brandId: brandId ? Number(brandId) : null,
+                  statusId: statusId ? Number(statusId) : null, processingStatus,
+                  minPrice: minPrice ? Number(minPrice) : null, maxPrice: maxPrice ? Number(maxPrice) : null,
+                  minStock: minStock ? Number(minStock) : null, maxStock: maxStock ? Number(maxStock) : null,
+                  productSignal: productSignal || null,
+                })} />
 
                 <div className="overflow-hidden rounded-2xl border border-[#dfe4ea] bg-white">
                   {filterBar(true)}
