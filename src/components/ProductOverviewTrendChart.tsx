@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { productOverviewChartScale, productOverviewChartY } from "@/lib/product-overview-chart-scale";
 import { ChartTrendSeries } from "@/components/ChartTrendSeries";
 import type { OverviewPoint } from "@/lib/product-overview-period";
 
 type Metric = "newProducts" | "ctr" | "atc" | "contentScore";
 const chartX = (index: number, length: number) =>
   length <= 1 ? 50 : 2 + (index / (length - 1)) * 96;
-const chartY = (value: number, max: number) => 92 - (value / max) * 84;
 const dateLabel = (date: string) => date.split("-").reverse().join("-");
 const format = (value: number | null, metric: Metric) =>
   value === null
@@ -38,17 +38,13 @@ export function ProductOverviewTrendChart({
   const values = [...current, ...(compare ? comparison : [])].flatMap((p) =>
     p?.[metric] == null ? [] : [p[metric] as number],
   );
-  const peak = Math.max(1, ...values);
-  const step =
-    metric === "ctr" || metric === "atc" || metric === "contentScore"
-      ? Math.pow(10, Math.floor(Math.log10(peak))) / 2
-      : Math.max(1, Math.ceil(peak / 4));
-  const max = Math.ceil(peak / step) * step;
-  const ticks = [1, 0.75, 0.5, 0.25, 0].map((v) => max * v);
+  const scale = productOverviewChartScale(values, metric === "newProducts");
+  const { ticks } = scale;
+  const chartY = (value: number) => productOverviewChartY(value, scale.minimum, scale.maximum);
   const point = (p: OverviewPoint | undefined, i: number) =>
     p?.[metric] == null
       ? null
-      : { x: chartX(i, current.length), y: chartY(p[metric] as number, max) };
+      : { x: chartX(i, current.length), y: chartY(p[metric] as number) };
   const hovered = hoveredIndex === null ? null : current[hoveredIndex];
   const hoveredPrevious =
     hoveredIndex === null ? null : comparison[hoveredIndex];
@@ -75,9 +71,9 @@ export function ProductOverviewTrendChart({
           <span
             key={value}
             className="absolute right-0 -translate-y-1/2 tabular-nums"
-            style={{ top: `${chartY(value, max)}%` }}
+            style={{ top: `${chartY(value)}%` }}
           >
-            {format(value, metric)}
+            {value.toLocaleString("uk-UA", { maximumFractionDigits: scale.decimals })}{metric === "ctr" || metric === "atc" ? "%" : ""}
           </span>
         ))}
       </div>
@@ -143,8 +139,8 @@ export function ProductOverviewTrendChart({
                 key={value}
                 x1="2"
                 x2="98"
-                y1={chartY(value, max)}
-                y2={chartY(value, max)}
+                y1={chartY(value)}
+                y2={chartY(value)}
                 stroke="#f0f3f6"
                 strokeWidth="0.5"
                 vectorEffect="non-scaling-stroke"
@@ -200,7 +196,7 @@ export function ProductOverviewTrendChart({
                 className="absolute z-10 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full outline-none"
                 style={{
                   left: `${chartX(i, current.length)}%`,
-                  top: `${chartY(p[metric] as number, max)}%`,
+                  top: `${chartY(p[metric] as number)}%`,
                 }}
               >
                 <span

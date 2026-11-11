@@ -112,12 +112,14 @@ export function ProductOverviewPeriod({
                 (["year", "month"] as const).map((period) => {
                   const before = m.key === "atc" ? (data?.atcTotals?.[period] ?? null) : total(data?.[period] || [], m.key);
                   const diff =
-                    value !== null && before !== null ? value - before : null;
+                    value !== null && before !== null && before > 0
+                      ? Math.round(((value - before) / before) * 10000) / 100
+                      : null;
                   return (
                     <p key={period} className="mt-1 text-xs text-slate-500">
                       {diff === null
                         ? "—"
-                        : `${diff > 0 ? "+" : ""}${diff.toLocaleString("uk-UA", { maximumFractionDigits: 2 })} в.п.`}{" "}
+                        : `${diff > 0 ? "+" : ""}${diff.toLocaleString("uk-UA", { maximumFractionDigits: 2 })}%`}{" "}
                       · до{" "}
                       {period === "year" ? "минулого року" : "минулого місяця"}
                     </p>
