@@ -94,7 +94,7 @@ async function startSimplePriceJob(adapter: "plitka" | "leoceramika") {
     cwd: root,
     detached: true,
     stdio: "ignore",
-    env: process.env,
+    env: { ...process.env, SIMPLE_PRICE_JOB_DIR: path.join(process.cwd(), "data", "parser-jobs") },
   });
   child.unref();
 

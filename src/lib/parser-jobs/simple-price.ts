@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { statusAt, writeJson } from "../../../scripts/lib/simple-price-watchdog.mjs";
 
 export type SimplePriceAdapter = "plitka" | "leoceramika";
 export type SimplePriceAction = `prices-${SimplePriceAdapter}`;
@@ -53,8 +54,14 @@ export function isSimplePriceJobId(jobId: string): boolean {
 export async function readSimplePriceJob(jobId: string): Promise<LocalSimplePriceJob | null> {
   if (!isSimplePriceJobId(jobId)) return null;
   try {
-    const raw = await fs.readFile(jobFile(jobId), "utf8");
-    return JSON.parse(raw) as LocalSimplePriceJob;
+    const handle = await fs.open(jobFile(jobId), "r");
+    try {
+      const raw = await handle.readFile("utf8");
+      const { mtimeMs } = await handle.stat();
+      return statusAt(JSON.parse(raw), mtimeMs) as LocalSimplePriceJob;
+    } finally {
+      await handle.close();
+    }
   } catch {
     return null;
   }
@@ -63,8 +70,8 @@ export async function readSimplePriceJob(jobId: string): Promise<LocalSimplePric
 export async function writeSimplePriceJob(job: LocalSimplePriceJob): Promise<void> {
   const adapter = job.action.replace(/^prices-/, "") as SimplePriceAdapter;
   await fs.mkdir(JOB_DIR, { recursive: true });
-  await fs.writeFile(jobFile(job.job_id), `${JSON.stringify(job, null, 2)}\n`);
-  await fs.writeFile(activeFile(adapter), `${JSON.stringify({ job_id: job.job_id }, null, 2)}\n`);
+  writeJson(jobFile(job.job_id), job);
+  writeJson(activeFile(adapter), { job_id: job.job_id });
 }
 
 export async function readActiveSimplePriceJob(adapter: SimplePriceAdapter): Promise<LocalSimplePriceJob | null> {

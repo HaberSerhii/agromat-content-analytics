@@ -2,6 +2,7 @@
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { STALL_MS, STALL_MESSAGE, writeJson } from "./lib/simple-price-watchdog.mjs";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -18,7 +19,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const JOB_DIR = path.join(ROOT, "data", "parser-jobs");
+const JOB_DIR = process.env.SIMPLE_PRICE_JOB_DIR || path.join(ROOT, "data", "parser-jobs");
 const PAGE_SIZE = 1000;
 const INSERT_SIZE = 200;
 
@@ -65,29 +66,51 @@ function jobFile() {
   return path.join(JOB_DIR, `${jobId}.json`);
 }
 
-async function writeJob(patch) {
-  await fs.mkdir(JOB_DIR, { recursive: true });
-  let current = {
-    ok: true,
-    job_id: jobId,
-    action: ACTION,
-    status: "starting",
-    current: 0,
-    total: 0,
-    label: `${LABEL}: старт`,
-    started_at: Math.floor(Date.now() / 1000),
-    finished_at: null,
-    error: null,
-    result: null,
-  };
+let watchdog;
+let state;
+let deadline;
+
+function stopStalledJob() {
   try {
-    current = JSON.parse(await fs.readFile(jobFile(), "utf8"));
-  } catch {
-    // first write
+    writeJson(jobFile(), { ...state, status: "error", error: STALL_MESSAGE, label: STALL_MESSAGE,
+      finished_at: Math.floor(Date.now() / 1000) });
+  } finally {
+    process.exit(1);
   }
-  const next = { ...current, ...patch };
-  await fs.writeFile(jobFile(), `${JSON.stringify(next, null, 2)}\n`);
-  await fs.writeFile(path.join(JOB_DIR, `${adapter}-active.json`), `${JSON.stringify({ job_id: jobId }, null, 2)}\n`);
+}
+
+async function writeJob(patch) {
+  if (!state) {
+    await fs.mkdir(JOB_DIR, { recursive: true });
+    let current = {
+      ok: true,
+      job_id: jobId,
+      action: ACTION,
+      status: "starting",
+      current: 0,
+      total: 0,
+      label: `${LABEL}: старт`,
+      started_at: Math.floor(Date.now() / 1000),
+      finished_at: null,
+      error: null,
+      result: null,
+    };
+    try {
+      current = JSON.parse(await fs.readFile(jobFile(), "utf8"));
+    } catch {
+      // first write
+    }
+    state = current;
+    if (!argv.has("job-id")) writeJson(path.join(JOB_DIR, `${adapter}-active.json`), { job_id: jobId });
+  }
+  if (deadline && Date.now() >= deadline) stopStalledJob();
+  state = { ...state, ...patch };
+  writeJson(jobFile(), state);
+  clearTimeout(watchdog);
+  if (["starting", "running"].includes(state.status)) {
+    deadline = Date.now() + STALL_MS;
+    watchdog = setTimeout(stopStalledJob, STALL_MS);
+  }
 }
 
 function sleep(ms) {
@@ -139,6 +162,7 @@ async function fetchActiveProducts(db) {
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`products: ${error.message}`);
     const rows = data || [];
+    await writeJob({ label: `${LABEL}: товари · ${from + rows.length}` });
     for (const r of rows) activeProducts.set(r.id, r);
     if (rows.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
@@ -163,6 +187,7 @@ async function fetchTargets(db, competitorId) {
       .order("product_id", { ascending: true });
     if (error) throw new Error(`url_overrides: ${error.message}`);
     const rows = data || [];
+    await writeJob({ label: `${LABEL}: посилання · ${from + rows.length}` });
     for (const r of rows) {
       const product = activeProducts.get(r.product_id);
       if (product) out.push({ product_id: r.product_id, url: r.url, brand: product.brand || null });
@@ -219,6 +244,7 @@ async function fetchPublishedSnapshot(db, competitorId, beforeDate = null) {
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`snapshot ${date}: ${error.message}`);
     const rows = data || [];
+    await writeJob({ label: `${LABEL}: знімок · ${from + rows.length}` });
     for (const row of rows) if (!out.has(row.product_id)) out.set(row.product_id, row);
     if (rows.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
@@ -231,6 +257,7 @@ async function insertRows(db, rows) {
   for (let i = 0; i < rows.length; i += INSERT_SIZE) {
     const { error } = await db.from("price_snapshots").insert(rows.slice(i, i + INSERT_SIZE));
     if (error) throw new Error(`price_snapshots insert: ${error.message}`);
+    await writeJob({ label: `${LABEL}: збережено ${Math.min(i + INSERT_SIZE, rows.length)}/${rows.length}` });
   }
 }
 
