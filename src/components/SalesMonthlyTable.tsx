@@ -29,18 +29,20 @@ export default function SalesMonthlyTable({ dimension, from, to, channel, compar
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const statusKey = JSON.stringify(statuses);
+  const dataQuery = promotion ? "" : query.trim();
   const windowSize = count === 12 ? Number(to.slice(5, 7)) : count;
   useEffect(() => {
     const controller = new AbortController();
     setMonths(null); setError(null);
     const params = new URLSearchParams({ to, count: String(windowSize), channel, dimension, measure, segment: selectedSegment, compare: needsPrevious ? "1" : "0" });
     (JSON.parse(statusKey) as string[]).forEach(value => params.append("status", value));
+    if (dataQuery) params.set("search", dataQuery);
     if (promotion) params.set("price_position", pricePosition);
     fetchApiJson<Month[]>(`${promotion ? "/api/promotions/monthly" : "/api/sales/monthly"}?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(value => { if (!controller.signal.aborted) setMonths(value); })
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не вдалося завантажити помісячні продажі"); });
     return () => controller.abort();
-  }, [to, windowSize, channel, needsPrevious, refresh, measure, selectedSegment, statusKey, dimension, retry, promotion, pricePosition]);
+  }, [to, windowSize, channel, needsPrevious, refresh, measure, selectedSegment, statusKey, dimension, retry, promotion, pricePosition, dataQuery]);
   const allRows = useMemo(() => {
     if (!months) return [];
     const labels = new Set(months.flatMap(month => [...month.current, ...month.previous].map(item => item.label)));
@@ -53,7 +55,7 @@ export default function SalesMonthlyTable({ dimension, from, to, channel, compar
     }).sort((a, b) => b.total - a.total || a.label.localeCompare(b.label, "uk"));
   }, [months, metric]);
   const normalizedQuery = query.trim().toLocaleLowerCase("uk-UA");
-  const rows = sortMonthlyRows(allRows.filter(row => (!selected.length || selected.includes(row.label)) && (!normalizedQuery || row.label.toLocaleLowerCase("uk-UA").includes(normalizedQuery))), sort);
+  const rows = sortMonthlyRows(allRows.filter(row => (!selected.length || selected.includes(row.label)) && (!promotion || !normalizedQuery || row.label.toLocaleLowerCase("uk-UA").includes(normalizedQuery))), sort);
   const [calendarSummary, setCalendarSummary] = useState<{ scope: string; value: PromotionPeriodSummary } | null>(null);
   const [summaryError, setSummaryError] = useState("");
   const summaryScope = JSON.stringify({ from: from || `${to.slice(0, 7)}-01`, to, dimension, channel, measure, segment: selectedSegment, price_position: pricePosition, selected, search: query.trim() });

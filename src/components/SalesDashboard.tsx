@@ -475,28 +475,34 @@ function ReceivedOverview({ from, to, channel, compare, refresh, segment, catego
 }
 
 type ReceivedRankingData = Record<"brands" | "categories", { items: BucketSummary[]; products: Record<string, CategoryProductSummary[]> }>;
-function ReceivedRanking({ dimension, from, to, channel, compare, refresh, metric, selected, onSelectionChange }: { dimension: "brands" | "categories"; from: string; to: string; channel: SalesChannel; compare: boolean; refresh: number; metric: RankingMetric; selected: string[]; onSelectionChange: (values: string[]) => void }) {
+function ReceivedRanking({ query = "", measure = "received", statuses = [], dimension, from, to, channel, compare, refresh, metric, selected, onSelectionChange }: { query?: string; measure?: "received" | "shipped"; statuses?: string[]; dimension: "brands" | "categories"; from: string; to: string; channel: SalesChannel; compare: boolean; refresh: number; metric: RankingMetric; selected: string[]; onSelectionChange: (values: string[]) => void }) {
   const [data, setData] = useState<ReceivedRankingData | null>(null);
   const [previous, setPrevious] = useState<ReceivedRankingData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const statusKey = JSON.stringify(statuses);
   useEffect(() => {
     const controller = new AbortController();
     setData(null); setPrevious(null); setError(null); setExpanded(null);
-    const load = (start: string, end: string) => fetchApiJson<ReceivedRankingData>(`/api/sales/received?${new URLSearchParams({ from: start, to: end, channel })}`, { signal: controller.signal, cache: "no-store" });
+    const load = (start: string, end: string) => {
+      const params = new URLSearchParams({ from: start, to: end, channel, search: query });
+      (JSON.parse(statusKey) as string[]).forEach(status => params.append("status", status));
+      return fetchApiJson<ReceivedRankingData>(`/api/sales/${measure === "received" ? "received" : "ranking"}?${params}`, { signal: controller.signal, cache: "no-store" });
+    };
     Promise.all([load(from, to), compare ? load(shiftIsoYear(from, -1), shiftIsoYear(to, -1)) : Promise.resolve(null)])
       .then(([current, prior]) => { if (!controller.signal.aborted) { setData(current); setPrevious(prior); } })
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не вдалося завантажити замовлення"); });
     return () => controller.abort();
-  }, [from, to, channel, compare, refresh]);
+  }, [from, to, channel, compare, refresh, query, measure, statusKey]);
   if (error) return <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!data) return <div role="status" className="p-5 text-sm">Завантаження Web-shop замовлень…</div>;
-  return <CategoryRankingList dimension={dimension} selected={selected} onSelectionChange={onSelectionChange} received title={dimension === "brands" ? "Замовлення за брендами" : "Замовлення за категоріями"} itemNoun={dimension === "brands" ? "бренд" : "категорію"} color="#118dff" items={data[dimension].items} comparisonItems={previous?.[dimension].items || []} metric={metric} productsByCategory={data[dimension].products} expandedCategory={expanded} loadingCategory={null} categoryError={null} onToggleCategory={label => setExpanded(current => current === label ? null : label)} />;
+  if (!data) return <div role="status" className="p-5 text-sm">Завантаження продажів…</div>;
+  return <CategoryRankingList dimension={dimension} selected={selected} onSelectionChange={onSelectionChange} received={measure === "received"} searchActive={Boolean(query.trim())} title={dimension === "brands" ? "Замовлення за брендами" : "Замовлення за категоріями"} itemNoun={dimension === "brands" ? "бренд" : "категорію"} color="#118dff" items={data[dimension].items} comparisonItems={previous?.[dimension].items || []} metric={metric} productsByCategory={data[dimension].products} expandedCategory={expanded} loadingCategory={null} categoryError={null} onToggleCategory={label => setExpanded(current => current === label ? null : label)} />;
 }
 
 function CategoryRankingList({
   dimension, selected, onSelectionChange,
   received = false,
+  searchActive = false,
   title,
   itemNoun,
   color,
@@ -511,6 +517,7 @@ function CategoryRankingList({
 }: {
   dimension: "brands" | "categories"; selected: string[]; onSelectionChange: (values: string[]) => void;
   received?: boolean;
+  searchActive?: boolean;
   title: string;
   itemNoun: string;
   color: string;
@@ -540,7 +547,7 @@ function CategoryRankingList({
       <div className="space-y-1 p-4">
         {!sortedItems.length && <p className="p-3 text-xs text-[#687784]">За обраними фільтрами продажів немає.</p>}
         {sortedItems.map((item) => {
-          const expanded = expandedCategory === item.label;
+          const expanded = searchActive || expandedCategory === item.label;
           const products = [...(productsByCategory[item.label] || [])].sort((left, right) => metric === "docs" ? right.orders - left.orders : metric === "goods" ? right.qty - left.qty : right.revenue - left.revenue);
           const comparison = comparisonByLabel.get(item.label);
           const currentValue = item[metric];
@@ -1676,6 +1683,12 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
   const [orderMeasure, setOrderMeasure] = useState<"received" | "shipped">("shipped");
   const [selectedRankingBrands, setSelectedRankingBrands] = useState<string[]>([]);
   const [selectedRankingCategories, setSelectedRankingCategories] = useState<string[]>([]);
+  const [rankingSearch, setRankingSearch] = useState("");
+  const [rankingQuery, setRankingQuery] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setRankingQuery(rankingSearch.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [rankingSearch]);
   const [rankingFormat, setRankingFormat] = useState<"table" | "rows">("table");
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>("revenue");
   const [webMetrics, setWebMetrics] = useState<SalesWebMetricsDataset | null>(null);
@@ -2378,15 +2391,16 @@ export function SalesDashboard({ isActive = true }: { isActive?: boolean }) {
             {(view === "brands" || view === "categories") && <section className="mb-4 flex flex-wrap gap-5 rounded-xl border border-[#dfe4ea] bg-white p-4">
               <div><div className="mb-2 text-[10px] font-bold uppercase text-[#687784]">Формат аналізу</div><div role="group" aria-label="Формат аналізу" className="flex gap-1">{([["table", "Табличний"], ["rows", "Рядковий"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={rankingFormat === value} onClick={() => setRankingFormat(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${rankingFormat === value ? "bg-[#118dff] text-white" : "text-[#586572]"}`}>{label}</button>)}</div></div>
               <div><div className="mb-2 text-[10px] font-bold uppercase text-[#687784]">Показник</div><div role="group" aria-label="Показник аналізу" className="flex gap-1">{([["docs", "Замовлення"], ["goods", "Кількість, шт."], ["revenue", "Сума, грн"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={rankingMetric === value} onClick={() => setRankingMetric(value)} className={`rounded-lg border px-4 py-2 text-xs font-bold ${rankingMetric === value ? "bg-[#118dff] text-white" : "text-[#586572]"}`}>{label}</button>)}</div></div>
+              <div className="w-full"><label htmlFor="sales-ranking-search" className="mb-2 block text-[10px] font-bold uppercase text-[#687784]">Пошук продажів</label><div className="flex gap-2"><input id="sales-ranking-search" type="search" value={rankingSearch} onChange={event => setRankingSearch(event.target.value)} placeholder="Код або назва товару, бренд, категорія" className="min-w-0 flex-1 rounded-lg border border-[#d8dde3] px-3 py-2 text-xs focus:outline-[#118dff]" />{rankingSearch && <button type="button" onClick={() => { setRankingSearch(""); setRankingQuery(""); }} className="rounded-lg border px-3 py-2 text-xs">Очистити</button>}</div><p className="mt-2 text-[10px] text-[#687784]">Показники враховують лише знайдені товари. У рядковому форматі товари відкриваються автоматично.</p></div>
             </section>}
 
-            {(view === "brands" || view === "categories") && rankingFormat === "table" && <SalesMonthlyTable selected={view === "brands" ? selectedRankingBrands : selectedRankingCategories} onSelectionChange={view === "brands" ? setSelectedRankingBrands : setSelectedRankingCategories} metric={rankingMetric} dimension={view} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} measure={orderMeasure} segment="Усі" statuses={selectedStatuses} />}
+            {(view === "brands" || view === "categories") && rankingFormat === "table" && <SalesMonthlyTable query={rankingQuery} selected={view === "brands" ? selectedRankingBrands : selectedRankingCategories} onSelectionChange={view === "brands" ? setSelectedRankingBrands : setSelectedRankingCategories} metric={rankingMetric} dimension={view} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} measure={orderMeasure} segment="Усі" statuses={selectedStatuses} />}
 
-            {(view === "brands" || view === "categories") && rankingFormat === "rows" && orderMeasure === "received" && <ReceivedRanking selected={view === "brands" ? selectedRankingBrands : selectedRankingCategories} onSelectionChange={view === "brands" ? setSelectedRankingBrands : setSelectedRankingCategories} metric={rankingMetric} dimension={view} from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} />}
+            {(view === "brands" || view === "categories") && rankingFormat === "rows" && (orderMeasure === "received" || Boolean(rankingQuery)) && <ReceivedRanking query={rankingQuery} measure={orderMeasure} statuses={selectedStatuses} selected={view === "brands" ? selectedRankingBrands : selectedRankingCategories} onSelectionChange={view === "brands" ? setSelectedRankingBrands : setSelectedRankingCategories} metric={rankingMetric} dimension={view} from={dateFrom} to={dateTo} channel={salesChannel} compare={compareWithPreviousYear} refresh={refreshTick} />}
 
-            {view === "brands" && rankingFormat === "rows" && orderMeasure === "shipped" && <CategoryRankingList dimension="brands" selected={selectedRankingBrands} onSelectionChange={setSelectedRankingBrands} title="Продажі за брендами" itemNoun="бренд" color="#20a66a" items={data.summary.brands} comparisonItems={comparisonData?.summary.brands || []} metric={rankingMetric} productsByCategory={brandProducts} expandedCategory={expandedBrand} loadingCategory={loadingBrand} categoryError={brandError} onToggleCategory={(brand) => setExpandedBrand((current) => current === brand ? null : brand)} />}
+            {view === "brands" && rankingFormat === "rows" && orderMeasure === "shipped" && !rankingQuery && <CategoryRankingList dimension="brands" selected={selectedRankingBrands} onSelectionChange={setSelectedRankingBrands} title="Продажі за брендами" itemNoun="бренд" color="#20a66a" items={data.summary.brands} comparisonItems={comparisonData?.summary.brands || []} metric={rankingMetric} productsByCategory={brandProducts} expandedCategory={expandedBrand} loadingCategory={loadingBrand} categoryError={brandError} onToggleCategory={(brand) => setExpandedBrand((current) => current === brand ? null : brand)} />}
 
-            {view === "categories" && rankingFormat === "rows" && orderMeasure === "shipped" && <CategoryRankingList dimension="categories" selected={selectedRankingCategories} onSelectionChange={setSelectedRankingCategories} title="Продажі за категоріями" itemNoun="категорію" color="#e39a25" items={data.summary.categories} comparisonItems={comparisonData?.summary.categories || []} metric={rankingMetric} productsByCategory={categoryProducts} expandedCategory={expandedCategory} loadingCategory={loadingCategory} categoryError={categoryError} onToggleCategory={(category) => setExpandedCategory((current) => current === category ? null : category)} />}
+            {view === "categories" && rankingFormat === "rows" && orderMeasure === "shipped" && !rankingQuery && <CategoryRankingList dimension="categories" selected={selectedRankingCategories} onSelectionChange={setSelectedRankingCategories} title="Продажі за категоріями" itemNoun="категорію" color="#e39a25" items={data.summary.categories} comparisonItems={comparisonData?.summary.categories || []} metric={rankingMetric} productsByCategory={categoryProducts} expandedCategory={expandedCategory} loadingCategory={loadingCategory} categoryError={categoryError} onToggleCategory={(category) => setExpandedCategory((current) => current === category ? null : category)} />}
 
             {view === "department" && (
               <div className="space-y-4">

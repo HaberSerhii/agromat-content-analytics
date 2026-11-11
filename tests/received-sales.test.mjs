@@ -100,3 +100,19 @@ test("brand multiselect intersects category filters and keeps options available"
   assert.equal(intersection.docs, 0);
   assert.equal(intersection.revenue, 0);
 });
+
+
+test("search scopes mixed orders to matching products and recalculates distinct orders and sums", () => {
+  for (const search of ["101", " bath ", "ванни", "a bath"]) {
+    const data = receivedSales(orders, products, new Map(), "all", { search });
+    assert.equal(data.brands.items[0].docs, 2);
+    assert.equal(data.brands.items[0].goods, 4);
+    assert.equal(data.brands.items[0].revenue, 300);
+    assert.equal(data.categories.items.length, 1);
+    assert.equal(data.brands.products.A.length, 1);
+    assert.equal(data.brands.products.A[0].code, "101");
+  }
+  assert.equal(receivedSales(orders, products, new Map(), "all", { search: "missing" }).brands.items.length, 0);
+  assert.equal(receivedSales(orders, products, new Map(), "all", { search: "101 Плитка" }).brands.items.length, 0);
+  assert.equal(receivedSales(orders, products, new Map(), "site", { search: "101", details: false }).brands.items[0].revenue, 200);
+});

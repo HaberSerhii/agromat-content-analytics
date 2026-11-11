@@ -1,3 +1,4 @@
+import { matchesSalesSearch } from "@/lib/sales-search";
 import { summarizeReviewPeriodSales } from "@/lib/review-period-sales";
 import { promotionSalesSegment, promotionCatalogSegment, PROMOTION_SALES_SEGMENTS, type PromotionSalesSegment } from "@/lib/promotion-sales-segments";
 import { classifySalesCategory, matchesSalesSegment, splitBusinessSales, OTHER_SALES_GROUPS, type BusinessSegment } from "@/lib/sales-business-segments";
@@ -345,6 +346,7 @@ const PROMOTION_SALES_STATUSES: PromotionSalesStatus[] = [
 ];
 
 export type SalesDateFilter = {
+  search?: string;
   from?: string;
   to?: string;
   productCodes?: string | number[];
@@ -1112,7 +1114,7 @@ function buildDataset(
   }))).values()].sort((a, b) => a.label.localeCompare(b.label, "uk"));
   const selectedBrands = new Set(dateFilter?.salesBrand || []);
   const selectedCategories = new Set((Array.isArray(dateFilter?.salesCategory) ? dateFilter.salesCategory : [dateFilter?.salesCategory]).filter(Boolean));
-  if (dateFilter?.businessSegment || selectedCategories.size || selectedBrands.size) {
+  if (dateFilter?.search?.trim() || dateFilter?.businessSegment || selectedCategories.size || selectedBrands.size) {
     rows = rows.flatMap(sourceRow => {
       const row = goodsOnlySalesRow(sourceRow);
       if (!row) return [];
@@ -1120,6 +1122,7 @@ function buildDataset(
         matchesSalesSegment(classifySalesCategory(item.categoryKey || ""), dateFilter?.businessSegment)
         && (!selectedCategories.size || selectedCategories.has(item.category))
         && (!selectedBrands.size || selectedBrands.has(item.brand || "Без бренда"))
+        && matchesSalesSearch(item, dateFilter?.search)
       ).map(item => Number(item.code)));
       if (!codes.size) return [];
       const scoped = scopeSalesRowToProductCodes(row, codes);
@@ -2379,8 +2382,8 @@ function buildMonthlyRows(rows: ParsedSalesRow[], periods: { from: string; to: s
       if (!period || !matchesSalesChannel(sourceRow, filter.channel || "all") || !isDimensionOrderInPeriod(sourceRow, period) || isExcludedAnalyticsOrder(sourceRow)) continue;
       let row = goodsOnlySalesRow(sourceRow);
       if (!row) continue;
-      if (filter.businessSegment && filter.businessSegment !== "Усі") {
-        const codes = new Set(row.items.filter(item => matchesSalesSegment(classifySalesCategory(item.categoryKey || ""), filter.businessSegment)).map(item => Number(item.code)));
+      if (filter.search?.trim() || (filter.businessSegment && filter.businessSegment !== "Усі")) {
+        const codes = new Set(row.items.filter(item => matchesSalesSegment(classifySalesCategory(item.categoryKey || ""), filter.businessSegment) && matchesSalesSearch(item, filter.search)).map(item => Number(item.code)));
         if (!codes.size) continue;
         row = scopeSalesRowToProductCodes(row, codes);
         if (!row) continue;

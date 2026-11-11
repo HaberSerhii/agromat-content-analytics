@@ -18,11 +18,12 @@ export async function GET(request: Request) {
   const prior = compare ? periods.map(p => ({ from: priorYearDate(p.from), to: priorYearDate(p.to) })) : [];
   const channel = normalizeSalesChannel(params.get("channel")), segment = params.get("segment") || "Усі";
   const dimension = params.get("dimension") === "categories" ? "categories" : "brands";
+  const search = (params.get("search") || "").trim();
   const all = [...periods, ...prior];
   try {
     const result = params.get("measure") !== "received"
-      ? await readSalesMonthlyBuckets(all, { channel, businessSegment: segment, statuses: params.getAll("status") }, dimension)
-      : await readDashboardReport("received-monthly-v2", JSON.stringify({ to, count, compare, channel, segment, syncedAt: await readLiteSyncedAt() }), 15 * 60_000, async () => {
+      ? await readSalesMonthlyBuckets(all, { channel, search, businessSegment: segment, statuses: params.getAll("status") }, dimension)
+      : await readDashboardReport("received-monthly-v2", JSON.stringify({ to, count, compare, channel, segment, search, syncedAt: await readLiteSyncedAt() }), 15 * 60_000, async () => {
         const [products, dimensions] = await Promise.all([readAllLite(), readSalesProductDimensionLookup()]);
         const result = [];
         // Two contiguous source reads, not one upstream pagination job per month.
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
           }
           for (const period of range) {
             const monthOrders = (byMonth.get(period.from.slice(0,7)) || []).filter(order => kyivDay.format(new Date(order.date)) <= period.to);
-            const summary = receivedSales(monthOrders, products, dimensions, channel, { segment, details: false });
+            const summary = receivedSales(monthOrders, products, dimensions, channel, { segment, search, details: false });
             result.push({ ...period, brands: summary.brands.items, categories: summary.categories.items });
           }
         }

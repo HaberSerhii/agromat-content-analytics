@@ -1,3 +1,4 @@
+import { matchesSalesSearch } from "@/lib/sales-search";
 import { classifySalesCategory, matchesSalesSegment } from "@/lib/sales-business-segments";
 import { promotionCatalogSegment } from "@/lib/promotion-sales-segments";
 import { fillSalesDateSeries } from "@/lib/sales-date-series";
@@ -18,7 +19,7 @@ function indexesForProducts(products: ProductLite[]) {
   }
   return indexes;
 }
-export function receivedSales(orders: ApiOrder[], products: ProductLite[], categories: ReadonlyMap<string, { category: string; categoryKey: string; brand: string }>, channel: SalesChannel, filter: { segment?: string; categories?: string[]; brands?: string[]; from?: string; to?: string; details?: boolean } = {}) {
+export function receivedSales(orders: ApiOrder[], products: ProductLite[], categories: ReadonlyMap<string, { category: string; categoryKey: string; brand: string }>, channel: SalesChannel, filter: { search?: string; segment?: string; categories?: string[]; brands?: string[]; from?: string; to?: string; details?: boolean } = {}) {
   const { byId, byRef, byCode } = indexesForProducts(products);
   const groups = { brands: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>(), categories: new Map<string, { bucket: Bucket; docs: Set<number>; products: Map<string, Product>; productDocs: Map<string, Set<number>> }>() };
   const totals = { docs: 0, goods: 0, revenue: 0 };
@@ -52,6 +53,7 @@ export function receivedSales(orders: ApiOrder[], products: ProductLite[], categ
       if (!matchesSalesSegment(classification, filter.segment)) continue;
       if (filter.categories?.length && !filter.categories.includes(category)) continue;
       if (filter.brands?.length && !filter.brands.includes(brand)) continue;
+      if (!matchesSalesSearch({ code, name: p?.name || item.name, brand, category }, filter.search)) continue;
       matched = true;
       const qty = Number(item.quantity) || 0, revenue = Number(item.line_total) || 0;
       orderGoods += qty; orderRevenue += revenue;

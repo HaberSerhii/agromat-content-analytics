@@ -43,7 +43,7 @@ function loadBuilder(source) {
   const localRequire = (name) => {
     if (name === "@/lib/sales-order-origin") return { normalizeSalesChannel: (value) => value === "rozetka" ? "rozetka" : "all" };
     if (name.startsWith("@/lib/")) {
-      if (["sales-plan", "sales-plan-items", "sales-business-segments", "sales-date-series", "sales-dimension-filter"].some((file) => name === `@/lib/${file}`)) return require(path.resolve(`src/lib/${name.slice(6)}.ts`));
+      if (["sales-search", "sales-plan", "sales-plan-items", "sales-business-segments", "sales-date-series", "sales-dimension-filter"].some((file) => name === `@/lib/${file}`)) return require(path.resolve(`src/lib/${name.slice(6)}.ts`));
       return {};
     }
     return require(name);
@@ -72,6 +72,17 @@ test("overview, statuses and cancellation products split mixed orders while pres
 
   const categoryRows = rows.map(row => ({ ...row, items: row.items.map((item, index) => ({ ...item, category: ["Плитка підлогова", "Змішувачі", "Живлення"][index] })) }));
   const brandRows = categoryRows.map(row => ({ ...row, items: row.items.map((item, index) => ({ ...item, brand: ["A", "B", "C"][index] })) }));
+  for (const search of ["2", "товар b", "змішувачі"]) {
+    const searched = build(brandRows, {}, { ...args[2], search });
+    assert.equal(searched.summary.brands.length, 1);
+    assert.equal(searched.summary.brands[0].label, "B");
+    assert.equal(searched.summary.brands[0].revenue, 300);
+    assert.equal(searched.summary.brands[0].docs, 1);
+    assert.deepEqual(searched.summary.categoryProducts["Змішувачі"].map(p => p.code), ["2"]);
+    const monthly = build.monthly(brandRows, [args[2]], { search }, "brands");
+    assert.deepEqual(monthly[0].items, searched.summary.brands);
+  }
+  assert.equal(build(brandRows, {}, { ...args[2], search: "немає" }).summary.brands.length, 0);
   const brandScoped = build(brandRows, {}, { ...args[2], salesBrand: ["B", "C"] });
   assert.equal(brandScoped.summary.shippedRevenue, 400);
   assert.equal(brandScoped.summary.shippedGoods, 2);
