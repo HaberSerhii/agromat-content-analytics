@@ -8,7 +8,7 @@ import type {
 const metrics = [
   { key: "newProducts", label: "Нові товари" },
   { key: "ctr", label: "CTR · Каталог → PDP" },
-  { key: "atc", label: "ATC · Додавання до кошика" },
+  { key: "atc", label: "ATC · PDP → Кошик" },
   { key: "contentScore", label: "Content Score" },
 ] as const;
 type Metric = (typeof metrics)[number]["key"];
@@ -27,13 +27,14 @@ function total(points: OverviewPoint[], metric: Metric): number | null {
 const format = (n: number | null, key: Metric) =>
   n === null
     ? "—"
-    : `${n.toLocaleString("uk-UA", { maximumFractionDigits: key === "ctr" || key === "contentScore" ? 2 : 0 })}${key === "ctr" ? "%" : ""}`;
+    : key === "contentScore"
+      ? n.toFixed(2)
+      : `${n.toLocaleString("uk-UA", { maximumFractionDigits: key === "ctr" || key === "atc" ? 2 : 0 })}${key === "ctr" || key === "atc" ? "%" : ""}`;
 const formatChange = (value: number) => {
   const rounded = Math.round(value * 100) / 100;
-  return `${rounded > 0 ? "+" : rounded < 0 ? "−" : ""}${Math.abs(rounded).toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} бала`;
+  return `${rounded > 0 ? "+" : rounded < 0 ? "−" : ""} ${Math.abs(rounded).toFixed(2)}`;
 };
 const changeColor = (value: number | null) => value != null && Math.round(value * 100) > 0 ? "text-[#087a55]" : value != null && Math.round(value * 100) < 0 ? "text-[#c63f3f]" : "text-slate-500";
-const displayDate = (date: string) => date.split("-").reverse().join(".");
 export function ProductOverviewPeriod({
   data,
   from,
@@ -92,7 +93,7 @@ export function ProductOverviewPeriod({
           const value =
             m.key === "contentScore"
               ? (data?.contentScore ?? null)
-              : total(current, m.key);
+              : m.key === "atc" ? (data?.atcTotals?.current ?? null) : total(current, m.key);
           return (
             <div key={m.key} className="rounded-2xl border bg-white p-5">
               <h3 className="text-xs font-bold text-slate-500">{m.label}</h3>
@@ -101,43 +102,34 @@ export function ProductOverviewPeriod({
                 (analyticsLoading && (m.key === "ctr" || m.key === "atc"))
                   ? "…"
                   : format(value, m.key)}
+                {m.key === "contentScore" && !loading && data?.contentScoreChange?.dayDelta != null && (
+                  <span className={`ml-2 inline-block text-sm font-bold align-middle ${changeColor(data.contentScoreChange.dayDelta)}`}>
+                    {formatChange(data.contentScoreChange.dayDelta)}
+                  </span>
+                )}
               </p>
-              {m.key === "contentScore" && !loading && (
-                <div className="mb-2 space-y-1 text-xs font-bold">
-                  <p className={changeColor(data?.contentScoreChange?.dayDelta ?? null)}>
-                    {data?.contentScoreChange?.dayDelta != null
-                      ? `${formatChange(data.contentScoreChange.dayDelta)} · до вчора`
-                      : "До вчора: немає збереженого CS"}
-                  </p>
-                  <p className={changeColor(data?.contentScoreChange?.monthDelta ?? null)}>
-                    {data?.contentScoreChange?.monthDelta != null && data.contentScoreChange.monthBaselineDate
-                      ? `${formatChange(data.contentScoreChange.monthDelta)} · ${data.contentScoreChange.monthBaselineDate.endsWith("-01") ? "з початку місяця" : `від ${displayDate(data.contentScoreChange.monthBaselineDate)} · перший запис місяця`}`
-                      : "Зміна за місяць з’явиться після наступного денного запису"}
-                  </p>
-                  {data?.contentScoreError && <p role="alert" className="text-[#c63f3f]">{data.contentScoreError}</p>}
-                </div>
-              )}
               {m.key === "ctr" || m.key === "atc" ? (
                 (["year", "month"] as const).map((period) => {
-                  const before = total(data?.[period] || [], m.key);
+                  const before = m.key === "atc" ? (data?.atcTotals?.[period] ?? null) : total(data?.[period] || [], m.key);
                   const diff =
                     value !== null && before !== null ? value - before : null;
                   return (
                     <p key={period} className="mt-1 text-xs text-slate-500">
                       {diff === null
                         ? "—"
-                        : `${diff > 0 ? "+" : ""}${diff.toLocaleString("uk-UA", { maximumFractionDigits: 2 })}${m.key === "ctr" ? " в.п." : ""}`}{" "}
+                        : `${diff > 0 ? "+" : ""}${diff.toLocaleString("uk-UA", { maximumFractionDigits: 2 })} в.п.`}{" "}
                       · до{" "}
                       {period === "year" ? "минулого року" : "минулого місяця"}
                     </p>
                   );
                 })
-              ) : (
+              ) : m.key === "newProducts" ? (
                 <p className="text-xs text-slate-500">
-                  {m.key === "contentScore"
-                    ? "Поточний середній бал · товари з налаштованими атрибутами"
-                    : "Уперше з’явилися за вибраний період"}
+                  Уперше з’явилися за вибраний період
                 </p>
+              ) : null}
+              {m.key === "contentScore" && !loading && data?.contentScoreError && (
+                <p role="alert" className="text-xs text-[#c63f3f]">{data.contentScoreError}</p>
               )}
             </div>
           );
@@ -176,7 +168,7 @@ export function ProductOverviewPeriod({
                 : format(
                     metric === "contentScore"
                       ? (data?.contentScore ?? null)
-                      : total(current, metric),
+                      : metric === "atc" ? (data?.atcTotals?.current ?? null) : total(current, metric),
                     metric,
                   )}
             </div>

@@ -18,6 +18,7 @@ export type OverviewPeriod = {
   year: OverviewPoint[];
   month: OverviewPoint[];
   contentScore: number | null;
+  atcTotals?: { current: number | null; year: number | null; month: number | null };
   contentScoreChange?: ContentScoreChange;
   contentScoreError?: string;
   analyticsAvailable: boolean;
@@ -61,6 +62,9 @@ export async function buildOverviewPeriod(
     impressions: number;
     views: number;
     carts: number;
+    pdp_users?: number;
+    cart_users?: number;
+    scope?: string;
   };
   let available = includeAnalytics;
   const refs = [...new Set(products.map((p) => p.goodsRef))].sort(
@@ -77,7 +81,7 @@ export async function buildOverviewPeriod(
       rows = await readThroughBigQueryCache<Row[]>({
         namespace: "product-overview-periods",
         key: JSON.stringify([
-          "v2",
+          "v3-user-atc",
           new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" }),
           table,
           ranges,
@@ -88,17 +92,56 @@ export async function buildOverviewPeriod(
             projectId:
               process.env.BIGQUERY_PROJECT_ID || "maximal-furnace-385413",
           }).query({
-            query: `SELECT event_date AS date,
-            COUNTIF(event_name = 'view_item_list') AS impressions,
-            COUNTIF(event_name = 'view_item') AS views,
-            COUNTIF(event_name = 'add_to_cart') AS carts
-            FROM ${table}
-            WHERE ((event_date BETWEEN DATE(@start) AND DATE(@end))
-              OR (event_date BETWEEN DATE(@yearStart) AND DATE(@yearEnd))
-              OR (event_date BETWEEN DATE(@monthStart) AND DATE(@monthEnd)))
-            AND SAFE_CAST(NULLIF(TRIM(item_id), '') AS INT64) IN UNNEST(@refs)
-            AND event_name IN ('view_item_list','view_item','add_to_cart')
-            GROUP BY event_date`,
+            query: `WITH periods AS (
+              SELECT 'current' AS period, DATE(@start) AS start_date, DATE(@end) AS end_date
+              UNION ALL SELECT 'year', DATE(@yearStart), DATE(@yearEnd)
+              UNION ALL SELECT 'month', DATE(@monthStart), DATE(@monthEnd)
+            ), event_counts AS (
+              SELECT event_date AS date,
+                COUNTIF(event_name = 'view_item_list') AS impressions,
+                COUNTIF(event_name = 'view_item') AS views,
+                COUNTIF(event_name = 'add_to_cart') AS carts
+              FROM ${table}
+              WHERE EXISTS (SELECT 1 FROM periods WHERE event_date BETWEEN start_date AND end_date)
+                AND SAFE_CAST(NULLIF(TRIM(item_id), '') AS INT64) IN UNNEST(@refs)
+                AND event_name IN ('view_item_list','view_item','add_to_cart')
+              GROUP BY event_date
+            ), raw_items AS (
+              SELECT PARSE_DATE('%Y%m%d', event_date) AS date, event_timestamp,
+                event_name, user_pseudo_id,
+                SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) AS goods_ref
+              FROM ${table.replace(/\.[^.`]+`$/, '.events_*`')}, UNNEST(items) AS item
+              WHERE ((_TABLE_SUFFIX BETWEEN REPLACE(@start, '-', '') AND REPLACE(@end, '-', ''))
+                OR (_TABLE_SUFFIX BETWEEN REPLACE(@yearStart, '-', '') AND REPLACE(@yearEnd, '-', ''))
+                OR (_TABLE_SUFFIX BETWEEN REPLACE(@monthStart, '-', '') AND REPLACE(@monthEnd, '-', '')))
+                AND event_name IN ('view_item', 'add_to_cart')
+                AND NULLIF(user_pseudo_id, '') IS NOT NULL
+                AND SAFE_CAST(NULLIF(TRIM(item.item_id), '') AS INT64) IN UNNEST(@refs)
+            ), scoped AS (
+              SELECT CONCAT('day:', CAST(date AS STRING)) AS scope, * FROM raw_items
+              UNION ALL
+              SELECT period AS scope, r.* FROM raw_items r
+              JOIN periods p ON r.date BETWEEN p.start_date AND p.end_date
+            ), user_products AS (
+              SELECT scope, user_pseudo_id, goods_ref,
+                MIN(IF(event_name = 'view_item', event_timestamp, NULL)) AS first_view,
+                MAX(IF(event_name = 'add_to_cart', event_timestamp, NULL)) AS last_cart
+              FROM scoped GROUP BY scope, user_pseudo_id, goods_ref
+            ), user_funnel AS (
+              SELECT scope, user_pseudo_id,
+                COUNTIF(first_view IS NOT NULL) > 0 AS viewed,
+                COUNTIF(first_view IS NOT NULL AND last_cart >= first_view) > 0 AS converted
+              FROM user_products GROUP BY scope, user_pseudo_id
+            ), funnel AS (
+              SELECT scope, COUNTIF(viewed) AS pdp_users, COUNTIF(converted) AS cart_users
+              FROM user_funnel GROUP BY scope
+            )
+            SELECT e.date, e.impressions, e.views, e.carts, f.pdp_users, f.cart_users,
+              CONCAT('day:', CAST(e.date AS STRING)) AS scope
+            FROM event_counts e LEFT JOIN funnel f ON f.scope = CONCAT('day:', CAST(e.date AS STRING))
+            UNION ALL
+            SELECT CAST(NULL AS DATE), 0, 0, 0, COALESCE(f.pdp_users, 0), COALESCE(f.cart_users, 0), p.period
+            FROM periods p LEFT JOIN funnel f ON f.scope = p.period`,
             params: {
               start: from,
               end: to,
@@ -120,7 +163,7 @@ export async function buildOverviewPeriod(
     }
   const series = ranges.map(([start, end]) => {
     const byDate = new Map(
-      rows.map((r) => [typeof r.date === "string" ? r.date : r.date.value, r]),
+      rows.filter((r) => r.date != null).map((r) => [typeof r.date === "string" ? r.date : r.date.value, r]),
     );
     const points: (OverviewPoint & { impressions: number; views: number })[] =
       [];
@@ -138,7 +181,8 @@ export async function buildOverviewPeriod(
           r && Number(r.impressions) > 0
             ? (Number(r.views) / Number(r.impressions)) * 100
             : null,
-        atc: available ? Number(r?.carts || 0) : null,
+        atc: available && Number(r?.pdp_users) > 0
+          ? Number(r?.cart_users || 0) / Number(r?.pdp_users) * 100 : null,
         contentScore: null,
         impressions: Number(r?.impressions || 0),
         views: Number(r?.views || 0),
@@ -161,6 +205,11 @@ export async function buildOverviewPeriod(
     year: series[1],
     month: series[2],
     contentScore,
+    atcTotals: Object.fromEntries(["current", "year", "month"].map(scope => {
+      const row = rows.find(row => row.scope === scope);
+      return [scope, available && Number(row?.pdp_users) > 0
+        ? Number(row?.cart_users || 0) / Number(row?.pdp_users) * 100 : null];
+    })) as NonNullable<OverviewPeriod["atcTotals"]>,
     analyticsAvailable: available,
     analyticsLoaded: includeAnalytics,
   };

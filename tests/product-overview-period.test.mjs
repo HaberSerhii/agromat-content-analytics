@@ -53,13 +53,16 @@ test('catalog-only response never waits for BigQuery and returns new products an
   assert.equal(result.analyticsLoaded,false);
 });
 
-test('one query serves three periods, deduplicates refs, and keeps weighted event counts', async () => {
+test('one query serves three periods and computes ATC from distinct user cohorts', async () => {
   const queries = [];
   const analytics = sourceLoader({ mocks: {
     '@google-cloud/bigquery': { BigQuery: class { async query(options) { queries.push(options); return [[
-      {date:'2026-11-01',impressions:100,views:20,carts:3},
+      {date:'2026-11-01',impressions:100,views:20,carts:3,pdp_users:10,cart_users:2},
+      {date:null,scope:'current',pdp_users:15,cart_users:3},
+      {date:null,scope:'year',pdp_users:20,cart_users:2},
+      {date:null,scope:'month',pdp_users:10,cart_users:3},
       {date:'2025-11-01',impressions:200,views:10,carts:1},
-      {date:'2026-10-01',impressions:50,views:5,carts:2},
+      {date:'2026-10-01',impressions:50,views:5,carts:2,pdp_users:4,cart_users:1},
     ]]; } } },
     '@/lib/bigquery-result-cache': { readThroughBigQueryCache: async ({load}) => load() },
   }})('@/lib/product-overview-period');
@@ -68,5 +71,13 @@ test('one query serves three periods, deduplicates refs, and keeps weighted even
   assert.deepEqual(Array.from(queries[0].params.refs),[7]);
   assert.equal(result.current[0].ctr,20);
   assert.equal(result.year[0].ctr,5);
-  assert.equal(result.month[0].atc,2);
+  assert.equal(result.month[0].atc,25);
+  assert.equal(result.current[0].atc,20);
+  assert.equal(result.current[1].atc,null);
+  assert.equal(result.atcTotals.current,20);
+  assert.equal(result.atcTotals.year,10);
+  assert.equal(result.atcTotals.month,30);
+  assert.match(queries[0].query,/last_cart >= first_view/);
+  assert.match(queries[0].query,/GROUP BY scope, user_pseudo_id, goods_ref/);
+  assert.match(queries[0].query,/GROUP BY scope, user_pseudo_id\n/);
 });

@@ -12,7 +12,7 @@ const dateLabel = (date: string) => date.split("-").reverse().join("-");
 const format = (value: number | null, metric: Metric) =>
   value === null
     ? "—"
-    : `${value.toLocaleString("uk-UA", { maximumFractionDigits: metric === "ctr" || metric === "contentScore" ? 2 : 0 })}${metric === "ctr" ? "%" : ""}`;
+    : `${value.toLocaleString("uk-UA", { maximumFractionDigits: metric === "ctr" || metric === "atc" || metric === "contentScore" ? 2 : 0 })}${metric === "ctr" || metric === "atc" ? "%" : ""}`;
 function previousYear(date: string) {
   const [year, month, day] = date.split("-").map(Number);
   const lastDay = new Date(Date.UTC(year - 1, month, 0)).getUTCDate();
@@ -40,7 +40,7 @@ export function ProductOverviewTrendChart({
   );
   const peak = Math.max(1, ...values);
   const step =
-    metric === "ctr" || metric === "contentScore"
+    metric === "ctr" || metric === "atc" || metric === "contentScore"
       ? Math.pow(10, Math.floor(Math.log10(peak))) / 2
       : Math.max(1, Math.ceil(peak / 4));
   const max = Math.ceil(peak / step) * step;
