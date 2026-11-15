@@ -2,7 +2,7 @@
 set -euo pipefail
 DOMAIN=studio.agromat-analytics.co.ua
 EXPECTED_IP=91.239.233.125
-if ! dig +short A "$DOMAIN" | grep -Fxq "$EXPECTED_IP"; then echo 'Studio DNS is not ready'; exit 2; fi
+if ! dig +short A "$DOMAIN" @1.1.1.1 | grep -Fxq "$EXPECTED_IP"; then echo 'Studio DNS is not ready'; exit 2; fi
 OLD_NGINX=$(sha256sum /etc/nginx/sites-enabled/agromat-catalog | cut -d' ' -f1)
 certbot certonly --webroot --webroot-path /var/www/agromat-studio-acme --non-interactive --cert-name agromat-studio -d "$DOMAIN" --keep-until-expiring
 cat > /etc/nginx/sites-available/agromat-studio <<'NGINX'
@@ -36,4 +36,4 @@ NGINX
 nginx -t
 systemctl reload nginx
 [[ "$OLD_NGINX" == "$(sha256sum /etc/nginx/sites-enabled/agromat-catalog | cut -d' ' -f1)" ]]
-curl -fsS "https://$DOMAIN/api/health"
+curl -fsS --resolve "$DOMAIN:443:$EXPECTED_IP" "https://$DOMAIN/api/health"
