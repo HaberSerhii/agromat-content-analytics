@@ -623,3 +623,5 @@
     gap: 8px;
   }
 }
+
+.heading .actions .dated input, .heading .actions .dated button, .heading .actions #toggle-yoy {height:38px;min-height:38px;max-height:38px;}
