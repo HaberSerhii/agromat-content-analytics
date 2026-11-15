@@ -402,9 +402,18 @@ function salesChart(d) {
       return `<g class="chart-point" tabindex="0" role="img" aria-label="${esc(title)}"><circle cx="${p[0]}" cy="${p[1]}" r="12" fill="transparent"/><circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#fff" stroke="#533afd"/><title>${esc(title)}</title><foreignObject class="chart-tooltip" x="${Math.min(430, Math.max(40, p[0] - 120))}" y="${Math.max(0, p[1] - 115)}" width="225" height="112"><div xmlns="http://www.w3.org/1999/xhtml"><b>${esc(r.label)}</b><span>${currentDates}</span><strong>${money(r.value)}</strong>${state.yoy ? `<span>Торік: ${r.previous === null ? "немає даних" : money(r.previous)} · ${priorDates}</span><b class="${delta === null ? "muted" : delta >= 0 ? "good" : "bad"}">${esc(change)}</b>` : ""}</div></foreignObject></g>`;
     })
     .join("");
+  const tickCount = interval === "week" ? 3 : 5;
+  const tickIndices = new Set(
+    Array.from({ length: Math.min(tickCount, rows.length) }, (_, j) =>
+      Math.round(
+        (j * (rows.length - 1)) /
+          Math.max(1, Math.min(tickCount, rows.length) - 1),
+      ),
+    ),
+  );
   const ticks = rows
     .map((r, i) =>
-      i % Math.max(1, Math.ceil(rows.length / 5)) === 0 || i === rows.length - 1
+      tickIndices.has(i)
         ? `<text x="${points[i][0]}" y="205" text-anchor="${i === 0 ? "start" : i === rows.length - 1 ? "end" : "middle"}" font-size="8" fill="#65758d">${esc(r.label)}</text>`
         : "",
     )
