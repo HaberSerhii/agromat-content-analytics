@@ -673,11 +673,6 @@ function overview(d) {
             : null;
         })()
       : null;
-  const active = (x) =>
-    ok(x) ? x.programs.filter((r) => r.active === true).length : null;
-  const priorPromos = d.promotions.previous?.historyAvailable
-    ? active(d.promotions.previous)
-    : null;
   const priorStock =
     ok(d.stock.previous) && d.stock.previous.historyAvailable
       ? d.stock.previous.total
@@ -714,6 +709,25 @@ function overview(d) {
         true,
       ),
       overviewCard(
+        "Content Score",
+        score,
+        "Поточна середня оцінка контенту каталогу",
+        "products/overview",
+        d.content.previousScore,
+        (x) => num(x) + " / 100",
+        d.content.previousDate
+          ? "Попер. місяць · " +
+              d.content.previousDate.split("-").reverse().join(".")
+          : "Попер. місяць",
+      ),
+      overviewCard(
+        "Користувачі",
+        null,
+        "Унікальні користувачі · метрика не передається поточним GA4-звітом",
+        "channels/overview",
+        null,
+      ),
+      overviewCard(
         "AOV",
         aov(m),
         "Відвантажений виторг / відвантажені замовлення",
@@ -730,30 +744,11 @@ function overview(d) {
         pct,
       ),
       overviewCard(
-        "Активні акції",
-        active(d.promotions),
-        "Кількість активних програм · поточний каталог",
-        "promotions/programs",
-        priorPromos,
-      ),
-      overviewCard(
         "Товарів в наявності",
         ok(d.stock) ? d.stock.total : null,
         "SKU із залишком ≥ 1 · поточний каталог",
         "products/available",
         priorStock,
-      ),
-      overviewCard(
-        "Content Score",
-        score,
-        "Поточна середня оцінка контенту каталогу",
-        "products/overview",
-        d.content.previousScore,
-        (x) => num(x) + " / 100",
-        d.content.previousDate
-          ? "Попер. місяць · " +
-              d.content.previousDate.split("-").reverse().join(".")
-          : "Попер. місяць",
       ),
     ]),
     ok(d.sales)
