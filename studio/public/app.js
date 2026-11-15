@@ -172,7 +172,7 @@ async function api(kind, extra = {}) {
 function skeleton() {
   const def = defs[section];
   $("#app").innerHTML =
-    `<aside><a class="logo" href="#home/overview" id="logo-home"><b>a</b><span class="word">АГРОМАТ</span><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div>${Object.entries(
+    `<aside><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div>${Object.entries(
       defs,
     )
       .map(

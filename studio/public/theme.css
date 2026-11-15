@@ -403,7 +403,7 @@
 .detail-pager button {
   font-size: 11px;
 }
-body[data-theme="airbnb"] {
+body[data-theme="warm"] {
   --bg: #fff;
   --surface: #fff;
   --text: #222;
@@ -419,140 +419,140 @@ body[data-theme="airbnb"] {
     sans-serif;
   letter-spacing: 0;
 }
-body[data-theme="airbnb"] aside {
+body[data-theme="warm"] aside {
   background: #faf9f7;
   border-color: #e8e5e2;
 }
-body[data-theme="airbnb"] .logo b {
+body[data-theme="warm"] .logo b {
   background: #ff385c;
   border-radius: 50%;
   width: 32px;
   height: 32px;
 }
-body[data-theme="airbnb"] .logo {
+body[data-theme="warm"] .logo {
   color: #ff385c;
 }
-body[data-theme="airbnb"] .nav {
+body[data-theme="warm"] .nav {
   border-radius: 14px;
 }
-body[data-theme="airbnb"] .nav.active {
+body[data-theme="warm"] .nav.active {
   box-shadow:
     0 0 0 1px #00000005,
     0 2px 6px #0000000a,
     0 4px 8px #0000000a;
 }
-body[data-theme="airbnb"] .topbar {
+body[data-theme="warm"] .topbar {
   background: #ffffffdf;
   border-color: #eee;
 }
-body[data-theme="airbnb"] h1 {
+body[data-theme="warm"] h1 {
   font-size: 36px;
   line-height: 1.15;
   font-weight: 700;
   letter-spacing: -0.6px;
 }
-body[data-theme="airbnb"] h2 {
+body[data-theme="warm"] h2 {
   letter-spacing: -0.25px;
 }
-body[data-theme="airbnb"] .primary {
+body[data-theme="warm"] .primary {
   border-radius: 10px;
   background: linear-gradient(100deg, #e61e4d, #d70466);
   border: 0;
   padding: 11px 20px;
 }
-body[data-theme="airbnb"] .hero {
+body[data-theme="warm"] .hero {
   background: #f5eee6;
   color: #222;
   border-radius: 24px;
 }
-body[data-theme="airbnb"] .hero p,
-body[data-theme="airbnb"] .hero small,
-body[data-theme="airbnb"] .hero .eyebrow {
+body[data-theme="warm"] .hero p,
+body[data-theme="warm"] .hero small,
+body[data-theme="warm"] .hero .eyebrow {
   color: #796f63;
 }
-body[data-theme="airbnb"] .hero h2 {
+body[data-theme="warm"] .hero h2 {
   font-weight: 650;
 }
-body[data-theme="airbnb"] .stats {
+body[data-theme="warm"] .stats {
   border: 1px solid #e9e7e5;
   box-shadow:
     0 2px 6px #00000005,
     0 4px 8px #00000003;
   border-radius: 20px;
 }
-body[data-theme="airbnb"] .stat strong {
+body[data-theme="warm"] .stat strong {
   font-weight: 650;
   letter-spacing: -0.7px;
 }
-body[data-theme="airbnb"] .panel,
-body[data-theme="airbnb"] .tablepanel {
+body[data-theme="warm"] .panel,
+body[data-theme="warm"] .tablepanel {
   border: 1px solid var(--line);
   border-radius: 20px;
 }
-body[data-theme="airbnb"] .subnav {
+body[data-theme="warm"] .subnav {
   gap: 10px;
   border: 0;
   padding: 0 0 4px;
 }
-body[data-theme="airbnb"] .subnav button {
+body[data-theme="warm"] .subnav button {
   border: 1px solid var(--line);
   border-radius: 28px;
   background: white;
   padding: 10px 17px;
   font-size: 11px;
 }
-body[data-theme="airbnb"] .subnav button.active {
+body[data-theme="warm"] .subnav button.active {
   background: #222;
   color: white;
   border-color: #222;
 }
-body[data-theme="airbnb"] .filter-workspace {
+body[data-theme="warm"] .filter-workspace {
   border-radius: 20px;
   background: #fff;
   box-shadow: 0 3px 12px #00000004;
 }
-body[data-theme="airbnb"] .filter-trigger,
-body[data-theme="airbnb"] .period-trigger,
-body[data-theme="airbnb"] .comparison-trigger {
+body[data-theme="warm"] .filter-trigger,
+body[data-theme="warm"] .period-trigger,
+body[data-theme="warm"] .comparison-trigger {
   border-radius: 24px;
 }
-body[data-theme="airbnb"] .quickfilters button {
+body[data-theme="warm"] .quickfilters button {
   background: #f4f4f4;
 }
-body[data-theme="airbnb"] .quickfilters button[aria-pressed="true"] {
+body[data-theme="warm"] .quickfilters button[aria-pressed="true"] {
   background: #fff0f3;
   color: #d91442;
 }
-body[data-theme="airbnb"] .campaign {
+body[data-theme="warm"] .campaign {
   border: 1px solid var(--line);
   border-radius: 20px;
 }
-body[data-theme="airbnb"] .campaign-cover {
+body[data-theme="warm"] .campaign-cover {
   height: 190px;
   border-radius: 16px;
   margin: 8px 8px 0;
 }
-body[data-theme="airbnb"] .quick {
+body[data-theme="warm"] .quick {
   border: 1px solid var(--line);
   border-radius: 20px;
 }
-body[data-theme="airbnb"] .insight {
+body[data-theme="warm"] .insight {
   background: #fff3f0;
   color: #7e4541;
 }
-body[data-theme="airbnb"] .thumb {
+body[data-theme="warm"] .thumb {
   border-radius: 10px;
 }
-body[data-theme="airbnb"] .popover {
+body[data-theme="warm"] .popover {
   border-radius: 18px;
   box-shadow:
     0 0 0 1px #00000005,
     0 8px 28px #0000001f;
 }
-body[data-theme="airbnb"] .themebar nav {
+body[data-theme="warm"] .themebar nav {
   background: #f6f4f2;
 }
-body[data-theme="stripe"] {
+body[data-theme="studio"] {
   --bg: #f6f9fc;
   --surface: #fff;
   --text: #061b31;
@@ -568,119 +568,119 @@ body[data-theme="stripe"] {
   font-feature-settings: "ss01";
   letter-spacing: -0.15px;
 }
-body[data-theme="stripe"] aside {
+body[data-theme="studio"] aside {
   background: #fff;
   border-color: #e5edf5;
 }
-body[data-theme="stripe"] .logo b {
+body[data-theme="studio"] .logo b {
   background: #533afd;
   border-radius: 6px;
 }
-body[data-theme="stripe"] .logo {
+body[data-theme="studio"] .logo {
   color: #061b31;
 }
-body[data-theme="stripe"] .topbar {
+body[data-theme="studio"] .topbar {
   background: #f6f9fce6;
   border-color: #e5edf5;
 }
-body[data-theme="stripe"] .nav {
+body[data-theme="studio"] .nav {
   border-radius: 6px;
 }
-body[data-theme="stripe"] .nav.active {
+body[data-theme="studio"] .nav.active {
   background: #f0edff;
   box-shadow: none;
 }
-body[data-theme="stripe"] h1 {
+body[data-theme="studio"] h1 {
   font-size: 44px;
   font-weight: 300;
   letter-spacing: -1px;
   line-height: 1.1;
 }
-body[data-theme="stripe"] h2 {
+body[data-theme="studio"] h2 {
   font-weight: 400;
 }
-body[data-theme="stripe"] .stat strong {
+body[data-theme="studio"] .stat strong {
   font-weight: 300;
   font-variant-numeric: tabular-nums;
 }
-body[data-theme="stripe"] .stats {
+body[data-theme="studio"] .stats {
   border-radius: 6px;
   box-shadow:
     0 30px 45px -30px #32325d40,
     0 18px 36px -18px #00000015;
 }
-body[data-theme="stripe"] .panel,
-body[data-theme="stripe"] .tablepanel,
-body[data-theme="stripe"] .quick,
-body[data-theme="stripe"] .campaign {
+body[data-theme="studio"] .panel,
+body[data-theme="studio"] .tablepanel,
+body[data-theme="studio"] .quick,
+body[data-theme="studio"] .campaign {
   border-radius: 6px;
   border: 1px solid var(--line);
   box-shadow:
     0 25px 40px -30px #32325d40,
     0 15px 30px -22px #0002;
 }
-body[data-theme="stripe"] .hero {
+body[data-theme="studio"] .hero {
   background: #1c1e54;
   border-radius: 6px;
 }
-body[data-theme="stripe"] .hero h2,
-body[data-theme="stripe"] .heronum {
+body[data-theme="studio"] .hero h2,
+body[data-theme="studio"] .heronum {
   font-weight: 300;
 }
-body[data-theme="stripe"] .primary,
-body[data-theme="stripe"] .secondary,
-body[data-theme="stripe"] .period-trigger,
-body[data-theme="stripe"] .comparison-trigger,
-body[data-theme="stripe"] .filter-trigger {
+body[data-theme="studio"] .primary,
+body[data-theme="studio"] .secondary,
+body[data-theme="studio"] .period-trigger,
+body[data-theme="studio"] .comparison-trigger,
+body[data-theme="studio"] .filter-trigger {
   border-radius: 5px;
 }
-body[data-theme="stripe"] .primary {
+body[data-theme="studio"] .primary {
   background: #533afd;
 }
-body[data-theme="stripe"] .primary:hover {
+body[data-theme="studio"] .primary:hover {
   background: #4434d4;
 }
-body[data-theme="stripe"] .subnav button.active {
+body[data-theme="studio"] .subnav button.active {
   color: #533afd;
   border-bottom-color: #533afd;
 }
-body[data-theme="stripe"] .filter-workspace {
+body[data-theme="studio"] .filter-workspace {
   border-radius: 6px;
   box-shadow: 0 8px 20px -15px #32325d30;
 }
-body[data-theme="stripe"] .quickfilters button,
-body[data-theme="stripe"] .filter-chip {
+body[data-theme="studio"] .quickfilters button,
+body[data-theme="studio"] .filter-chip {
   border-radius: 4px;
 }
-body[data-theme="stripe"] .popover {
+body[data-theme="studio"] .popover {
   border-radius: 7px;
   box-shadow:
     0 25px 45px -15px #32325d40,
     0 12px 30px -12px #0002;
 }
-body[data-theme="stripe"] .insight {
+body[data-theme="studio"] .insight {
   background: #eeedff;
   color: #49427c;
   border-radius: 6px;
 }
-body[data-theme="stripe"] .themebar nav,
-body[data-theme="stripe"] .themebar nav button {
+body[data-theme="studio"] .themebar nav,
+body[data-theme="studio"] .themebar nav button {
   border-radius: 5px;
 }
-body[data-theme="stripe"] .themebar nav {
+body[data-theme="studio"] .themebar nav {
   background: #f0edff;
 }
-body[data-theme="stripe"] th {
+body[data-theme="studio"] th {
   background: #f8faff;
 }
-body[data-theme="stripe"] dialog {
+body[data-theme="studio"] dialog {
   border-radius: 8px;
 }
-body[data-theme="stripe"] .pricebox {
+body[data-theme="studio"] .pricebox {
   border-radius: 6px;
 }
 @media (max-width: 1200px) {
-  body[data-theme="airbnb"] {
+  body[data-theme="warm"] {
     --side: 190px;
   }
   .themebar {
@@ -698,7 +698,7 @@ body[data-theme="stripe"] .pricebox {
   }
 }
 @media (max-width: 900px) {
-  body[data-theme="airbnb"] {
+  body[data-theme="warm"] {
     --side: 70px;
   }
   .heading .actions {
@@ -722,13 +722,13 @@ body[data-theme="stripe"] .pricebox {
   }
 }
 @media (max-width: 600px) {
-  body[data-theme="airbnb"] {
+  body[data-theme="warm"] {
     --side: 0px;
   }
-  body[data-theme="airbnb"] h1 {
+  body[data-theme="warm"] h1 {
     font-size: 31px;
   }
-  body[data-theme="stripe"] h1 {
+  body[data-theme="studio"] h1 {
     font-size: 34px;
   }
   .themebar {
@@ -829,7 +829,7 @@ body[data-theme="stripe"] .pricebox {
     font-size: 10px;
     padding: 7px 10px;
   }
-  body[data-theme="airbnb"] .campaign-cover {
+  body[data-theme="warm"] .campaign-cover {
     height: 165px;
   }
   .command-result {
@@ -848,16 +848,16 @@ body[data-theme="stripe"] .pricebox {
 .chart-legend b {
   color: var(--blue);
 }
-body[data-theme="airbnb"] .pill.blue {
+body[data-theme="warm"] .pill.blue {
   background: #fff0f3;
   color: #d91443 !important;
 }
-body[data-theme="stripe"] .pill.blue {
+body[data-theme="studio"] .pill.blue {
   background: #f0edff;
   color: #533afd !important;
 }
-body[data-theme="airbnb"] .thumb,
-body[data-theme="stripe"] .thumb {
+body[data-theme="warm"] .thumb,
+body[data-theme="studio"] .thumb {
   display: inline-block;
 }
 #period[hidden] {

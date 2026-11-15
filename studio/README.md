@@ -1,6 +1,6 @@
 # AGROMAT Studio
 
-Separate Stripe-inspired read-only dashboard at `studio.agromat-analytics.co.ua`.
+Independent AGROMAT read-only dashboard at `studio.agromat-analytics.co.ua`.
 
 ## Isolation
 

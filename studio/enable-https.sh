@@ -36,4 +36,4 @@ NGINX
 nginx -t
 systemctl reload nginx
 [[ "$OLD_NGINX" == "$(sha256sum /etc/nginx/sites-enabled/agromat-catalog | cut -d' ' -f1)" ]]
-curl -fsS --resolve "$DOMAIN:443:$EXPECTED_IP" "https://$DOMAIN/api/health"
+curl --retry 5 --retry-delay 1 --retry-all-errors -fsS --resolve "$DOMAIN:443:$EXPECTED_IP" "https://$DOMAIN/api/health"

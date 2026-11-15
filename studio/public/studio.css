@@ -416,3 +416,6 @@
     animation: none;
   }
 }
+
+.logo .brand-logo { display: block; width: 175px; height: auto; max-width: 100%; flex-shrink: 0; }
+@media (max-width: 760px) { .logo .brand-logo { width: 150px; } }
