@@ -1349,6 +1349,7 @@ $("#detail").onclick = (e) => {
   if (e.target === e.currentTarget) e.currentTarget.close();
 };
 document.addEventListener("click", (e) => {
+  if (!e.target.isConnected) return;
   $$("details[open]").forEach((d) => {
     if (!d.contains(e.target)) d.open = false;
   });
