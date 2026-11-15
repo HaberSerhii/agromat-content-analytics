@@ -489,7 +489,7 @@ function overviewCard(
   comparison = "Торік",
   lowerIsBetter = false,
 ) {
-  let html = kpi(label, value === null ? null : format(value), note, action);
+  let html = kpi(label, value === null ? null : format(value), "", action).replace("<small></small>", "");
   if (!state.yoy) return html;
   const valid = typeof previous === "number" && Number.isFinite(previous),
     delta =
