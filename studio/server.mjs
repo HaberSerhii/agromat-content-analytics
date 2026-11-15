@@ -113,6 +113,7 @@ const statics = new Map([
   ["/index.html", "index.html"],
   ["/app.js", "app.js"],
   ["/chart-data.mjs", "chart-data.mjs"],
+  ["/api-cache.mjs", "api-cache.mjs"],
   ["/base.css", "base.css"],
   ["/theme.css", "theme.css"],
   ["/studio.css", "studio.css"],

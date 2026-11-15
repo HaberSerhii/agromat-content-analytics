@@ -1,3 +1,4 @@
+import { apiParams, createApiCache } from "/api-cache.mjs?v=cache1";
 import {
   defaultRange,
   chartSeries,
@@ -186,20 +187,9 @@ window.addEventListener("popstate", () => {
   parseLocation();
   load();
 });
+const apiCache = createApiCache();
 async function api(kind, extra = {}) {
-  let params = new URLSearchParams({
-      ...state,
-      ...extra,
-      yoy: state.yoy ? "1" : "0",
-    }),
-    r = await fetch("/api/" + kind + "?" + params);
-  let d = await r.json();
-  if (!r.ok && !d.available)
-    return {
-      available: false,
-      notice: d.notice || "Не вдалося завантажити джерело.",
-    };
-  return d;
+  return apiCache.get("/api/" + kind + "?" + apiParams(kind, state, extra));
 }
 const sourceStatus = new Map();
 function sourceTime(value) {
@@ -344,6 +334,14 @@ async function load() {
   skeleton();
   try {
     if (section === "home" && view === "overview") {
+      if (
+        !["all", "site", "monomarket", "rozetka", "prom"].includes(
+          state.chartChannel,
+        )
+      )
+        state.chartChannel = "all";
+      const chartSales = state.chartChannel === "prom" ? Promise.resolve(null)
+        : api("sales", { channel: state.chartChannel, segment: state.chartSegment }).catch(() => ({ available: false }));
       let [
         sales,
         products,
@@ -374,15 +372,7 @@ async function load() {
         content,
         users,
       };
-      if (
-        !["all", "site", "monomarket", "rozetka", "prom"].includes(
-          state.chartChannel,
-        )
-      )
-        state.chartChannel = "all";
-      data.chartSales = state.chartChannel === "prom" ? null : sales;
-      if (state.chartChannel !== "prom")
-        data.chartSales = await api("sales", { channel: state.chartChannel, segment: state.chartSegment });
+      data.chartSales = await chartSales;
       if (id !== requestId) return;
       $("#content").innerHTML = overview(data);
     } else {
@@ -583,7 +573,11 @@ function bindOverviewControls() {
       chartFilterOpen = true;
       state[button.dataset.chartFilter] = button.dataset.chartValue;
       saveLocation();
-      updateOverviewChart();
+      if (button.dataset.chartFilter === "chartMetric") {
+        $("#overview-sales-chart").innerHTML = salesChart(data.chartSales);
+        $("#overview-sales-ranking").innerHTML = rankingPanel(data.chartSales);
+        bindContent();
+      } else updateOverviewChart();
     };
   });
   if ($("#sales-ranking"))

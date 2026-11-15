@@ -15,6 +15,10 @@ test("public server exposes only static assets, health and read-only bounded API
     assert.equal(r.status, 404);
     r = await fetch(base + "/api/products?from=2026-02-30&to=2026-03-01");
     assert.equal(r.status, 400);
+    r = await fetch(base + "/api-cache.mjs");
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get("content-type"), /javascript/);
+    assert.match(await r.text(), /createApiCache/);
     r = await fetch(base + "/.env");
     assert.equal(r.status, 404);
     r = await fetch(base + "/");
