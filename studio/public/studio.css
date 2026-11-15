@@ -547,38 +547,71 @@
 }
 .source-status {
   display: flex;
-  gap: 10px;
   align-items: center;
-  color: #7b8799;
-  font-size: 9px;
-  line-height: 1.35;
+  gap: 8px;
+  color: #779084;
+  font-size: 10px;
   font-weight: 400;
-}
-#source-status-list {
-  display: grid;
-  gap: 1px;
-}
-#source-status-list > div {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-#source-status-list span {
-  min-width: 85px;
-}
-#source-status-list time {
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-#source-status-list i {
-  font-size: 13px;
+#live-data-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+#live-data-label i {
+  font-size: 8px;
   font-style: normal;
 }
-#source-status-list .ready {
+#live-data-label .ready,
+.source-state.ready {
   color: #25a77b;
 }
-#source-status-list .pending {
-  color: #adb5c2;
+#live-data-label .pending,
+.source-state.pending {
+  color: #9a8b6b;
+}
+#live-data-label .unknown {
+  color: #a0a8b5;
+}
+.source-detail-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.source-detail {
+  padding: 14px;
+  border: 1px solid #e5edf5;
+  border-radius: 8px;
+}
+.source-detail > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.source-detail b {
+  font-size: 12px;
+}
+.source-state {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.source-detail p {
+  font-size: 11px;
+  margin: 9px 0 5px;
+}
+.source-detail small,
+.source-check-note {
+  font-size: 10px;
+  color: #8591a5;
+  line-height: 1.5;
+}
+@media (max-width: 600px) {
+  .source-detail-list {
+    grid-template-columns: 1fr;
+  }
 }
 .kpi-comparison {
   display: flex;
@@ -609,9 +642,6 @@
     font-size: 8px;
     gap: 4px;
   }
-  #source-status-list span {
-    min-width: 70px;
-  }
   .topbar {
     padding-left: 16px;
     padding-right: 16px;
@@ -624,4 +654,10 @@
   }
 }
 
-.heading .actions .dated input, .heading .actions .dated button, .heading .actions #toggle-yoy {height:38px;min-height:38px;max-height:38px;}
+.heading .actions .dated input,
+.heading .actions .dated button,
+.heading .actions #toggle-yoy {
+  height: 38px;
+  min-height: 38px;
+  max-height: 38px;
+}

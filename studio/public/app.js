@@ -195,12 +195,35 @@ function sourceTime(value) {
         .replace(",", "");
 }
 function sourceStatusHTML() {
-  return ["GA4", "API AGROMAT", "ERP / S3", "Моніторинг цін"]
-    .map((name) => {
-      const d = sourceStatus.get(name);
-      return `<div><span>${name}</span><i class="${d?.available ? "ready" : "pending"}">·</i><time>${d ? (d.available ? sourceTime(d.updatedAt) : "недоступно") : "—"}</time></div>`;
+  const descriptions = {
+    GA4: "Сесії, покупки та атрибутована виручка. Час останнього отримання звіту.",
+    "API AGROMAT": "Каталог, залишки та контент. Час синхронізації каталогу.",
+    "ERP / S3": "Замовлення та відвантаження. Час оновлення файлу джерела.",
+    "Моніторинг цін":
+      "Ціни конкурентів. Дата поточного знімка; точний час джерело не передає.",
+  };
+  return `<div class="source-detail-list">${Object.entries(descriptions)
+    .map(([name, description]) => {
+      const d = sourceStatus.get(name),
+        status = d
+          ? d.available
+            ? "Онлайн"
+            : "Недоступно"
+          : "Ще не перевірено";
+      return `<section class="source-detail"><div><b>${name}</b><span class="source-state ${d?.available ? "ready" : "pending"}">● ${status}</span></div><p>Останнє оновлення: <time>${d?.updatedAt ? sourceTime(d.updatedAt) : "час не передано"}</time></p><small>${description}</small></section>`;
     })
-    .join("");
+    .join(
+      "",
+    )}</div><p class="source-check-note">Статус за останнім запитом дашборда. Час — Київ.</p>`;
+}
+function sourceBadgeHTML() {
+  const rows = [...sourceStatus.values()];
+  const status = rows.some((d) => !d.available)
+    ? "pending"
+    : rows.length
+      ? "ready"
+      : "unknown";
+  return `<i class="${status}" aria-hidden="true">●</i> Live Data`;
 }
 function updateSources() {
   if (section === "home" && view === "overview") {
@@ -221,6 +244,8 @@ function updateSources() {
     }[section];
     if (name) sourceStatus.set(name, data);
   }
+  if ($("#live-data-label"))
+    $("#live-data-label").innerHTML = sourceBadgeHTML();
   if ($("#source-status-list"))
     $("#source-status-list").innerHTML = sourceStatusHTML();
 }
@@ -236,7 +261,7 @@ function skeleton() {
       )
       .join(
         "",
-      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="source-status"><div id="source-status-list">${sourceStatusHTML()}</div><button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div>${["sales", "home"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}</div></section><nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav><div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="source-status"><span id="live-data-label">${sourceBadgeHTML()}</span><button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div>${["sales", "home"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}</div></section><nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav><div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
   bindShell();
 }
 function bindShell() {
@@ -278,7 +303,7 @@ function bindShell() {
   $("#info").onclick = () =>
     modal(
       "Джерела та визначення",
-      `<p>Каталог та акції — синхронізовані дані Agromat API. Ціни конкурентів — поточний фід системи моніторингу. Продажі — агрегати джерела продажів. Канали — GA4.</p><p>Отримані документи та відвантажений виторг — різні показники. Атрибутована виручка GA4 також не прирівнюється до завершених продажів ERP.</p><p>Демонстраційні підстановки не використовуються. Якщо джерело або історія недоступні, це показано явно. Персональні дані покупців і керування парсерами тут не публікуються.</p>`,
+      `<div id="source-status-list">${sourceStatusHTML()}</div><p>Каталог та акції — синхронізовані дані Agromat API. Ціни конкурентів — поточний фід системи моніторингу. Продажі — агрегати джерела продажів. Канали — GA4.</p><p>Отримані документи та відвантажений виторг — різні показники. Атрибутована виручка GA4 також не прирівнюється до завершених продажів ERP.</p><p>Демонстраційні підстановки не використовуються. Якщо джерело або історія недоступні, це показано явно. Персональні дані покупців і керування парсерами тут не публікуються.</p>`,
     );
 }
 async function load() {
@@ -489,7 +514,12 @@ function overviewCard(
   comparison = "Торік",
   lowerIsBetter = false,
 ) {
-  let html = kpi(label, value === null ? null : format(value), "", action).replace("<small></small>", "");
+  let html = kpi(
+    label,
+    value === null ? null : format(value),
+    "",
+    action,
+  ).replace("<small></small>", "");
   if (!state.yoy) return html;
   const valid = typeof previous === "number" && Number.isFinite(previous),
     delta =
