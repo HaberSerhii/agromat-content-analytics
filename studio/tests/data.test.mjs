@@ -176,3 +176,22 @@ test("inventory history requests are restricted to aggregate product snapshots",
     false,
   );
 });
+
+test("sales channel filters are explicit and never fall back for unsupported channels", () => {
+  for (const channel of ["all", "site", "monomarket", "rozetka"]) {
+    const u = new URL(
+      buildPath("sales", new URLSearchParams({ channel }), {
+        from: "2026-11-01",
+        to: "2026-11-14",
+      }),
+      "http://local",
+    );
+    assert.equal(u.searchParams.get("channel"), channel);
+  }
+  assert.throws(() =>
+    buildPath("sales", new URLSearchParams("channel=prom"), {
+      from: "2026-11-01",
+      to: "2026-11-14",
+    }),
+  );
+});

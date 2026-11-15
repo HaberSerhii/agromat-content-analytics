@@ -360,6 +360,10 @@ export function buildPath(kind, params, range) {
     return "/api/promotions/catalog?" + q;
   }
   if (kind === "sales") {
+    const channel = params.get("channel") || "all";
+    if (!["all", "site", "monomarket", "rozetka"].includes(channel))
+      throw new Error("unsupported_channel");
+    q.set("channel", channel);
     q.delete("page");
     q.delete("limit");
     q.delete("search");

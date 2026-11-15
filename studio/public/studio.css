@@ -661,3 +661,23 @@
   min-height: 38px;
   max-height: 38px;
 }
+
+.panelhead select {
+  height: 32px;
+  max-width: 145px;
+  border: 1px solid #e5edf5;
+  border-radius: 7px;
+  background: #fff;
+  color: #65758d;
+  padding: 0 8px;
+  font: 11px system-ui;
+}
+.panelhead {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+#overview-sales-chart > .panel,
+#overview-sales-ranking > .panel {
+  height: 100%;
+  box-sizing: border-box;
+}
