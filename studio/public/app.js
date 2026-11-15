@@ -487,6 +487,7 @@ function overviewCard(
   previous,
   format = num,
   comparison = "Торік",
+  lowerIsBetter = false,
 ) {
   let html = kpi(label, value === null ? null : format(value), note, action);
   if (!state.yoy) return html;
@@ -504,7 +505,7 @@ function overviewCard(
       : `${delta > 0 ? "+" : ""}${pct(delta)}`;
   return html.replace(
     "</button>",
-    `<div class="kpi-comparison"><span>${esc(comparison)}: ${esc(baseline)}</span><b class="${delta === null ? "muted" : delta >= 0 ? "good" : "bad"}">${esc(change)}</b></div></button>`,
+    `<div class="kpi-comparison"><span>${esc(comparison)}: ${esc(baseline)}</span><b class="${delta === null ? "muted" : (lowerIsBetter ? delta <= 0 : delta >= 0) ? "good" : "bad"}">${esc(change)}</b></div></button>`,
   );
 }
 function overview(d) {
@@ -559,6 +560,9 @@ function overview(d) {
         "За вибраний період · ERP",
         "sales/cancellations",
         p.canceledDocs,
+        num,
+        "Торік",
+        true,
       ),
       overviewCard(
         "AOV",
