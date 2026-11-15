@@ -2,7 +2,7 @@ import {
   defaultRange,
   chartSeries,
   yearBefore,
-} from "/chart-data.mjs?v=overview1";
+} from "/chart-data.mjs?v=salesfilters1";
 const $ = (s) => document.querySelector(s),
   $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (v) =>
@@ -111,6 +111,9 @@ let section = "home",
     competitor: "all",
     chartChannel: "all",
     ranking: "category",
+    chartMetric: "revenue",
+    chartSegment: "Усі",
+    chartInterval: "day",
   },
   data = null,
   requestId = 0,
@@ -134,9 +137,17 @@ function parseLocation() {
     "search",
     "competitor",
     "chartChannel",
+    "chartMetric",
+    "chartSegment",
+    "chartInterval",
     "ranking",
   ])
     if (params.has(k)) state[k] = params.get(k);
+  for (const [key, allowed, fallback] of [
+    ["chartMetric", ["revenue", "docs"], "revenue"],
+    ["chartInterval", ["day", "week", "month"], "day"],
+    ["chartSegment", ["Усі", "Плитка", "Сантехніка", "Підлогові покриття", "Джерела живлення", "Будівельна хімія", "Інше"], "Усі"],
+  ]) if (!allowed.includes(state[key])) state[key] = fallback;
   state.page = Math.max(1, Number(params.get("page")) || 1);
   state.yoy = params.get("yoy") !== "0";
 }
@@ -369,8 +380,9 @@ async function load() {
         )
       )
         state.chartChannel = "all";
-      if (state.chartChannel !== "all" && state.chartChannel !== "prom")
-        data.chartSales = await api("sales", { channel: state.chartChannel });
+      data.chartSales = state.chartChannel === "prom" ? null : sales;
+      if (state.chartChannel !== "prom")
+        data.chartSales = await api("sales", { channel: state.chartChannel, segment: state.chartSegment });
       if (id !== requestId) return;
       $("#content").innerHTML = overview(data);
     } else {
@@ -495,42 +507,46 @@ function monotone(points) {
       .join("")
   );
 }
+const chartFilters = [
+  ["chartChannel", "Канал продажів", [["all", "Усі канали"], ["site", "Сайт"], ["monomarket", "Monomarket"], ["rozetka", "Rozetka"], ["prom", "Prom"]]],
+  ["chartMetric", "Показник", [["revenue", "Продажі, грн"], ["docs", "Замовлення"]]],
+  ["chartSegment", "Сегмент", ["Усі", "Плитка", "Сантехніка", "Підлогові покриття", "Джерела живлення", "Будівельна хімія", "Інше"].map(value => [value, value === "Усі" ? "Усі сегменти" : value])],
+  ["chartInterval", "Періодичність", [["day", "За днями"], ["week", "За тижнями"], ["month", "За місяцями"]]],
+];
 function chartControl() {
-  return `<label class="panel-select"><span class="sr">Канал графіка</span><select id="chart-channel" aria-label="Канал графіка">${[
-    ["all", "Усі канали"],
-    ["site", "Site"],
-    ["monomarket", "Monomarket"],
-    ["rozetka", "Rozetka"],
-    ["prom", "Prom"],
-  ]
-    .map(
-      ([v, label]) =>
-        `<option value="${v}" ${state.chartChannel === v ? "selected" : ""}>${label}</option>`,
-    )
-    .join("")}</select></label>`;
+  const summary = chartFilters.map(([key, , options]) => options.find(([value]) => value === state[key])?.[1] || options[0][1]).join(" · ");
+  return `<details class="chart-filters"><summary aria-label="Налаштування графіка">⚙ ${esc(summary)}</summary><div class="chart-filter-popover">${chartFilters.map(([key, label, options]) => `<fieldset><legend>${label}</legend><div class="chart-filter-options">${options.map(([value, name]) => `<button type="button" aria-label="${esc(name)}" data-chart-filter="${key}" data-chart-value="${esc(value)}" aria-pressed="${state[key] === value}">${esc(name)}</button>`).join("")}</div></fieldset>`).join("")}<p>Налаштування змінюють графік і продажі за категоріями та брендами.</p></div></details>`;
 }
 function rankingPanel(d) {
   const brand = state.ranking === "brand";
   return panel(
-    brand ? "Продажі за брендами" : "Продажі за категоріями",
+    state.chartMetric === "docs"
+      ? brand ? "Замовлення за брендами" : "Замовлення за категоріями"
+      : brand ? "Продажі за брендами" : "Продажі за категоріями",
     "Лише відвантажені замовлення",
-    bars(
-      brand ? d.brands : d.categories,
-      "revenue",
+    state.chartChannel === "prom"
+      ? '<p class="empty">Джерело продажів поки не виділяє канал Prom.</p>'
+      : !d?.available
+        ? '<p class="empty">Дані вибраного каналу недоступні.</p>'
+        : bars(
+      brand ? d?.brands || [] : d?.categories || [],
+      state.chartMetric === "docs" ? "docs" : "revenue",
       brand ? "brand" : "category",
     ),
     `<select id="sales-ranking" aria-label="Групування продажів"><option value="category" ${!brand ? "selected" : ""}>Категорії</option><option value="brand" ${brand ? "selected" : ""}>Бренди</option></select>`,
   );
 }
-let chartRequest = 0;
+let chartRequest = 0, chartFilterOpen = false;
 async function updateOverviewChart() {
   const pageRequest = requestId,
     id = ++chartRequest,
     target = $("#overview-sales-chart");
   if (!target) return;
   if (state.chartChannel === "prom") {
+    data.chartSales = null;
     target.innerHTML = salesChart(null);
-    bindOverviewControls();
+    $("#overview-sales-ranking").innerHTML = rankingPanel(null);
+    bindContent();
     return;
   }
   target.innerHTML = panel(
@@ -539,11 +555,11 @@ async function updateOverviewChart() {
     '<div class="loading">Завантаження…</div>',
     chartControl(),
   );
+  data.chartSales = null;
+  $("#overview-sales-ranking").innerHTML = panel("Продажі за категоріями та брендами", "Вибраний канал", '<div class="loading">Завантаження…</div>');
   bindOverviewControls();
   const result =
-    state.chartChannel === "all"
-      ? data.sales
-      : await api("sales", { channel: state.chartChannel });
+    await api("sales", { channel: state.chartChannel, segment: state.chartSegment }).catch(() => ({ available: false }));
   if (
     id !== chartRequest ||
     pageRequest !== requestId ||
@@ -552,20 +568,28 @@ async function updateOverviewChart() {
     return;
   data.chartSales = result;
   $("#overview-sales-chart").innerHTML = salesChart(result);
-  bindOverviewControls();
+  $("#overview-sales-ranking").innerHTML = rankingPanel(result);
+  bindContent();
 }
 function bindOverviewControls() {
-  if ($("#chart-channel"))
-    $("#chart-channel").onchange = (e) => {
-      state.chartChannel = e.target.value;
+  const filters = $(".chart-filters");
+  if (filters) {
+    filters.open = chartFilterOpen;
+    filters.ontoggle = () => { chartFilterOpen = filters.open; };
+  }
+  $$("[data-chart-filter]").forEach(button => {
+    button.onclick = () => {
+      chartFilterOpen = true;
+      state[button.dataset.chartFilter] = button.dataset.chartValue;
       saveLocation();
       updateOverviewChart();
     };
+  });
   if ($("#sales-ranking"))
     $("#sales-ranking").onchange = (e) => {
       state.ranking = e.target.value;
       saveLocation();
-      $("#overview-sales-ranking").innerHTML = rankingPanel(data.sales);
+      $("#overview-sales-ranking").innerHTML = rankingPanel(data.chartSales);
       bindContent();
     };
 }
@@ -585,6 +609,7 @@ function salesChart(d) {
       '<p class="empty">Не вдалося завантажити вибраний канал.</p>',
       control,
     );
+  const formatValue = state.chartMetric === "docs" ? num : money;
   const { interval, rows } = chartSeries(d, state, state.yoy);
   if (!rows.length || d.seriesUnavailable)
     return panel(
@@ -614,10 +639,10 @@ function salesChart(d) {
           : delta === null
             ? "База торік — 0; зміна не визначена"
             : `${delta > 0 ? "+" : ""}${pct(delta)}`;
-      const currentDates = `${r.from} — ${r.to}`,
-        priorDates = `${yearBefore(r.from)} — ${yearBefore(r.to)}`;
-      const title = `${r.label} · ${currentDates}: ${money(r.value)}${state.yoy ? ` · ${priorDates}: ${r.previous === null ? "немає даних" : money(r.previous)} · ${change}` : ""}`;
-      return `<g class="chart-point" tabindex="0" role="img" aria-label="${esc(title)}"><circle cx="${p[0]}" cy="${p[1]}" r="12" fill="transparent"/><circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#fff" stroke="#533afd"/><title>${esc(title)}</title><foreignObject class="chart-tooltip" x="${Math.min(430, Math.max(40, p[0] - 120))}" y="${Math.max(0, p[1] - 115)}" width="225" height="112"><div xmlns="http://www.w3.org/1999/xhtml"><b>${esc(r.label)}</b><span>${currentDates}</span><strong>${money(r.value)}</strong>${state.yoy ? `<span>Торік: ${r.previous === null ? "немає даних" : money(r.previous)} · ${priorDates}</span><b class="${delta === null ? "muted" : delta >= 0 ? "good" : "bad"}">${esc(change)}</b>` : ""}</div></foreignObject></g>`;
+      const currentYear = r.from.slice(0, 4),
+        previousYear = yearBefore(r.from).slice(0, 4);
+      const title = `${currentYear}: ${formatValue(r.value)}${state.yoy ? ` · ${previousYear}: ${r.previous === null ? "немає даних" : formatValue(r.previous)} · ${change}` : ""}`;
+      return `<g class="chart-point" tabindex="0" role="img" aria-label="${esc(title)}"><circle cx="${p[0]}" cy="${p[1]}" r="12" fill="transparent"/><circle cx="${p[0]}" cy="${p[1]}" r="2" fill="#fff" stroke="#533afd"/><foreignObject class="chart-tooltip" x="${Math.min(430, Math.max(40, p[0] - 120))}" y="${Math.max(0, p[1] - 95)}" width="225" height="92"><div xmlns="http://www.w3.org/1999/xhtml"><strong>${currentYear}: ${formatValue(r.value)}</strong>${state.yoy ? `<strong>${previousYear}: ${r.previous === null ? "немає даних" : formatValue(r.previous)}</strong><b class="${delta === null ? "muted" : delta >= 0 ? "good" : "bad"}">${esc(change)}</b>` : ""}</div></foreignObject></g>`;
     })
     .join("");
   const tickCount = interval === "week" ? 3 : 5;
@@ -637,10 +662,10 @@ function salesChart(d) {
     )
     .join("");
   return panel(
-    "Динаміка відвантажень",
+    state.chartMetric === "docs" ? "Динаміка відвантажених замовлень" : "Динаміка відвантажень",
     { day: "Денні", week: "Тижневі", month: "Місячні" }[interval] +
       " інтервали вибраного періоду",
-    `<div class="live-chart"><svg viewBox="0 0 680 215" role="img" aria-label="Динаміка відвантажень"><defs><linearGradient id="fade" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#533afd" stop-opacity=".15"/><stop offset="1" stop-color="#533afd" stop-opacity="0"/></linearGradient></defs>${[30, 80, 130, 180].map((y, i) => `<path d="M40 ${y}H660" stroke="#e5edf5" stroke-dasharray="3 5"/><text x="32" y="${y + 3}" text-anchor="end" font-size="8" fill="#8a94a5">${num((max * (1 - i / 3)) / 1000)}к</text>`).join("")}<path d="${line} L${points.at(-1)[0]} 180 L40 180Z" fill="url(#fade)"/>${prior ? `<path d="${monotone(coords(prior))}" fill="none" stroke="#9ca8bc" stroke-width="2" stroke-dasharray="5 5"/>` : ""}<path d="${line}" fill="none" stroke="#533afd" stroke-width="2.5"/>${ticks}${marks}</svg><div class="chart-legend"><b>● Поточний період</b>${hasPrior ? '<span class="old">┄ Ті самі дати торік</span>' : state.yoy ? "<span>Історія за попередній рік відсутня у відповіді джерела</span>" : ""}</div></div>`,
+    `<div class="live-chart"><svg viewBox="0 0 680 215" role="img" aria-label="Динаміка відвантажень"><defs><linearGradient id="fade" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#533afd" stop-opacity=".15"/><stop offset="1" stop-color="#533afd" stop-opacity="0"/></linearGradient></defs>${[30, 80, 130, 180].map((y, i) => `<path d="M40 ${y}H660" stroke="#e5edf5" stroke-dasharray="3 5"/><text x="32" y="${y + 3}" text-anchor="end" font-size="8" fill="#8a94a5">${state.chartMetric === "docs" ? num(Math.round(max * (1 - i / 3))) : num((max * (1 - i / 3)) / 1000) + "к"}</text>`).join("")}<path d="${line} L${points.at(-1)[0]} 180 L40 180Z" fill="url(#fade)"/>${prior ? `<path d="${monotone(coords(prior))}" fill="none" stroke="#9ca8bc" stroke-width="2" stroke-dasharray="5 5"/>` : ""}<path d="${line}" fill="none" stroke="#533afd" stroke-width="2.5"/>${ticks}${marks}</svg><div class="chart-legend"><b>● Поточний період</b>${hasPrior ? '<span class="old">┄ Ті самі дати торік</span>' : state.yoy ? "<span>Історія за попередній рік відсутня у відповіді джерела</span>" : ""}</div></div>`,
     control,
   );
 }
@@ -777,7 +802,7 @@ function overview(d) {
       ),
     ]),
     ok(d.sales)
-      ? `<div class="grid">${`<div id="overview-sales-chart">${salesChart(d.chartSales || d.sales)}</div><div id="overview-sales-ranking">${rankingPanel(d.sales)}</div>`}</div>`
+      ? `<div class="grid">${`<div id="overview-sales-chart">${salesChart(d.chartSales || d.sales)}</div><div id="overview-sales-ranking">${rankingPanel(d.chartSales || d.sales)}</div>`}</div>`
       : "",
   ].join("");
 }

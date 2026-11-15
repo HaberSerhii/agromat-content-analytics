@@ -365,6 +365,10 @@ export function buildPath(kind, params, range) {
     if (!["all", "site", "monomarket", "rozetka"].includes(channel))
       throw new Error("unsupported_channel");
     q.set("channel", channel);
+    const segment = params.get("segment") || "Усі";
+    if (!["Усі", "Плитка", "Сантехніка", "Підлогові покриття", "Джерела живлення", "Будівельна хімія", "Інше"].includes(segment))
+      throw new Error("unsupported_segment");
+    if (segment !== "Усі") q.set("segment", segment);
     q.delete("page");
     q.delete("limit");
     q.delete("search");

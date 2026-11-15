@@ -120,7 +120,7 @@ const statics = new Map([
 async function salesWithSeries(params, range) {
   const result = await upstream("sales", params, range);
   const days = (Date.parse(range.to) - Date.parse(range.from)) / 86400000 + 1;
-  if (!result.available || days <= 30 || days > 90) return result;
+  if (!result.available || days <= 30 || params.get("chartInterval") === "month") return result;
   const rows = [];
   for (
     let t = Date.parse(range.from);

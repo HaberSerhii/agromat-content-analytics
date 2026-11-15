@@ -681,3 +681,16 @@
   height: 100%;
   box-sizing: border-box;
 }
+
+.chart-filters { position: relative; max-width: 100%; font-size: 11px; }
+.chart-filters summary { cursor: pointer; list-style: none; border: 1px solid #dfe5ef; border-radius: 20px; padding: 9px 13px; color: #536781; background: #fff; }
+.chart-filters summary::-webkit-details-marker { display: none; }
+.chart-filters[open] summary { border-color: #533afd; color: #533afd; }
+.chart-filter-popover { position: absolute; right: 0; top: calc(100% + 9px); z-index: 30; width: 370px; max-width: calc(100vw - 56px); padding: 18px; border: 1px solid #e0e6ef; border-radius: 16px; background: #fff; box-shadow: 0 12px 36px #152a4926; text-align: left; }
+.chart-filter-popover fieldset { border: 0; padding: 0; margin: 0 0 17px; min-width: 0; }
+.chart-filter-popover legend { padding: 0; margin-bottom: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #65758d; }
+.chart-filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.chart-filter-options button { border: 1px solid #e0e6ef; border-radius: 20px; padding: 8px 11px; background: #f8f9fc; color: #10243e; font: inherit; cursor: pointer; }
+.chart-filter-options button[aria-pressed="true"] { background: #533afd; border-color: #533afd; color: #fff; }
+.chart-filter-options button:focus-visible, .chart-filters summary:focus-visible { outline: 2px solid #533afd; outline-offset: 3px; }
+.chart-filter-popover p { margin: 0; font-size: 11px; line-height: 1.5; color: #65758d; }

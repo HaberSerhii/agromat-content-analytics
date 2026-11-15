@@ -4,9 +4,8 @@ export function defaultRange(today) {
   // On the first day, show the last completed month.
   return { from: `${to.slice(0, 7)}-01`, to };
 }
-export function intervalFor(from, to) {
-  const days = Math.round((Date.parse(to) - Date.parse(from)) / DAY) + 1;
-  return days <= 30 ? "day" : days <= 90 ? "week" : "month";
+export function intervalFor(from, to, selected = "day") {
+  return ["day", "week", "month"].includes(selected) ? selected : "day";
 }
 export function yearBefore(date) {
   const [y, m, d] = date.split("-").map(Number);
@@ -18,21 +17,22 @@ const month = (d) =>
     timeZone: "UTC",
   });
 export function chartSeries(data, range, compare) {
-  const interval = intervalFor(range.from, range.to);
+  const interval = intervalFor(range.from, range.to, range.chartInterval);
   const prior =
     compare && data.previous?.available && data.previous.hasData
       ? data.previous
       : null;
+  const metric = range.chartMetric === "docs" ? "docs" : "revenue";
   const currentMap = new Map(
-    (interval === "month" ? data.months : data.byDate || []).map((r) => [
+    (interval === "month" ? data.months || [] : data.byDate || []).map((r) => [
       r.month || r.date,
-      Number(r.revenue) || 0,
+      Number(r[metric]) || 0,
     ]),
   );
   const priorMap = new Map(
     (interval === "month" ? prior?.months : prior?.byDate || [])?.map((r) => [
       r.month || r.date,
-      Number(r.revenue) || 0,
+      Number(r[metric]) || 0,
     ]) || [],
   );
   const bins = new Map();

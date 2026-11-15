@@ -195,3 +195,12 @@ test("sales channel filters are explicit and never fall back for unsupported cha
     }),
   );
 });
+
+test('sales segments are allowlisted and forwarded to the source', () => {
+  const range = { from: '2026-11-01', to: '2026-11-14' };
+  for (const segment of ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Джерела живлення', 'Будівельна хімія', 'Інше']) {
+    const url = new URL(buildPath('sales', new URLSearchParams({ segment }), range), 'http://local');
+    assert.equal(url.searchParams.get('segment'), segment);
+  }
+  assert.throws(() => buildPath('sales', new URLSearchParams({ segment: 'unknown' }), range));
+});
