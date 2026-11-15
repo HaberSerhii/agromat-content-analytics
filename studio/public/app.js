@@ -1,3 +1,8 @@
+import {
+  defaultRange,
+  chartSeries,
+  yearBefore,
+} from "/chart-data.mjs?v=overview1";
 const $ = (s) => document.querySelector(s),
   $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (v) =>
@@ -93,10 +98,7 @@ const today = new Date().toLocaleDateString("sv-SE", {
 let section = "home",
   view = "overview",
   state = {
-    from: new Date(Date.parse(today) - 29 * 86400000)
-      .toISOString()
-      .slice(0, 10),
-    to: today,
+    ...defaultRange(today),
     category: "all",
     brand: "all",
     search: "",
@@ -181,7 +183,7 @@ function skeleton() {
       )
       .join(
         "",
-      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="live-badge"><i></i> LIVE DATA <button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div></div></section><div class="preset">${[7, 30, 90].map((n) => `<button data-days="${n}">${n} днів</button>`).join("")}${["sales", "home"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}<button id="refresh">Оновити</button></div><nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav><div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="live-badge"><i></i> LIVE DATA <button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div>${["sales", "home"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}</div></section><nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav><div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
   bindShell();
 }
 function bindShell() {
@@ -200,11 +202,11 @@ function bindShell() {
       !from ||
       !to ||
       from > to ||
-      (Date.parse(to) - Date.parse(from)) / 86400000 > 366
+      (Date.parse(to) - Date.parse(from)) / 86400000 >= 365
     ) {
       modal(
         "Оберіть коректний період",
-        "<p>Початок має бути не пізніше завершення. Максимальний період — 367 днів.</p>",
+        "<p>Початок має бути не пізніше завершення. Максимальний період — 365 днів.</p>",
       );
       return;
     }
@@ -214,27 +216,12 @@ function bindShell() {
     saveLocation();
     load();
   };
-  $$("[data-days]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        state.to = today;
-        state.from = new Date(
-          Date.parse(today) - (Number(b.dataset.days) - 1) * 86400000,
-        )
-          .toISOString()
-          .slice(0, 10);
-        state.page = 1;
-        saveLocation();
-        load();
-      }),
-  );
   if ($("#toggle-yoy"))
     $("#toggle-yoy").onclick = () => {
       state.yoy = !state.yoy;
       saveLocation();
       load();
     };
-  $("#refresh").onclick = load;
   $("#info").onclick = () =>
     modal(
       "Джерела та визначення",
@@ -246,14 +233,18 @@ async function load() {
   skeleton();
   try {
     if (section === "home" && view === "overview") {
-      let [sales, products, prices, promotions] = await Promise.all([
-        api("sales"),
-        api("products"),
-        api("prices"),
-        api("promotions"),
-      ]);
+      let [sales, products, prices, promotions, stock, channels, content] =
+        await Promise.all([
+          api("sales"),
+          api("products"),
+          api("prices"),
+          api("promotions"),
+          api("products", { stock: "available" }),
+          api("channels", { yoy: "0" }),
+          api("content", { yoy: "0" }),
+        ]);
       if (id !== requestId) return;
-      data = { sales, products, prices, promotions };
+      data = { sales, products, prices, promotions, stock, channels, content };
       $("#content").innerHTML = overview(data);
     } else {
       let kind = section === "home" ? "channels" : section,
@@ -377,62 +368,64 @@ function monotone(points) {
   );
 }
 function salesChart(d) {
-  let daily = (Date.parse(state.to) - Date.parse(state.from)) / 86400000 < 31,
-    rows = daily ? d.byDate : d.months,
-    prev =
-      state.yoy && d.previous?.available && d.previous.hasData
-        ? daily
-          ? d.previous.byDate
-          : d.previous.months
-        : null;
-  if (!rows?.length)
+  const { interval, rows } = chartSeries(d, state, state.yoy);
+  if (!rows.length || d.seriesUnavailable)
     return panel(
       "Динаміка відвантажень",
       "Реальні дані продажів",
-      '<p class="empty">За цей період немає даних.</p>',
+      '<p class="empty">Не вдалося отримати повний ряд даних за цей період.</p>',
     );
-  let vals = rows.map((r) => Number(r.revenue) || 0),
-    prior = prev
-      ? rows.map(
-          (r) =>
-            Number(
-              prev.find(
-                (p) =>
-                  (p.date || p.month).slice(4) === (r.date || r.month).slice(4),
-              )?.revenue,
-            ) || 0,
-        )
-      : null,
-    max = Math.max(...vals, ...(prior || []), 1),
+  const vals = rows.map((r) => r.value),
+    hasPrior = rows[0].previous !== null,
+    prior = hasPrior ? rows.map((r) => r.previous) : null;
+  const max = Math.max(...vals, ...(prior || []), 1),
     coords = (a) =>
       a.map((v, i) => [
         40 + (i * 620) / Math.max(1, a.length - 1),
         180 - (v / max) * 150,
-      ]),
-    line = monotone(coords(vals));
+      ]);
+  const points = coords(vals),
+    line = monotone(points);
+  const marks = points
+    .map((p, i) => {
+      const r = rows[i],
+        delta = r.previous > 0 ? (r.value / r.previous - 1) * 100 : null;
+      const change =
+        r.previous === null
+          ? "Історія недоступна"
+          : delta === null
+            ? "База торік — 0; зміна не визначена"
+            : `${delta > 0 ? "+" : ""}${pct(delta)}`;
+      const currentDates = `${r.from} — ${r.to}`,
+        priorDates = `${yearBefore(r.from)} — ${yearBefore(r.to)}`;
+      const title = `${r.label} · ${currentDates}: ${money(r.value)}${state.yoy ? ` · ${priorDates}: ${r.previous === null ? "немає даних" : money(r.previous)} · ${change}` : ""}`;
+      return `<g class="chart-point" tabindex="0" role="img" aria-label="${esc(title)}"><circle cx="${p[0]}" cy="${p[1]}" r="12" fill="transparent"/><circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#fff" stroke="#533afd"/><title>${esc(title)}</title><foreignObject class="chart-tooltip" x="${Math.min(430, Math.max(40, p[0] - 120))}" y="${Math.max(0, p[1] - 115)}" width="225" height="112"><div xmlns="http://www.w3.org/1999/xhtml"><b>${esc(r.label)}</b><span>${currentDates}</span><strong>${money(r.value)}</strong>${state.yoy ? `<span>Торік: ${r.previous === null ? "немає даних" : money(r.previous)} · ${priorDates}</span><b class="${delta === null ? "muted" : delta >= 0 ? "good" : "bad"}">${esc(change)}</b>` : ""}</div></foreignObject></g>`;
+    })
+    .join("");
+  const ticks = rows
+    .map((r, i) =>
+      i % Math.max(1, Math.ceil(rows.length / 5)) === 0 || i === rows.length - 1
+        ? `<text x="${points[i][0]}" y="205" text-anchor="${i === 0 ? "start" : i === rows.length - 1 ? "end" : "middle"}" font-size="8" fill="#65758d">${esc(r.label)}</text>`
+        : "",
+    )
+    .join("");
   return panel(
     "Динаміка відвантажень",
-    daily
-      ? "Денні інтервали · сума відвантажених документів"
-      : "Місячні інтервали вибраного періоду",
-    `<div class="live-chart"><svg viewBox="0 0 680 210" role="img" aria-label="Динаміка відвантажень"><defs><linearGradient id="fade" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#533afd" stop-opacity=".15"/><stop offset="1" stop-color="#533afd" stop-opacity="0"/></linearGradient></defs>${[30, 80, 130, 180].map((y, i) => `<path d="M40 ${y}H660" stroke="#e5edf5" stroke-dasharray="3 5"/><text x="32" y="${y + 3}" text-anchor="end" font-size="8" fill="#8a94a5">${num((max * (1 - i / 3)) / 1000)}к</text>`).join("")}<path d="${line} L660 180 L40 180Z" fill="url(#fade)"/>${prior ? `<path d="${monotone(coords(prior))}" fill="none" stroke="#9ca8bc" stroke-width="2" stroke-dasharray="5 5"/>` : ""}<path d="${line}" fill="none" stroke="#533afd" stroke-width="2.5"/>${coords(
-      vals,
-    )
-      .map(
-        (p, i) =>
-          `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#fff" stroke="#533afd"><title>${rows[i].date || rows[i].month}: ${money(vals[i])}${prior ? " · YoY: " + money(prior[i]) : ""}</title></circle>`,
-      )
-      .join(
-        "",
-      )}</svg><div class="chart-labels"><span>${esc(rows[0].date || rows[0].month)}</span><span>${esc(rows.at(-1).date || rows.at(-1).month)}</span></div><div class="chart-legend"><b>● Поточний період</b>${prior ? '<span class="old">┄ Ті самі дати торік</span>' : state.yoy ? "<span>Історія за попередній рік відсутня у відповіді джерела</span>" : ""}</div></div>`,
+    { day: "Денні", week: "Тижневі", month: "Місячні" }[interval] +
+      " інтервали вибраного періоду",
+    `<div class="live-chart"><svg viewBox="0 0 680 215" role="img" aria-label="Динаміка відвантажень"><defs><linearGradient id="fade" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#533afd" stop-opacity=".15"/><stop offset="1" stop-color="#533afd" stop-opacity="0"/></linearGradient></defs>${[30, 80, 130, 180].map((y, i) => `<path d="M40 ${y}H660" stroke="#e5edf5" stroke-dasharray="3 5"/><text x="32" y="${y + 3}" text-anchor="end" font-size="8" fill="#8a94a5">${num((max * (1 - i / 3)) / 1000)}к</text>`).join("")}<path d="${line} L${points.at(-1)[0]} 180 L40 180Z" fill="url(#fade)"/>${prior ? `<path d="${monotone(coords(prior))}" fill="none" stroke="#9ca8bc" stroke-width="2" stroke-dasharray="5 5"/>` : ""}<path d="${line}" fill="none" stroke="#533afd" stroke-width="2.5"/>${ticks}${marks}</svg><div class="chart-legend"><b>● Поточний період</b>${hasPrior ? '<span class="old">┄ Ті самі дати торік</span>' : state.yoy ? "<span>Історія за попередній рік відсутня у відповіді джерела</span>" : ""}</div></div>`,
   );
 }
 function overview(d) {
-  const ok = (x) => x.available,
-    rev = ok(d.sales) ? d.sales.metrics.shippedRevenue : null,
-    catalog = ok(d.products) ? d.products.stats.totalAll : null,
-    prices = ok(d.prices) ? d.prices.total : null,
-    promos = ok(d.promotions) ? d.promotions.stats.products : null;
+  const m = d.sales.available ? d.sales.metrics : {},
+    rev = m.shippedRevenue ?? null;
+  const traffic = d.channels.available ? d.channels.rows : null;
+  const sessions = traffic?.reduce((n, r) => n + r.sessions, 0),
+    purchases = traffic?.reduce((n, r) => n + r.purchases, 0);
+  const active = d.promotions.available
+    ? d.promotions.programs.filter((r) => r.active === true).length
+    : null;
+  const ok = (x) => x.available;
   return [
     !ok(d.sales) ? warning("Продажі: джерело недоступне.") : "",
     kpis([
@@ -443,22 +436,48 @@ function overview(d) {
         "sales/overview",
       ),
       kpi(
-        "Товарів у каталозі",
-        catalog,
-        "Поточний синхронізований каталог",
+        "Отримані замовлення",
+        m.receivedDocs ?? null,
+        "За датою створення · ERP",
+        "sales/overview",
+      ),
+      kpi(
+        "Скасовані замовлення",
+        m.canceledDocs ?? null,
+        "За вибраний період · ERP",
+        "sales/cancellations",
+      ),
+      kpi(
+        "AOV",
+        money(m.shippedDocs > 0 ? rev / m.shippedDocs : null),
+        "Відвантажений виторг / відвантажені замовлення",
+        "sales/overview",
+      ),
+      kpi(
+        "CR",
+        sessions > 0 ? pct((purchases / sessions) * 100) : "—",
+        "Покупки / сесії · GA4",
+        "home/channels",
+      ),
+      kpi(
+        "Активні акції",
+        active,
+        "Кількість активних програм · поточний каталог",
+        "promotions/programs",
+      ),
+      kpi(
+        "Товарів в наявності",
+        d.stock.available ? d.stock.total : null,
+        "SKU із залишком ≥ 1 · поточний каталог",
+        "products/available",
+      ),
+      kpi(
+        "Content Score",
+        d.content.available && d.content.score !== null
+          ? num(d.content.score) + " / 100"
+          : "—",
+        "Поточна середня оцінка контенту каталогу",
         "products/overview",
-      ),
-      kpi(
-        "Товарів у моніторингу цін",
-        prices,
-        "Поточний фід",
-        "prices/overview",
-      ),
-      kpi(
-        "Акційних товарів",
-        promos,
-        "За умовами джерела акцій",
-        "promotions/overview",
       ),
     ]),
     `<div class="overview-links">${Object.entries(defs)

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  contentSafe,
   dates,
   previousYear,
   buildPath,
@@ -38,6 +39,7 @@ function release() {
   waiters.shift()?.();
 }
 const normalize = {
+  content: contentSafe,
   products: productsSafe,
   prices: pricesSafe,
   promotions: promotionsSafe,
@@ -97,6 +99,7 @@ async function upstream(kind, params, range) {
 const contentTypes = {
   ".svg": "image/svg+xml",
   ".html": "text/html; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
 };
@@ -105,10 +108,34 @@ const statics = new Map([
   ["/", "index.html"],
   ["/index.html", "index.html"],
   ["/app.js", "app.js"],
+  ["/chart-data.mjs", "chart-data.mjs"],
   ["/base.css", "base.css"],
   ["/theme.css", "theme.css"],
   ["/studio.css", "studio.css"],
 ]);
+async function salesWithSeries(params, range) {
+  const result = await upstream("sales", params, range);
+  const days = (Date.parse(range.to) - Date.parse(range.from)) / 86400000 + 1;
+  if (!result.available || days <= 30 || days > 90) return result;
+  const rows = [];
+  for (
+    let t = Date.parse(range.from);
+    t <= Date.parse(range.to);
+    t += 30 * 86400000
+  ) {
+    const part = {
+      from: new Date(t).toISOString().slice(0, 10),
+      to: new Date(Math.min(Date.parse(range.to), t + 29 * 86400000))
+        .toISOString()
+        .slice(0, 10),
+    };
+    const chunk = await upstream("sales", params, part);
+    if (!chunk.available)
+      return { ...result, byDate: [], seriesUnavailable: true };
+    rows.push(...chunk.byDate);
+  }
+  return { ...result, byDate: rows };
+}
 export const server = http.createServer(async (req, res) => {
   const headers = {
     "X-Content-Type-Options": "nosniff",
@@ -160,7 +187,9 @@ export const server = http.createServer(async (req, res) => {
       } catch {
         return json(400, { error: "invalid_filter_or_range" });
       }
-      let current = await upstream(kind, url.searchParams, range),
+      let current = await (kind === "sales"
+          ? salesWithSeries(url.searchParams, range)
+          : upstream(kind, url.searchParams, range)),
         body = { ...current, range, revision };
       if (
         (kind === "sales" || kind === "channels") &&
@@ -168,7 +197,9 @@ export const server = http.createServer(async (req, res) => {
       ) {
         let priorRange = previousYear(range);
         body.previous = {
-          ...(await upstream(kind, url.searchParams, priorRange)),
+          ...(await (kind === "sales"
+            ? salesWithSeries(url.searchParams, priorRange)
+            : upstream(kind, url.searchParams, priorRange))),
           range: priorRange,
         };
       }

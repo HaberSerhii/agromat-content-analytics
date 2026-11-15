@@ -1,3 +1,4 @@
+import { defaultRange } from "./public/chart-data.mjs";
 const text = (v) => (typeof v === "string" ? v : "");
 const number = (v) =>
   v === null || v === undefined || v === ""
@@ -12,17 +13,16 @@ export function dates(
   params,
   today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" }),
 ) {
-  const to = params.get("to") || today,
-    from =
-      params.get("from") ||
-      new Date(Date.parse(to) - 29 * 86400000).toISOString().slice(0, 10);
+  const defaults = defaultRange(today);
+  const to = params.get("to") || defaults.to,
+    from = params.get("from") || defaults.from;
   for (const value of [from, to])
     if (
       !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
       new Date(value).toISOString().slice(0, 10) !== value
     )
       throw new Error("invalid_range");
-  if (from > to || (Date.parse(to) - Date.parse(from)) / 86400000 > 366)
+  if (from > to || (Date.parse(to) - Date.parse(from)) / 86400000 >= 365)
     throw new Error("invalid_range");
   return { from, to };
 }
@@ -63,16 +63,19 @@ export function publicUrl(url) {
 export function salesSafe(d) {
   const s = d.summary || {};
   return {
-    metrics: fields(s, [
-      "totalDocs",
-      "shippedDocs",
-      "shippedGoods",
-      "shippedRevenue",
-      "canceledDocs",
-      "returnedRevenue",
-      "firstShippedDate",
-      "lastShippedDate",
-    ]),
+    metrics: {
+      canceledDocs: number(s.selected?.canceledDocs ?? s.canceledDocs),
+      receivedDocs: number(s.orderInsights?.onlineOrders?.totalDocs),
+      ...fields(s, [
+        "totalDocs",
+        "shippedDocs",
+        "shippedGoods",
+        "shippedRevenue",
+        "returnedRevenue",
+        "firstShippedDate",
+        "lastShippedDate",
+      ]),
+    },
     plan: fields(s.plan, [
       "month",
       "plan",
@@ -247,7 +250,24 @@ export function channelsSafe(d) {
       "GA4: сесії, покупки та атрибутована виручка. Це не відвантаження ERP. Витрати, користувачі та плани каналів у цьому джерелі не передаються.",
   };
 }
+export function contentSafe(d) {
+  return {
+    score: number(d.overviewPeriod?.contentScore),
+    updatedAt: d.syncedAt || null,
+  };
+}
 export function buildPath(kind, params, range) {
+  if (kind === "content")
+    return (
+      "/api/products/dashboard-v2?" +
+      new URLSearchParams({
+        analytics: "0",
+        view: "overview",
+        limit: "1",
+        overviewFrom: range.from,
+        overviewTo: range.to,
+      })
+    );
   const q = new URLSearchParams();
   q.set(
     "page",

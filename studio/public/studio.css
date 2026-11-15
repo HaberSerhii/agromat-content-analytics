@@ -417,5 +417,100 @@
   }
 }
 
-.logo .brand-logo { display: block; width: 175px; height: auto; max-width: 100%; flex-shrink: 0; }
-@media (max-width: 760px) { .logo .brand-logo { width: 150px; } }
+.logo .brand-logo {
+  display: block;
+  width: 175px;
+  height: auto;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+@media (max-width: 760px) {
+  .logo .brand-logo {
+    width: 150px;
+  }
+}
+/* Overview controls and accessible chart comparisons. */
+.heading .actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+#toggle-yoy.active {
+  color: var(--blue);
+  border-color: var(--blue);
+  background: #f5f2ff;
+}
+.live-kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.live-kpis .stat {
+  padding-top: 18px;
+  padding-bottom: 18px;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+}
+.live-kpis .stat:nth-child(4n) {
+  border-right: 0;
+}
+.chart-tooltip {
+  visibility: hidden;
+  pointer-events: none;
+  overflow: visible;
+}
+.chart-tooltip div {
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e5edf5;
+  border-radius: 9px;
+  box-shadow: 0 5px 20px #152a4920;
+  font: 10px/1.5 system-ui;
+  color: #10243e;
+}
+.chart-tooltip span,
+.chart-tooltip strong,
+.chart-tooltip b {
+  display: block;
+}
+.chart-tooltip span {
+  font-size: 8px;
+  color: #65758d;
+}
+.chart-tooltip strong {
+  font-size: 14px;
+}
+.chart-point:hover .chart-tooltip,
+.chart-point:focus .chart-tooltip {
+  visibility: visible;
+}
+.chart-point:focus {
+  outline: none;
+}
+.chart-point:focus circle {
+  stroke-width: 3;
+}
+.chart-point:hover,
+.chart-point:focus {
+  position: relative;
+}
+@media (max-width: 1000px) {
+  .live-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .heading .actions {
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 480px) {
+  .live-kpis {
+    grid-template-columns: 1fr;
+  }
+  .dated {
+    flex-wrap: wrap;
+  }
+}
+.facet-options button[hidden] {
+  display: none;
+}

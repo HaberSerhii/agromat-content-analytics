@@ -60,6 +60,7 @@ python3 - "$ROOT/health.json" "$REVISION" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['revision']==sys.argv[2]
 PY
+if [[ ! -f /etc/letsencrypt/live/agromat-studio/fullchain.pem ]]; then
 cat > /etc/nginx/sites-available/agromat-studio <<'NGINX'
 server {
     listen 80;
@@ -82,6 +83,7 @@ NGINX
 ln -sfn /etc/nginx/sites-available/agromat-studio /etc/nginx/sites-enabled/agromat-studio
 nginx -t
 systemctl reload nginx
+fi
 [[ "$OLD_NGINX" == "$(sha256sum /etc/nginx/sites-enabled/agromat-catalog | cut -d' ' -f1)" ]]
 [[ "$OLD_PID" == "$(pm2 pid agromat-catalog | tail -1)" ]] || echo 'Note: old process PID changed externally; Studio did not restart it.'
-echo "Studio HTTP ready at pushed revision $REVISION"
+echo "Studio ready at pushed revision $REVISION"

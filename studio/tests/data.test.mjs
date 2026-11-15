@@ -118,3 +118,18 @@ test("GA4 channel totals aggregate real rows without fabricating spend or users"
   assert.equal("spend" in d.rows[0], false);
   assert.equal("users" in d.rows[0], false);
 });
+
+test("selected cancellations and received orders preserve period definitions", () => {
+  const d = salesSafe({
+    summary: {
+      canceledDocs: 0,
+      selected: { canceledDocs: 17 },
+      orderInsights: {
+        onlineOrders: { totalDocs: 85, customerEmail: "private" },
+      },
+    },
+  });
+  assert.equal(d.metrics.canceledDocs, 17);
+  assert.equal(d.metrics.receivedDocs, 85);
+  assert.ok(!JSON.stringify(d).includes("private"));
+});
