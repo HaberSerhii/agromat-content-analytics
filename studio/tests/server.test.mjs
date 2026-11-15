@@ -1,0 +1,27 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+process.env.STUDIO_TEST = "1";
+const { server } = await import("../server.mjs");
+test("public server exposes only static assets, health and read-only bounded APIs", async () => {
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    let r = await fetch(base + "/api/health");
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).service, "agromat-studio");
+    r = await fetch(base + "/api/admin/deploy", { method: "POST" });
+    assert.equal(r.status, 405);
+    r = await fetch(base + "/api/admin/deploy");
+    assert.equal(r.status, 404);
+    r = await fetch(base + "/api/products?from=2026-02-30&to=2026-03-01");
+    assert.equal(r.status, 400);
+    r = await fetch(base + "/.env");
+    assert.equal(r.status, 404);
+    r = await fetch(base + "/");
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("x-robots-tag"), "noindex, nofollow, noarchive");
+    assert.match(await r.text(), /AGРОМАТ|АГРОМАТ/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});

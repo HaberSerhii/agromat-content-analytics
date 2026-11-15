@@ -1,0 +1,12 @@
+{
+  "name": "agromat-studio",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --max-old-space-size=96 server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}
