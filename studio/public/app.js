@@ -231,7 +231,7 @@ function sourceStatusHTML() {
             ? "Онлайн"
             : "Недоступно"
           : "Ще не перевірено";
-      return `<section class="source-detail"><div><b>${name}</b><span class="source-state ${d?.available ? "ready" : "pending"}">● ${status}</span></div><p>Останнє оновлення: <time>${d?.updatedAt ? sourceTime(d.updatedAt) : "час не передано"}</time></p><small>${description}</small></section>`;
+      return `<section class="source-detail"><div><b>${name}</b><span class="source-state ${d?.available ? "ready" : "pending"}">● ${status}</span></div><p>Останнє оновлення: <time>${d?.updatedAt ? sourceTime(d.updatedAt) : "час не передано"}</time></p><small>${description}${d?.dataThrough?` Дані доступні до ${sourceTime(d.dataThrough)}.`:""}</small></section>`;
     })
     .join(
       "",
@@ -749,6 +749,8 @@ function overview(d) {
         d.users?.previous?.available && d.users.previous.hasData
           ? d.users.previous.users
           : null,
+        num,
+        d.users?.dataThrough && d.users.dataThrough < state.to ? "Торік · до " + d.users.dataThrough.slice(5).split("-").reverse().join(".") : "Торік",
       ),
       overviewCard(
         "AOV",

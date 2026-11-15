@@ -202,6 +202,7 @@ export const server = http.createServer(async (req, res) => {
         url.searchParams.get("yoy") === "1"
       ) {
         let priorRange = previousYear(range);
+        if(kind === "users" && current.available && current.dataThrough && current.dataThrough < range.to && current.dataThrough >= range.from) priorRange=previousYear({...range,to:current.dataThrough});
         const priorParams = new URLSearchParams(url.searchParams);
         if (kind === "inventory") priorParams.set("historical", "1");
         body.previous = {
