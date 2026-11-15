@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  contentSafe,
   dates,
   previousYear,
   buildPath,
@@ -132,4 +133,46 @@ test("selected cancellations and received orders preserve period definitions", (
   assert.equal(d.metrics.canceledDocs, 17);
   assert.equal(d.metrics.receivedDocs, 85);
   assert.ok(!JSON.stringify(d).includes("private"));
+});
+
+test("content compares only real snapshots in the preceding calendar month", () => {
+  const d = contentSafe({
+    currentDate: "2026-11-15",
+    overviewPeriod: {
+      contentScore: 60,
+      current: [
+        { date: "2026-10-30", contentScore: 49 },
+        { date: "2026-10-31", contentScore: 50 },
+        { date: "2026-11-14", contentScore: 59 },
+      ],
+      month: [{ date: "2026-09-30", contentScore: 20 }],
+      customer: "private",
+    },
+  });
+  assert.equal(d.previousScore, 50);
+  assert.equal(d.previousDate, "2026-10-31");
+  assert.ok(!JSON.stringify(d).includes("private"));
+  assert.equal(contentSafe({ currentDate: "2026-11-15" }).previousScore, null);
+});
+test("inventory history requests are restricted to aggregate product snapshots", () => {
+  const u = new URL(
+    buildPath(
+      "inventory",
+      new URLSearchParams("historical=1&url=https://evil.test"),
+      { to: "2025-11-14" },
+    ),
+    "http://local",
+  );
+  assert.equal(u.pathname, "/api/products");
+  assert.equal(u.searchParams.get("as_of"), "2025-11-14");
+  assert.equal(u.searchParams.get("min_stock"), "1");
+  assert.equal(u.searchParams.has("url"), false);
+  assert.equal(
+    productsSafe({ syncedAt: null, total: 0 }).historyAvailable,
+    false,
+  );
+  assert.equal(
+    promotionsSafe({ targetReconstructed: true }).historyAvailable,
+    false,
+  );
 });

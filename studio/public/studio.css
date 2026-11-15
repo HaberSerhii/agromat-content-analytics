@@ -514,3 +514,112 @@
 .facet-options button[hidden] {
   display: none;
 }
+/* Quiet, consistently sized date controls and compact source freshness. */
+.heading .actions .dated input,
+.heading .actions .dated button,
+.heading .actions #toggle-yoy {
+  height: 36px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+.heading .actions #toggle-yoy {
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid #dfe6ef;
+  color: #6b7890;
+  box-shadow: none;
+  font-weight: 400;
+}
+.heading .actions #toggle-yoy.active {
+  background: #eff1f8;
+  border-color: #dfe2ec;
+  color: #58627b;
+}
+.heading .actions #toggle-yoy::before {
+  content: "✓";
+  margin-right: 6px;
+  opacity: 0;
+}
+.heading .actions #toggle-yoy.active::before {
+  opacity: 1;
+}
+.source-status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #7b8799;
+  font-size: 9px;
+  line-height: 1.35;
+  font-weight: 400;
+}
+#source-status-list {
+  display: grid;
+  gap: 1px;
+}
+#source-status-list > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+#source-status-list span {
+  min-width: 85px;
+}
+#source-status-list time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+#source-status-list i {
+  font-size: 13px;
+  font-style: normal;
+}
+#source-status-list .ready {
+  color: #25a77b;
+}
+#source-status-list .pending {
+  color: #adb5c2;
+}
+.kpi-comparison {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 12px;
+  align-items: baseline;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #8591a5;
+}
+.kpi-comparison b {
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.kpi-comparison .good {
+  color: #2e9076;
+}
+.kpi-comparison .bad {
+  color: #b36570;
+}
+.kpi-comparison .muted {
+  color: #a0a8b5;
+}
+@media (max-width: 600px) {
+  .source-status {
+    font-size: 8px;
+    gap: 4px;
+  }
+  #source-status-list span {
+    min-width: 70px;
+  }
+  .topbar {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .crumb {
+    font-size: 10px;
+  }
+  .heading .actions {
+    gap: 8px;
+  }
+}

@@ -41,6 +41,7 @@ function release() {
 const normalize = {
   content: contentSafe,
   products: productsSafe,
+  inventory: productsSafe,
   prices: pricesSafe,
   promotions: promotionsSafe,
   sales: salesSafe,
@@ -192,14 +193,16 @@ export const server = http.createServer(async (req, res) => {
           : upstream(kind, url.searchParams, range)),
         body = { ...current, range, revision };
       if (
-        (kind === "sales" || kind === "channels") &&
+        ["sales", "channels", "inventory", "promotions"].includes(kind) &&
         url.searchParams.get("yoy") === "1"
       ) {
         let priorRange = previousYear(range);
+        const priorParams = new URLSearchParams(url.searchParams);
+        if (kind === "inventory") priorParams.set("historical", "1");
         body.previous = {
           ...(await (kind === "sales"
             ? salesWithSeries(url.searchParams, priorRange)
-            : upstream(kind, url.searchParams, priorRange))),
+            : upstream(kind, priorParams, priorRange))),
           range: priorRange,
         };
       }

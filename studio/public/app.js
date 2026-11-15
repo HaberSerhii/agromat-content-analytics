@@ -171,6 +171,59 @@ async function api(kind, extra = {}) {
     };
   return d;
 }
+const sourceStatus = new Map();
+function sourceTime(value) {
+  if (!value) return "час не передано";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value))
+    return value
+      .split("-")
+      .reverse()
+      .map((x, i) => (i === 2 ? x.slice(-2) : x))
+      .join(".");
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? "час не передано"
+    : d
+        .toLocaleString("uk-UA", {
+          timeZone: "Europe/Kyiv",
+          day: "2-digit",
+          month: "2-digit",
+          year: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+        .replace(",", "");
+}
+function sourceStatusHTML() {
+  return ["GA4", "API AGROMAT", "ERP / S3", "Моніторинг цін"]
+    .map((name) => {
+      const d = sourceStatus.get(name);
+      return `<div><span>${name}</span><i class="${d?.available ? "ready" : "pending"}">·</i><time>${d ? (d.available ? sourceTime(d.updatedAt) : "недоступно") : "—"}</time></div>`;
+    })
+    .join("");
+}
+function updateSources() {
+  if (section === "home" && view === "overview") {
+    for (const [name, key] of [
+      ["GA4", "channels"],
+      ["API AGROMAT", "products"],
+      ["ERP / S3", "sales"],
+      ["Моніторинг цін", "prices"],
+    ])
+      if (data[key]) sourceStatus.set(name, data[key]);
+  } else {
+    const name = {
+      home: "GA4",
+      products: "API AGROMAT",
+      promotions: "API AGROMAT",
+      sales: "ERP / S3",
+      prices: "Моніторинг цін",
+    }[section];
+    if (name) sourceStatus.set(name, data);
+  }
+  if ($("#source-status-list"))
+    $("#source-status-list").innerHTML = sourceStatusHTML();
+}
 function skeleton() {
   const def = defs[section];
   $("#app").innerHTML =
@@ -183,7 +236,7 @@ function skeleton() {
       )
       .join(
         "",
-      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="live-badge"><i></i> LIVE DATA <button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div>${["sales", "home"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}</div></section><nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav><div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="source-status"><div id="source-status-list">${sourceStatusHTML()}</div><button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div>${["sales", "home"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}</div></section><nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav><div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
   bindShell();
 }
 function bindShell() {
@@ -239,8 +292,8 @@ async function load() {
           api("products"),
           api("prices"),
           api("promotions"),
-          api("products", { stock: "available" }),
-          api("channels", { yoy: "0" }),
+          api("inventory"),
+          api("channels"),
           api("content", { yoy: "0" }),
         ]);
       if (id !== requestId) return;
@@ -284,6 +337,7 @@ async function load() {
       bindFilters(data);
     }
     if (id !== requestId) return;
+    updateSources();
     bindContent();
     let rev = data.revision || data.sales?.revision;
     if (rev) $("#revision").textContent = "Окремий сервіс · " + rev.slice(0, 8);
@@ -425,68 +479,128 @@ function salesChart(d) {
     `<div class="live-chart"><svg viewBox="0 0 680 215" role="img" aria-label="Динаміка відвантажень"><defs><linearGradient id="fade" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#533afd" stop-opacity=".15"/><stop offset="1" stop-color="#533afd" stop-opacity="0"/></linearGradient></defs>${[30, 80, 130, 180].map((y, i) => `<path d="M40 ${y}H660" stroke="#e5edf5" stroke-dasharray="3 5"/><text x="32" y="${y + 3}" text-anchor="end" font-size="8" fill="#8a94a5">${num((max * (1 - i / 3)) / 1000)}к</text>`).join("")}<path d="${line} L${points.at(-1)[0]} 180 L40 180Z" fill="url(#fade)"/>${prior ? `<path d="${monotone(coords(prior))}" fill="none" stroke="#9ca8bc" stroke-width="2" stroke-dasharray="5 5"/>` : ""}<path d="${line}" fill="none" stroke="#533afd" stroke-width="2.5"/>${ticks}${marks}</svg><div class="chart-legend"><b>● Поточний період</b>${hasPrior ? '<span class="old">┄ Ті самі дати торік</span>' : state.yoy ? "<span>Історія за попередній рік відсутня у відповіді джерела</span>" : ""}</div></div>`,
   );
 }
+function overviewCard(
+  label,
+  value,
+  note,
+  action,
+  previous,
+  format = num,
+  comparison = "Торік",
+) {
+  let html = kpi(label, value === null ? null : format(value), note, action);
+  if (!state.yoy) return html;
+  const valid = typeof previous === "number" && Number.isFinite(previous),
+    delta =
+      valid && previous > 0 && value !== null
+        ? (value / previous - 1) * 100
+        : null;
+  const baseline = valid ? format(previous) : "немає історії";
+  const change =
+    delta === null
+      ? valid
+        ? "зміна н/д"
+        : "—"
+      : `${delta > 0 ? "+" : ""}${pct(delta)}`;
+  return html.replace(
+    "</button>",
+    `<div class="kpi-comparison"><span>${esc(comparison)}: ${esc(baseline)}</span><b class="${delta === null ? "muted" : delta >= 0 ? "good" : "bad"}">${esc(change)}</b></div></button>`,
+  );
+}
 function overview(d) {
-  const m = d.sales.available ? d.sales.metrics : {},
-    rev = m.shippedRevenue ?? null;
-  const traffic = d.channels.available ? d.channels.rows : null;
-  const sessions = traffic?.reduce((n, r) => n + r.sessions, 0),
-    purchases = traffic?.reduce((n, r) => n + r.purchases, 0);
-  const active = d.promotions.available
-    ? d.promotions.programs.filter((r) => r.active === true).length
+  const ok = (x) => x?.available,
+    m = ok(d.sales) ? d.sales.metrics : {},
+    p =
+      state.yoy && ok(d.sales.previous) && d.sales.previous.hasData
+        ? d.sales.previous.metrics
+        : {};
+  const rate = (x) =>
+    ok(x)
+      ? (() => {
+          let sessions = x.rows.reduce((n, r) => n + r.sessions, 0);
+          return sessions > 0
+            ? (x.rows.reduce((n, r) => n + r.purchases, 0) / sessions) * 100
+            : null;
+        })()
+      : null;
+  const active = (x) =>
+    ok(x) ? x.programs.filter((r) => r.active === true).length : null;
+  const priorPromos = d.promotions.previous?.historyAvailable
+    ? active(d.promotions.previous)
     : null;
-  const ok = (x) => x.available;
+  const priorStock =
+    ok(d.stock.previous) && d.stock.previous.historyAvailable
+      ? d.stock.previous.total
+      : null;
+  const aov = (x) =>
+    x.shippedDocs > 0 ? x.shippedRevenue / x.shippedDocs : null;
+  const score = ok(d.content) ? d.content.score : null;
   return [
     !ok(d.sales) ? warning("Продажі: джерело недоступне.") : "",
     kpis([
-      kpi(
+      overviewCard(
         "Відвантажений виторг",
-        money(rev),
+        m.shippedRevenue ?? null,
         "За вибраний період",
         "sales/overview",
+        p.shippedRevenue,
+        money,
       ),
-      kpi(
+      overviewCard(
         "Отримані замовлення",
         m.receivedDocs ?? null,
         "За датою створення · ERP",
         "sales/overview",
+        p.receivedDocs,
       ),
-      kpi(
+      overviewCard(
         "Скасовані замовлення",
         m.canceledDocs ?? null,
         "За вибраний період · ERP",
         "sales/cancellations",
+        p.canceledDocs,
       ),
-      kpi(
+      overviewCard(
         "AOV",
-        money(m.shippedDocs > 0 ? rev / m.shippedDocs : null),
+        aov(m),
         "Відвантажений виторг / відвантажені замовлення",
         "sales/overview",
+        aov(p),
+        money,
       ),
-      kpi(
+      overviewCard(
         "CR",
-        sessions > 0 ? pct((purchases / sessions) * 100) : "—",
+        rate(d.channels),
         "Покупки / сесії · GA4",
         "home/channels",
+        rate(d.channels.previous),
+        pct,
       ),
-      kpi(
+      overviewCard(
         "Активні акції",
-        active,
+        active(d.promotions),
         "Кількість активних програм · поточний каталог",
         "promotions/programs",
+        priorPromos,
       ),
-      kpi(
+      overviewCard(
         "Товарів в наявності",
-        d.stock.available ? d.stock.total : null,
+        ok(d.stock) ? d.stock.total : null,
         "SKU із залишком ≥ 1 · поточний каталог",
         "products/available",
+        priorStock,
       ),
-      kpi(
+      overviewCard(
         "Content Score",
-        d.content.available && d.content.score !== null
-          ? num(d.content.score) + " / 100"
-          : "—",
+        score,
         "Поточна середня оцінка контенту каталогу",
         "products/overview",
+        d.content.previousScore,
+        (x) => num(x) + " / 100",
+        d.content.previousDate
+          ? "Попер. місяць · " +
+              d.content.previousDate.split("-").reverse().join(".")
+          : "Попер. місяць",
       ),
     ]),
     `<div class="overview-links">${Object.entries(defs)

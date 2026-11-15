@@ -113,6 +113,7 @@ function bucket(r) {
 }
 export function productsSafe(d) {
   return {
+    historyAvailable: Boolean(d.syncedAt),
     items: list(d.items).map(productSafe),
     total: d.total || 0,
     page: d.page || 1,
@@ -187,6 +188,7 @@ export function pricesSafe(d) {
 }
 export function promotionsSafe(d) {
   return {
+    historyAvailable: d.targetReconstructed === false,
     items: list(d.items).map((r) => ({
       ...productSafe(r),
       id: r.productId,
@@ -229,7 +231,7 @@ export function promotionsSafe(d) {
     total: d.total || 0,
     page: d.page || 1,
     pages: d.pageCount || 1,
-    updatedAt: d.syncedAt || d.snapshotCapturedAt || null,
+    updatedAt: d.snapshotCapturedAt || d.syncedAt || null,
   };
 }
 export function channelsSafe(d) {
@@ -251,21 +253,60 @@ export function channelsSafe(d) {
   };
 }
 export function contentSafe(d) {
+  const today =
+    d.currentDate ||
+    new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" });
+  const previousMonth = new Date(
+    Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 1),
+  )
+    .toISOString()
+    .slice(0, 7);
+  const baseline = [
+    ...list(d.overviewPeriod?.current),
+    ...list(d.overviewPeriod?.month),
+  ]
+    .filter(
+      (r) =>
+        text(r.date).startsWith(previousMonth) &&
+        number(r.contentScore) !== null,
+    )
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .at(-1);
   return {
+    previousScore: number(baseline?.contentScore),
+    previousDate: baseline?.date || null,
     score: number(d.overviewPeriod?.contentScore),
     updatedAt: d.syncedAt || null,
   };
 }
 export function buildPath(kind, params, range) {
-  if (kind === "content")
+  if (kind === "content") {
+    const today = new Date().toLocaleDateString("sv-SE", {
+      timeZone: "Europe/Kyiv",
+    });
+    const monthStart = new Date(
+      Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 1),
+    )
+      .toISOString()
+      .slice(0, 10);
     return (
       "/api/products/dashboard-v2?" +
       new URLSearchParams({
         analytics: "0",
         view: "overview",
         limit: "1",
-        overviewFrom: range.from,
-        overviewTo: range.to,
+        overviewFrom: monthStart,
+        overviewTo: today,
+      })
+    );
+  }
+  if (kind === "inventory")
+    return (
+      "/api/products?" +
+      new URLSearchParams({
+        limit: "1",
+        min_stock: "1",
+        ...(params.get("historical") === "1" ? { as_of: range.to } : {}),
       })
     );
   const q = new URLSearchParams();
