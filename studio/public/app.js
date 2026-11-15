@@ -26,10 +26,13 @@ const defs = {
     name: "Загальний огляд",
     title: "Уся аналітика.<br>Одна картина.",
     description: "Каталог, ринок і продажі — з ваших реальних джерел.",
-    tabs: [
-      ["overview", "Огляд"],
-      ["channels", "Канали залучення"],
-    ],
+    tabs: [["overview", "Огляд"]],
+  },
+  channels: {
+    name: "Канали залучення",
+    title: "Канали залучення",
+    description: "Сесії, покупки та атрибутована виручка з GA4.",
+    tabs: [["overview", "Огляд"]],
   },
   prices: {
     name: "Ціни конкурентів",
@@ -82,6 +85,7 @@ const defs = {
   },
 };
 const paths = {
+  channels: '<path d="M4 20V10M10 20V4M16 20v-8M22 20V7"/>',
   home: '<path d="M3 10 12 3l9 7v10H5V10M9 21v-8h6v8"/>',
   prices: '<path d="M4 17l5-5 4 3 7-10M14 5h6v6M4 4v17h17"/>',
   products:
@@ -115,6 +119,10 @@ let section = "home",
 function parseLocation() {
   let [p, q = ""] = location.hash.slice(1).split("?"),
     [s, v] = p.split("/");
+  if (s === "home" && v === "channels") {
+    s = "channels";
+    v = "overview";
+  }
   section = defs[s] ? s : "home";
   view = defs[section].tabs.some((t) => t[0] === v) ? v : "overview";
   let params = new URLSearchParams(q);
@@ -247,7 +255,7 @@ function updateSources() {
       if (data[key]) sourceStatus.set(name, data[key]);
   } else {
     const name = {
-      home: "GA4",
+      channels: "GA4",
       products: "API AGROMAT",
       promotions: "API AGROMAT",
       sales: "ERP / S3",
@@ -272,7 +280,7 @@ function skeleton() {
       )
       .join(
         "",
-      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="source-status"><span id="live-data-label">${sourceBadgeHTML()}</span><button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div>${["sales", "home"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}</div></section><nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav><div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+      )}<div class="sidehint">Від сигналу.<br>До зрозумілого рішення.</div><div class="profile"><span>A</span><div>АГРОМАТ Studio<small>Реальні джерела даних</small></div></div></aside><div class="workspace"><header class="topbar"><div class="crumb">Робочий простір / <b>${def.name}</b></div><div class="source-status"><span id="live-data-label">${sourceBadgeHTML()}</span><button class="icon-btn" id="info" aria-label="Про джерела">ⓘ</button></div></header><main><section class="heading"><div><div class="eyebrow">AGROMAT / ${section === "home" ? "BUSINESS OVERVIEW" : section.toUpperCase() + " INTELLIGENCE"}</div><h1>${view === "overview" ? def.title : def.tabs.find((t) => t[0] === view)[1]}</h1><p>${def.description}</p></div><div class="actions"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div>${["sales", "home", "channels"].includes(section) ? `<button id="toggle-yoy" class="${state.yoy ? "active" : ""}" aria-pressed="${state.yoy}">Порівняння YoY</button>` : ""}</div></section>${def.tabs.length > 1 ? `<nav class="studio-tabs" aria-label="Підрозділи">${def.tabs.map(([v, l]) => `<button data-view="${v}" class="${view === v ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>` : ""}<div id="filters"></div><div id="content"><div class="loading">Завантажуємо дані з джерела…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
   bindShell();
 }
 function bindShell() {
@@ -345,7 +353,7 @@ async function load() {
       if (id !== requestId) return;
       $("#content").innerHTML = overview(data);
     } else {
-      let kind = section === "home" ? "channels" : section,
+      let kind = section,
         extra = {};
       if (section === "products") {
         if (view === "available") extra.stock = "available";
@@ -372,7 +380,7 @@ async function load() {
       $("#content").innerHTML =
         section === "sales"
           ? salesView(data)
-          : section === "home"
+          : section === "channels"
             ? channelsView(data)
             : section === "prices"
               ? pricesView(data)
@@ -717,7 +725,7 @@ function overview(d) {
         "CR",
         rate(d.channels),
         "Покупки / сесії · GA4",
-        "home/channels",
+        "channels/overview",
         rate(d.channels.previous),
         pct,
       ),
@@ -748,35 +756,16 @@ function overview(d) {
           : "Попер. місяць",
       ),
     ]),
-    `<div class="overview-links">${Object.entries(defs)
-      .filter(([k]) => k !== "home")
-      .map(
-        ([k, v]) =>
-          `<button data-action="${k}/overview">${icon(k)}<b>${v.name}</b><small>Переглянути показники та деталізацію →</small></button>`,
-      )
-      .join("")}</div>`,
     ok(d.sales)
       ? `<div class="grid">${`<div id="overview-sales-chart">${salesChart(d.chartSales || d.sales)}</div><div id="overview-sales-ranking">${rankingPanel(d.sales)}</div>`}</div>`
       : "",
-    `<div class="sourcecards">${[
-      ["Каталог", d.products],
-      ["Моніторинг цін", d.prices],
-      ["Продажі", d.sales],
-    ]
-      .map(
-        ([name, x]) =>
-          `<div class="sourcecard"><h3>${name}</h3><p>${x.available ? "Підключено · " + timestamp(x.updatedAt) : "Тимчасово недоступно"}</p></div>`,
-      )
-      .join(
-        "",
-      )}</div><section class="panel report-entry"><div><h2>Канали залучення</h2><p>Реальні сесії, покупки та атрибутована виручка з GA4.</p></div><button class="primary" data-action="home/channels">Відкрити звіт →</button></section>`,
   ].join("");
 }
 function facet(key, label, rows) {
   return `<details class="facet-pop"><summary>${esc(state[key] === "all" ? label : rows.find((r) => String(r.value) === state[key])?.name || state[key])} ⌄</summary><div class="facet-options"><input data-facet-search="${key}" type="search" placeholder="Знайти…" aria-label="Пошук: ${label}"><button data-facet="${key}" data-value="all">Усі</button>${rows.map((r) => `<button data-facet="${key}" data-value="${esc(r.value)}" data-option-name="${esc(r.name.toLowerCase())}" class="${state[key] === String(r.value) ? "active" : ""}">${esc(r.name)}${r.count !== undefined ? `<small>${num(r.count)}</small>` : ""}</button>`).join("")}</div></details>`;
 }
 function filters(d) {
-  if (section === "home") return "";
+  if (["home", "channels"].includes(section)) return "";
   const categories =
       section === "sales"
         ? d.categoryOptions.map((x) => ({ value: x, name: x }))
