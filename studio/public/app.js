@@ -471,7 +471,8 @@ function panel(title, sub, body, controls = "") {
 function bars(rows, measure = "revenue", kind = "") {
   const max = Math.max(...rows.map((r) => Number(r[measure]) || 0), 1);
   return `<div class="live-bars">${
-    rows
+    [...rows]
+      .sort((a, b) => (Number(b[measure]) || 0) - (Number(a[measure]) || 0))
       .slice(0, 12)
       .map(
         (r) =>

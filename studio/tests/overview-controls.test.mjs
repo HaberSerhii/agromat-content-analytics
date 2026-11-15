@@ -40,3 +40,18 @@ test('unsupported and failed channels never show all-channel rankings', async ()
   await vm.runInContext('updateOverviewChart()', context);
   assert.match(elements['#overview-sales-ranking'].innerHTML, /недоступні/);
 });
+
+test('rankings sort descending by the selected metric before limiting, without mutating source rows', () => {
+  const context = vm.createContext({ esc: String, money: String, num: String });
+  vm.runInContext(source.slice(source.indexOf('function bars('), source.indexOf('function monotone(')), context);
+  const rows = Array.from({ length: 15 }, (_, index) => ({ label: `item-${index}`, revenue: index * 100, docs: 15 - index }));
+  const original = JSON.stringify(rows);
+  context.rows = rows;
+  for (const kind of ['category', 'brand']) {
+    const revenue = vm.runInContext(`bars(rows, 'revenue', '${kind}')`, context);
+    const orders = vm.runInContext(`bars(rows, 'docs', '${kind}')`, context);
+    assert.deepEqual([...revenue.matchAll(/data-value="([^"]+)"/g)].map(match => match[1]), Array.from({ length: 12 }, (_, i) => `item-${14 - i}`));
+    assert.deepEqual([...orders.matchAll(/data-value="([^"]+)"/g)].map(match => match[1]), Array.from({ length: 12 }, (_, i) => `item-${i}`));
+  }
+  assert.equal(JSON.stringify(rows), original);
+});
