@@ -216,6 +216,8 @@ function sourceTime(value) {
 function sourceStatusHTML() {
   const descriptions = {
     GA4: "Сесії, покупки та атрибутована виручка. Час останнього отримання звіту.",
+    BigQuery:
+      "Унікальні user_pseudo_id за весь вибраний період, Україна. Час останнього отримання агрегату.",
     "API AGROMAT": "Каталог, залишки та контент. Час синхронізації каталогу.",
     "ERP / S3": "Замовлення та відвантаження. Час оновлення файлу джерела.",
     "Моніторинг цін":
@@ -248,6 +250,7 @@ function updateSources() {
   if (section === "home" && view === "overview") {
     for (const [name, key] of [
       ["GA4", "channels"],
+      ["BigQuery", "users"],
       ["API AGROMAT", "products"],
       ["ERP / S3", "sales"],
       ["Моніторинг цін", "prices"],
@@ -330,18 +333,36 @@ async function load() {
   skeleton();
   try {
     if (section === "home" && view === "overview") {
-      let [sales, products, prices, promotions, stock, channels, content] =
-        await Promise.all([
-          api("sales"),
-          api("products"),
-          api("prices"),
-          api("promotions"),
-          api("inventory"),
-          api("channels"),
-          api("content", { yoy: "0" }),
-        ]);
+      let [
+        sales,
+        products,
+        prices,
+        promotions,
+        stock,
+        channels,
+        content,
+        users,
+      ] = await Promise.all([
+        api("sales"),
+        api("products"),
+        api("prices"),
+        api("promotions"),
+        api("inventory"),
+        api("channels"),
+        api("content", { yoy: "0" }),
+        api("users"),
+      ]);
       if (id !== requestId) return;
-      data = { sales, products, prices, promotions, stock, channels, content };
+      data = {
+        sales,
+        products,
+        prices,
+        promotions,
+        stock,
+        channels,
+        content,
+        users,
+      };
       if (
         !["all", "site", "monomarket", "rozetka", "prom"].includes(
           state.chartChannel,
@@ -722,10 +743,12 @@ function overview(d) {
       ),
       overviewCard(
         "Користувачі",
-        null,
-        "Унікальні користувачі · метрика не передається поточним GA4-звітом",
+        d.users?.available ? d.users.users : null,
+        "Унікальні користувачі · BigQuery · Україна",
         "channels/overview",
-        null,
+        d.users?.previous?.available && d.users.previous.hasData
+          ? d.users.previous.users
+          : null,
       ),
       overviewCard(
         "AOV",

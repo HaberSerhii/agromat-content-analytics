@@ -280,6 +280,7 @@ export function contentSafe(d) {
   };
 }
 export function buildPath(kind, params, range) {
+  if (kind === "users") return "/api/studio-users";
   if (kind === "content") {
     const today = new Date().toLocaleDateString("sv-SE", {
       timeZone: "Europe/Kyiv",

@@ -17,7 +17,7 @@ node --test "$ROOT/releases/$REVISION/studio/tests/"*.test.mjs
 # Copy only the existing private nginx-to-app header; no AWS/Google credentials
 # or old application runtime files are exported or changed.
 python3 - "$ROOT/runtime.env" "$REVISION" <<'PY'
-import sys,re,json,pathlib,os
+import sys,re,json,pathlib,os,shutil
 config=pathlib.Path('/etc/nginx/sites-enabled/agromat-catalog').read_text()
 m=re.search(r'proxy_set_header X-Agromat-Dashboard-Auth\s+([^;]+);',config)
 if not m:raise SystemExit('Private upstream authentication header not found')
@@ -25,8 +25,17 @@ secret=m.group(1).strip().strip('"')
 if not secret or secret.startswith('$'):raise SystemExit('Unsupported upstream authentication configuration')
 path=pathlib.Path(sys.argv[1])
 path.write_text('PORT=3107\nSTUDIO_UPSTREAM=http://127.0.0.1:3000\nSTUDIO_REVISION='+sys.argv[2]+'\nSTUDIO_UPSTREAM_AUTH='+json.dumps(secret)+'\n')
+credentials=pathlib.Path('/opt/agromat-studio/google-credentials.json')
+shutil.copyfile('/var/lib/agromat-analytics/credentials/ga4-bigquery.json',credentials)
+shutil.chown(credentials,user='root',group='www-data')
+os.chmod(credentials,0o640)
+with path.open('a') as output:
+ output.write('GOOGLE_APPLICATION_CREDENTIALS=/opt/agromat-studio/google-credentials.json\nBIGQUERY_PROJECT_ID=maximal-furnace-385413\nBIGQUERY_DATASET_ID=analytics_321347682\nSTUDIO_BQ_CACHE_DIR=/opt/agromat-studio/bigquery-cache\n')
 os.chmod(path,0o600)
 PY
+mkdir -p "$ROOT/bigquery-cache"
+chown www-data:www-data "$ROOT/bigquery-cache"
+chmod 700 "$ROOT/bigquery-cache"
 NODE_BIN=$(node -p 'process.execPath')
 [[ "$NODE_BIN" != /root/* ]] || { echo 'Studio requires a system Node installation'; exit 1; }
 ln -sfn "$ROOT/releases/$REVISION/studio" "$ROOT/current"
@@ -47,6 +56,7 @@ MemoryMax=160M
 Nice=10
 NoNewPrivileges=true
 ProtectSystem=strict
+ReadWritePaths=/opt/agromat-studio/bigquery-cache
 ProtectHome=true
 PrivateTmp=true
 [Install]

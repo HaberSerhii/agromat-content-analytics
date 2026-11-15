@@ -1,3 +1,4 @@
+import { readUsers } from "./bigquery-users.mjs";
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -39,6 +40,7 @@ function release() {
   waiters.shift()?.();
 }
 const normalize = {
+  users: true,
   content: contentSafe,
   products: productsSafe,
   inventory: productsSafe,
@@ -48,6 +50,7 @@ const normalize = {
   channels: channelsSafe,
 };
 async function upstream(kind, params, range) {
+  if (kind === "users") return readUsers(range);
   let key = kind + ":" + buildPath(kind, params, range),
     hit = cache.get(key);
   if (hit && hit.expires > Date.now()) return hit.value;
@@ -193,7 +196,9 @@ export const server = http.createServer(async (req, res) => {
           : upstream(kind, url.searchParams, range)),
         body = { ...current, range, revision };
       if (
-        ["sales", "channels", "inventory", "promotions"].includes(kind) &&
+        ["sales", "channels", "inventory", "promotions", "users"].includes(
+          kind,
+        ) &&
         url.searchParams.get("yoy") === "1"
       ) {
         let priorRange = previousYear(range);
