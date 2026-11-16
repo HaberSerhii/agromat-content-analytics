@@ -11,7 +11,7 @@ export async function readSiteFunnel(mode,origin,auth){
  if(cache.has(key))return cache.get(key);
  if(pending.has(key))return pending.get(key);
  const task=(async()=>{try{
- const response=await fetch(origin+'/api/promotions/web-funnel?period='+mode,{headers:{'x-agromat-dashboard-auth':auth||'',Accept:'application/json'},signal:AbortSignal.timeout(145000)});
+ const response=await fetch(origin+'/api/promotions/web-funnel?url=https%3A%2F%2Fwww.agromat.ua%2F&period='+mode,{headers:{'x-agromat-dashboard-auth':auth||'',Accept:'application/json'},signal:AbortSignal.timeout(145000)});
  if(!response.ok)return {available:false};
  const result=funnelSafe(await response.json());
  if(result.available){if(cache.size>4)cache.clear();cache.set(key,result);}

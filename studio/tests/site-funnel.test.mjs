@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {funnelSafe} from '../site-funnel.mjs';
+import {funnelSafe,readSiteFunnel} from '../site-funnel.mjs';
 import {renderSiteFunnel,funnelTooltipData} from '../public/site-funnel.mjs';
 const p=(start,orders)=>({available:true,from:'2026-11-09',to:'2026-11-15',stages:[{key:'landing',users:start},{key:'purchase',users:orders}],secret:'hidden'});
 test('funnel projection exposes only known aggregate stages and comparison periods',()=>{
@@ -36,4 +36,15 @@ test('hover details compare the same stage ratio and preserve missing year data'
  assert.equal(funnelTooltipData(source,'purchase').comparisons[0].difference,'-1 зам.');
  assert.equal(funnelTooltipData({...source,yearAgo:null},'cr').rows[2].value,'—');
  assert.doesNotMatch(renderSiteFunnel(source),/Порівняння та деталі|Як читати воронку/);
+});
+
+test('funnel adapter supplies the required fixed site URL to the source',async()=>{
+ const original=globalThis.fetch;
+ let request;
+ globalThis.fetch=async url=>{request=new URL(url);return {ok:true,json:async()=>({comparisons:{all:{current:p(100,2),previous:p(100,1),yearAgo:p(100,1)}}})}};
+ try{
+  assert.equal((await readSiteFunnel('week','http://127.0.0.1:3000','')).available,true);
+  assert.equal(request.searchParams.get('url'),'https://www.agromat.ua/');
+  assert.equal(request.searchParams.get('period'),'week');
+ }finally{globalThis.fetch=original;}
 });
