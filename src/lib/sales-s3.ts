@@ -254,6 +254,7 @@ export type SalesDataset = {
     };
     plan: SalesPlanSummary;
     orderInsights: SalesOrderInsightsSummary;
+    canceledByDate: Array<{ date: string; docs: number }>;
     byDate: SalesDateSummary[];
     ordersByDate: SalesOrderDateSummary[];
     months: SalesMonthSummary[];
@@ -1183,6 +1184,7 @@ function buildDataset(
   let shippedGoods = 0;
   let shippedRevenue = 0;
   const reissuedSiteSales = { docs: 0, revenue: 0 };
+  const canceledByDate = new Map<string, number>();
   let canceledDocs = 0;
   let returnedRevenue = 0;
   let filteredDocs = 0;
@@ -1299,6 +1301,7 @@ function buildDataset(
       selectedReturnedRevenue += row.returnSum;
       if (isCanceled(row.state)) {
         selectedCanceledDocs += 1;
+        canceledByDate.set(analysisDate, (canceledByDate.get(analysisDate) || 0) + 1);
         selectedCanceledRevenue += getNetRevenue(row);
       }
 
@@ -1554,6 +1557,7 @@ function buildDataset(
             .slice(0, 10),
         },
       },
+      canceledByDate: [...canceledByDate].map(([date, docs]) => ({ date, docs })).sort((a, b) => a.date.localeCompare(b.date)),
       byDate: fillSalesDateSeries([...byDate.values()], filter.from, filter.to),
       ordersByDate: fillOrderDateSeries([...ordersByDate.values()]
         .map((item) => ({

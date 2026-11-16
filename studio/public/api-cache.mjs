@@ -6,12 +6,19 @@ const MAX_BYTES = 8 * 1024 * 1024;
 
 export function apiParams(kind, state, extra = {}) {
   const values = { ...state, yoy: state.yoy ? "1" : "0", ...extra };
+  if(kind==='site-funnel')return new URLSearchParams({mode:values.mode||'week'});
+  if(kind==='capabilities')return new URLSearchParams();
+  if(kind==='price-index')return new URLSearchParams({schema:'price1'});
+  if(kind==='traffic-quarter')return new URLSearchParams({schema:'traffic1'});
   const keys = ["from", "to"];
+  if(kind==='revenue-waterfall')keys.push('mode');
   if (["sales", "channels", "inventory", "promotions", "users"].includes(kind)) keys.push("yoy");
   if (["products", "prices", "promotions"].includes(kind)) keys.push("page", "search", "category", "brand");
   if (kind === "products") keys.push("stock", "quality");
   if (kind === "prices") keys.push("view", "overview", "competitor", "position");
   if (kind === "promotions") keys.push("quality");
+  if (kind === "users") keys.push("series");
+  if (kind === "overview-history") return new URLSearchParams({schema:"metrics1",from:values.from,to:values.to, ...(values.channel && values.channel !== "all" ? {channel:values.channel} : {})});
   if (kind === "sales") keys.push("channel", "segment", "category", "brand", "chartInterval");
   const params = new URLSearchParams();
   for (const key of keys.sort()) {

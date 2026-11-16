@@ -1,4 +1,9 @@
-import { apiParams, createApiCache } from "/api-cache.mjs?v=cache1";
+import {bindFunnelTooltips} from "/site-funnel.mjs?v=promlegend1";
+import {bindCategoryTooltips, categoryPeriod} from "/category-treemap.mjs?v=promlegend1";
+import {lastQuarterWeeks} from "/chart-periods.mjs?v=promlegend1";
+import { bindWeeklyCharts } from "/weekly-charts.mjs?v=promlegend1";
+import { renderBusinessOverview, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=promlegend1";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=promlegend1";
 import {
   defaultRange,
   chartSeries,
@@ -115,6 +120,9 @@ let section = "home",
     chartMetric: "revenue",
     chartSegment: "Усі",
     chartInterval: "day",
+    waterfallMode: "yoy",
+    categoryPeriod: "month",
+    funnelMode: "week",
   },
   data = null,
   requestId = 0,
@@ -141,11 +149,17 @@ function parseLocation() {
     "chartMetric",
     "chartSegment",
     "chartInterval",
+    "waterfallMode",
+    "categoryPeriod",
+    "funnelMode",
     "ranking",
   ])
     if (params.has(k)) state[k] = params.get(k);
   for (const [key, allowed, fallback] of [
-    ["chartMetric", ["revenue", "docs"], "revenue"],
+    ["waterfallMode", ["yoy", "month"], "yoy"],
+    ["categoryPeriod", ["month", "year"], "month"],
+    ["funnelMode", ["week", "month"], "week"],
+    ["chartMetric", ["revenue", "docs", "aov", "users", "conversion", "canceled"], "revenue"],
     ["chartInterval", ["day", "week", "month"], "day"],
     ["chartSegment", ["Усі", "Плитка", "Сантехніка", "Підлогові покриття", "Джерела живлення", "Будівельна хімія", "Інше"], "Усі"],
   ]) if (!allowed.includes(state[key])) state[key] = fallback;
@@ -272,7 +286,79 @@ function updateSources() {
   if ($("#source-status-list"))
     $("#source-status-list").innerHTML = sourceStatusHTML();
 }
+function businessShell() {
+  document.body.classList.add("business-page");
+  $("#app").innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="bo-side-search">${icon('products')}<button id="bo-side-search">Знайти відповідь у даних <kbd>⌕</kbd></button></div><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav active" data-go="home" aria-current="page">${icon('home')}<span>Огляд бізнесу</span></button><div class="bo-side-chapter">Одна картина.<br><span>Більше розуміння.</span></div><div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><div class="bo-breadcrumb">Робочий простір <span>/</span> Головна ${["localhost","127.0.0.1","::1"].includes(location.hostname) ? '<span class="bo-local-label">Локальний перегляд</span>' : ""}</div><section class="bo-heading"><div><h1>Огляд бізнесу<span>.</span></h1><p>Ключові показники. Контекст. Наступний крок.</p></div><div class="bo-heading-actions"><button id="toggle-yoy" class="bo-yoy" aria-pressed="${state.yoy}">Порівняти з ${Number(state.from.slice(0,4))-1} <span>${state.yoy ? '✓' : '+'}</span></button><label class="bo-channel-control">Канал <select id="bo-channel" aria-label="Канал продажів"><option value="all">Усі</option><option value="site">Сайт</option><option value="rozetka">Rozetka</option><option value="monomarket">Monomarket</option></select></label></div></section><div class="bo-context"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div><span id="live-data-label">${sourceBadgeHTML()}</span></div><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+  $("#bo-channel").value = state.chartChannel;
+  $("#bo-channel").onchange = event => { state.chartChannel=event.target.value; saveLocation(); load(); };
+  $("#bo-side-search").onclick = () => $("#bo-question")?.focus();
+
+  bindShell();
+}
+function renderBusiness() {
+  return renderBusinessOverview(data,{...state,graphToday:today});
+}
+function bindBusinessOverview() {
+  if (section !== 'home' || !$(".business-overview")) return;
+  bindWeeklyCharts();
+  bindQuarterTooltips();
+  bindCategoryTooltips();
+  bindFunnelTooltips();
+  $$("[data-waterfall-mode]").forEach(button=>button.onclick=async()=>{
+    const request=requestId,mode=button.dataset.waterfallMode;state.waterfallMode=mode;saveLocation();data.waterfall=null;
+    $("#content").innerHTML=renderBusiness();bindContent();
+    const result=await api('revenue-waterfall',{mode:state.waterfallMode}).catch(()=>({available:false}));
+    if(request!==requestId || state.waterfallMode!==mode)return;data.waterfall=result;$("#content").innerHTML=renderBusiness();bindContent();
+  });
+  $$("[data-category-period]").forEach(button=>button.onclick=async()=>{
+    const mode=button.dataset.categoryPeriod, request=requestId;
+    state.categoryPeriod=mode;saveLocation();data.categorySales=null;
+    $("#content").innerHTML=renderBusiness();bindContent();
+    const range=categoryPeriod(today,mode);
+    const result=range.empty?{available:true,categories:[]}:await api('sales',{from:range.from,to:range.to,yoy:'1',channel:state.chartChannel,segment:state.chartSegment}).catch(()=>({available:false}));
+    if(request!==requestId || state.categoryPeriod!==mode)return;
+    data.categorySales=result;$("#content").innerHTML=renderBusiness();bindContent();
+    $("#bo-categories")?.scrollIntoView({block:'nearest'});
+  });
+  $$("[data-funnel-mode]").forEach(button=>button.onclick=async()=>{
+    const mode=button.dataset.funnelMode,request=requestId;state.funnelMode=mode;saveLocation();data.siteFunnel=null;
+    $("#content").innerHTML=renderBusiness();bindContent();
+    const result=await api('site-funnel',{mode}).catch(()=>({available:false}));
+    if(request!==requestId || state.funnelMode!==mode)return;
+    data.siteFunnel=result;$("#content").innerHTML=renderBusiness();bindContent();$("#bo-funnel")?.scrollIntoView({block:'nearest'});
+  });
+  const focus = key => {
+    const target = $("#bo-"+key);
+    if (!target) return;
+    target.scrollIntoView({behavior:'smooth',block:'center'});
+    target.focus({preventScroll:true});
+  };
+  $$("[data-bo-focus]").forEach(button=>button.onclick=()=>focus(button.dataset.boFocus));
+  const render=()=>{ $("#content").innerHTML=renderBusiness(); bindContent(); };
+  $$("[data-bo-metric]").forEach(button=>button.onclick=()=>{
+    const key=button.dataset.boMetric;
+    state.chartMetric=key;saveLocation();render();$("#bo-revenue").scrollIntoView({behavior:'smooth',block:'nearest'});
+  });
+  $$("[data-bo-interval]").forEach(button=>button.onclick=()=>{
+    state.chartInterval=button.dataset.boInterval;saveLocation();render();
+  });
+  $$("[data-bo-channel]").forEach(button=>button.onclick=()=>{state.chartChannel=button.dataset.boChannel;saveLocation();load();});
+  $$("[data-bo-category]").forEach(button=>button.onclick=()=>{
+    const category=button.dataset.categoryMeta?JSON.parse(button.dataset.categoryMeta):data.chartSales?.categories?.find(row=>row.label===button.dataset.boCategory);
+    modal(button.dataset.boCategory,`<p>Відвантажені продажі за вибраний період · ERP</p><h2>${money(category?.revenue)}</h2><p>Замовлень: ${num(category?.docs)}</p><p>Товарів: ${num(category?.goods)}</p>${category?.items?category.items.map(row=>`<div class="listline"><span>${esc(row.label)}</span><b>${money(row.revenue)}</b></div>`).join(''):''}`);
+  });
+  $("#bo-ask-form").onsubmit=event=>{
+    event.preventDefault();
+    const query=$("#bo-question").value.trim().toLowerCase();
+    if (!query) return $("#bo-question").focus();
+    const match=[[/канал|канал|звідки|продаж|продаж|виторг|вируч|доход/,'channels'],[/категор/,'categories'],[/траф|сеанс|сесі|конверс/,'traffic'],[/цін|цен|рин|рын/,'market'],[/наяв|налич|контент|каталог|фото|товар/,'catalog'],[/тиж|недел/,'weeks']].find(([pattern])=>pattern.test(query));
+    if (match) focus(match[1]); else modal('Знайдіть відповідь в огляді','<p>Спробуйте запитати про канали продажу, категорії, трафік, ціни або наявність. Пошук відкриває відповідний блок поточних даних.</p>');
+  };
+}
+
 function skeleton() {
+  if (section === "home" && view === "overview") return businessShell();
+  document.body.classList.remove("business-page");
   const def = defs[section];
   $("#app").innerHTML =
     `<aside><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div>${Object.entries(
@@ -340,41 +426,52 @@ async function load() {
         )
       )
         state.chartChannel = "all";
-      const chartSales = state.chartChannel === "prom" ? Promise.resolve(null)
-        : api("sales", { channel: state.chartChannel, segment: state.chartSegment }).catch(() => ({ available: false }));
-      let [
-        sales,
-        products,
-        prices,
-        promotions,
-        stock,
-        channels,
-        content,
-        users,
-      ] = await Promise.all([
-        api("sales"),
-        api("products"),
-        api("prices"),
-        api("promotions"),
-        api("inventory"),
-        api("channels"),
-        api("content", { yoy: "0" }),
-        api("users"),
-      ]);
-      if (id !== requestId) return;
-      data = {
-        sales,
-        products,
-        prices,
-        promotions,
-        stock,
-        channels,
-        content,
-        users,
+      const dashboard = { salesChannels: {}, quarterChannels: {}, categorySales:null };
+      data = dashboard;
+      const draw = () => {
+        if (id !== requestId || data !== dashboard) return;
+        $("#content").innerHTML = renderBusiness();
+        updateSources();bindContent();
       };
-      data.chartSales = await chartSales;
+      const read = async (kind, extra = {}) => api(kind, extra).catch(() => ({available:false}));
+      const quarterRange=lastQuarterWeeks(today);
+      const jobs = [
+        (async()=>{const mode=state.funnelMode,result=await read('site-funnel',{mode});if(state.funnelMode===mode){dashboard.siteFunnel=result;draw();}})(),
+        (async()=>{const mode=state.categoryPeriod,range=categoryPeriod(today,mode);
+          const result=range.empty?{available:true,categories:[]}:await read('sales',{from:range.from,to:range.to,yoy:'1',channel:state.chartChannel,segment:state.chartSegment});
+          if(state.categoryPeriod===mode){dashboard.categorySales=result;draw();}
+        })(),
+        (async()=>{
+          const caps=await read('capabilities');
+          if(!caps.privateOverview)return;
+          dashboard.privateOverview=true;draw();
+          const mode=state.waterfallMode||'yoy';const result=await read('revenue-waterfall',{mode});
+          if((state.waterfallMode||'yoy')===mode){dashboard.waterfall=result;draw();}
+        })(),
+        (async()=>{dashboard.priceIndex=await read('price-index');draw();})(),
+        (async()=>{dashboard.quarterTraffic=await read('traffic-quarter');draw();})(),
+        ...['site','rozetka','monomarket'].map(async channel=>{
+          dashboard.quarterChannels[channel]=await read('sales',{...quarterRange,channel,segment:'Усі',chartInterval:'day',yoy:'0'});
+          draw();
+        }),
+        (async()=>{dashboard.history=await read('overview-history',{channel:state.chartChannel});draw();})(),
+        ...[['sales','sales'], ['products','products'], ['prices','prices'], ['stock','inventory'], ['channels','channels'], ['content','content'], ['users','users']].map(async ([key,kind]) => {
+          const result = await read(kind,kind === 'prices' ? {overview:'1'} : kind === 'content' ? {yoy:'0'} : {});
+          dashboard[key] = result;
+          if (key === 'sales' && state.chartChannel === 'all' && state.chartSegment === 'Усі') dashboard.chartSales = result;
+          draw();
+        }),
+        (async()=>{
+          dashboard.chartSales = state.chartChannel === 'prom' ? {available:false} : await read('sales',{channel:state.chartChannel,segment:state.chartSegment});
+          draw();
+        })(),
+        ...['site','rozetka','monomarket'].map(async channel=>{
+          dashboard.salesChannels[channel] = await read('sales',{channel,segment:'Усі',chartInterval:'day'});
+          draw();
+        }),
+      ];
+      await Promise.all(jobs);
       if (id !== requestId) return;
-      $("#content").innerHTML = overview(data);
     } else {
       let kind = section,
         extra = {};
@@ -533,6 +630,12 @@ async function updateOverviewChart() {
     id = ++chartRequest,
     target = $("#overview-sales-chart");
   if (!target) return;
+  if ($(".business-overview")) {
+    const source = await api("sales", {channel:state.chartChannel,segment:state.chartSegment}).catch(()=>({available:false}));
+    if (id !== chartRequest || pageRequest !== requestId) return;
+    data.chartSales=source;
+    $("#content").innerHTML=renderBusiness();bindContent();return;
+  }
   if (state.chartChannel === "prom") {
     data.chartSales = null;
     target.innerHTML = salesChart(null);
@@ -573,7 +676,9 @@ function bindOverviewControls() {
       chartFilterOpen = true;
       state[button.dataset.chartFilter] = button.dataset.chartValue;
       saveLocation();
-      if (button.dataset.chartFilter === "chartMetric") {
+      if ($(".business-overview") && button.dataset.chartFilter === "chartMetric") {
+        $("#content").innerHTML=renderBusiness();bindContent();
+      } else if (button.dataset.chartFilter === "chartMetric") {
         $("#overview-sales-chart").innerHTML = salesChart(data.chartSales);
         $("#overview-sales-ranking").innerHTML = rankingPanel(data.chartSales);
         bindContent();
@@ -1235,6 +1340,7 @@ function sourceNote(d, name) {
 }
 function bindContent() {
   bindOverviewControls();
+  bindBusinessOverview();
   $$("[data-action]").forEach(
     (b) => (b.onclick = () => go(...b.dataset.action.split("/"))),
   );

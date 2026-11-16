@@ -104,6 +104,11 @@ test("overview, statuses and cancellation products split mixed orders while pres
     assert.equal(filtered.summary.brands.reduce((sum, brand) => sum + brand.revenue, 0), expected);
     assert.equal(Object.values(filtered.summary.categoryProducts).flat().reduce((sum, product) => sum + product.revenue, 0), expected);
   }
+  const manyCanceled = Array.from({ length: 70 }, (_, index) => ({ ...base, docsRef: `cancel-${index}`, shippedDate: null, state: "Скасована" }));
+  const cancellationHistory = build([base, ...manyCanceled], {}, args[2]);
+  assert.deepEqual(cancellationHistory.summary.canceledByDate, [{ date: "2026-10-01", docs: 70 }]);
+  assert.equal(cancellationHistory.summary.canceledByDate.reduce((sum, day) => sum + day.docs, 0), cancellationHistory.summary.selected.canceledDocs);
+  assert.equal(cancellationHistory.rows.length, 1, "document preview excludes cancellations while history retains every cancellation");
   const result = build(...args);
   assert.equal(result.summary.shippedRevenue, 1000);
   assert.deepEqual(result.summary.shippedSegments.map((part) => part.revenue), [600, 300, 100]);

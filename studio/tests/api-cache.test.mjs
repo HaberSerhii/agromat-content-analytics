@@ -63,3 +63,11 @@ test("entry and byte limits bound persistent and memory cache; oversized replies
   assert.equal(calls, 6);
   assert.equal(disk.entries.has('/large'), false);
 });
+
+test('overview history cache keys include calendar dates and channel',()=>{
+ const state={from:'2026-10-01',to:'2026-11-15',chartChannel:'all'};
+ const key=apiParams('overview-history',state).toString();
+ assert.notEqual(key,apiParams('overview-history',{...state,from:'2026-11-01'}).toString());
+ assert.notEqual(key,apiParams('overview-history',state,{channel:'site'}).toString());
+ assert.equal(key,apiParams('overview-history',{...state,chartInterval:'week'}).toString());
+});

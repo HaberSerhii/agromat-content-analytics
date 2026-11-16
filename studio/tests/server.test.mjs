@@ -9,6 +9,15 @@ test("public server exposes only static assets, health and read-only bounded API
     let r = await fetch(base + "/api/health");
     assert.equal(r.status, 200);
     assert.equal((await r.json()).service, "agromat-studio");
+    r=await fetch(base+"/api/capabilities");
+    assert.equal((await r.json()).privateOverview,false);
+    r=await fetch(base+"/api/revenue-waterfall?from=2026-11-01&to=2026-11-15");
+    assert.equal(r.status,404,"private analysis is disabled by default");
+    r = await fetch(base + "/site-funnel.mjs");
+    assert.equal(r.status,200);
+    assert.match(await r.text(),/renderSiteFunnel/);
+    r = await fetch(base + "/api/site-funnel?mode=custom");
+    assert.equal(r.status,400);
     r = await fetch(base + "/api/admin/deploy", { method: "POST" });
     assert.equal(r.status, 405);
     r = await fetch(base + "/api/admin/deploy");
@@ -19,6 +28,10 @@ test("public server exposes only static assets, health and read-only bounded API
     assert.equal(r.status, 200);
     assert.match(r.headers.get("content-type"), /javascript/);
     assert.match(await r.text(), /createApiCache/);
+    for (const asset of ["business-overview.mjs", "business-overview.css"]) {
+      r = await fetch(base + "/" + asset);
+      assert.equal(r.status, 200);
+    }
     r = await fetch(base + "/.env");
     assert.equal(r.status, 404);
     r = await fetch(base + "/");

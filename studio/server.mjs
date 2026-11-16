@@ -1,3 +1,8 @@
+import {readSiteFunnel} from "./site-funnel.mjs";
+import {loadRevenueWaterfall} from "./revenue-waterfall.mjs";
+import {readPriceIndex} from "./price-index.mjs";
+import {readTrafficQuarter} from "./traffic-quarter.mjs";
+import { readOverviewHistory } from "./overview-history.mjs";
 import { readUsers } from "./bigquery-users.mjs";
 import http from "node:http";
 import fs from "node:fs/promises";
@@ -50,7 +55,7 @@ const normalize = {
   channels: channelsSafe,
 };
 async function upstream(kind, params, range) {
-  if (kind === "users") return readUsers(range);
+  if (kind === "users") return readUsers(range, params.get("series") === "week");
   let key = kind + ":" + buildPath(kind, params, range),
     hit = cache.get(key);
   if (hit && hit.expires > Date.now()) return hit.value;
@@ -114,6 +119,12 @@ const statics = new Map([
   ["/app.js", "app.js"],
   ["/chart-data.mjs", "chart-data.mjs"],
   ["/api-cache.mjs", "api-cache.mjs"],
+  ["/business-overview.mjs", "business-overview.mjs"],
+  ["/category-treemap.mjs", "category-treemap.mjs"],
+  ["/site-funnel.mjs", "site-funnel.mjs"],
+  ["/weekly-charts.mjs", "weekly-charts.mjs"],
+  ["/chart-periods.mjs", "chart-periods.mjs"],
+  ["/business-overview.css", "business-overview.css"],
   ["/base.css", "base.css"],
   ["/theme.css", "theme.css"],
   ["/studio.css", "studio.css"],
@@ -184,6 +195,32 @@ export const server = http.createServer(async (req, res) => {
       }
       if (waiters.length >= 24) return json(503, { error: "busy" });
       const kind = url.pathname.slice(5);
+      if(kind==='site-funnel'){
+        const mode=url.searchParams.get('mode')||'week';
+        if(!['week','month'].includes(mode))return json(400,{error:'invalid_mode'});
+        const result=await readSiteFunnel(mode,origin,process.env.STUDIO_UPSTREAM_AUTH);
+        return json(result.available?200:503,result);
+      }
+      if(kind==='capabilities')return json(200,{available:true,privateOverview:process.env.STUDIO_PRIVATE_PREVIEW==='1'});
+      if(kind==='revenue-waterfall'){
+        if(process.env.STUDIO_PRIVATE_PREVIEW!=='1')return json(404,{error:'not_found'});
+        let range;try{range=dates(url.searchParams);}catch{return json(400,{error:'invalid_filter_or_range'});}
+        const mode=url.searchParams.get('mode')||'yoy';if(!['yoy','month'].includes(mode))return json(400,{error:'invalid_mode'});
+        const value=await loadRevenueWaterfall(range,mode,upstream);return json(200,value);
+      }
+      if (kind === "price-index") {
+        const value=await readPriceIndex();return json(value.available?200:503,{...value,revision});
+      }
+      if (kind === "traffic-quarter") {
+        const value=await readTrafficQuarter();return json(value.available?200:503,{...value,revision});
+      }
+      if (kind === "overview-history") {
+        const channel = url.searchParams.get("channel") || "all";
+        if (!["all", "site", "rozetka", "monomarket"].includes(channel)) return json(400, {error:"invalid_channel"});
+        let range;try{range=dates(url.searchParams);}catch{return json(400,{error:'invalid_filter_or_range'});}
+        const value = await readOverviewHistory({channel,range});
+        return json(value.available ? 200 : 503, {...value,revision});
+      }
       if (!normalize[kind]) return json(404, { error: "not_found" });
       let range;
       try {

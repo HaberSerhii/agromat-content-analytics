@@ -31,6 +31,13 @@ shutil.chown(credentials,user='root',group='www-data')
 os.chmod(credentials,0o640)
 with path.open('a') as output:
  output.write('GOOGLE_APPLICATION_CREDENTIALS=/opt/agromat-studio/google-credentials.json\nBIGQUERY_PROJECT_ID=maximal-furnace-385413\nBIGQUERY_DATASET_ID=analytics_321347682\nSTUDIO_BQ_CACHE_DIR=/opt/agromat-studio/bigquery-cache\n')
+for env_name in ['.env.local', '.env']:
+ env_file=pathlib.Path('/opt/agromat-content-analytics')/env_name
+ if env_file.exists():
+  match=re.search(r'^GA4_PROPERTY_ID=[\"\']?(\d+)',env_file.read_text(),re.M)
+  if match:
+   with path.open('a') as output:output.write('GA4_PROPERTY_ID='+match.group(1)+'\n')
+   break
 os.chmod(path,0o600)
 PY
 mkdir -p "$ROOT/bigquery-cache"
