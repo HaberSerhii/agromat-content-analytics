@@ -119,6 +119,7 @@ const statics = new Map([
   ["/app.js", "app.js"],
   ["/chart-data.mjs", "chart-data.mjs"],
   ["/api-cache.mjs", "api-cache.mjs"],
+  ["/overview-cache.mjs", "overview-cache.mjs"],
   ["/business-overview.mjs", "business-overview.mjs"],
   ["/category-treemap.mjs", "category-treemap.mjs"],
   ["/site-funnel.mjs", "site-funnel.mjs"],

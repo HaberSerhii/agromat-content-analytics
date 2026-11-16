@@ -1509,3 +1509,5 @@ body.business-page .bo-heading h1 {
  .bo-mosaic-tile>span{display:block;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.4}
  .bo-mosaic-tile strong{max-height:3.75em}
 }
+.bo-sidebar .nav svg{width:18px;height:18px;stroke-width:1.6;flex:none}.bo-cache-notice{font-size:10px;color:var(--muted);margin:0 0 12px}.bo-context{justify-content:flex-start}
+.business-overview.is-updating .bo-kpis,.business-overview.is-updating .bo-main-chart{opacity:.7;transition:opacity .16s ease}.business-overview .bo-kpis,.business-overview .bo-main-chart{transition:opacity .16s ease}.bo-cache-notice{min-height:15px}

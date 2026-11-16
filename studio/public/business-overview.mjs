@@ -1,13 +1,13 @@
-import {renderSiteFunnel} from "./site-funnel.mjs?v=ga4fallback1";
-import { categoryMosaic, categoryPeriod } from "./category-treemap.mjs?v=ga4fallback1";
+import {renderSiteFunnel} from "./site-funnel.mjs?v=fastoverview2";
+import { categoryMosaic, categoryPeriod } from "./category-treemap.mjs?v=fastoverview2";
 import {
   graphRange,
   yearBefore,
   miniInterval,
   lastQuarterWeeks,
   calendarBins,
-} from "./chart-periods.mjs?v=ga4fallback1";
-import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=ga4fallback1";
+} from "./chart-periods.mjs?v=fastoverview2";
+import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=fastoverview2";
 import { chartSeries, defaultRange } from "./chart-data.mjs?v=salesfilters1";
 const esc = (value) =>
   String(value ?? "")
@@ -513,13 +513,6 @@ export function renderRevenueWaterfall(source, state) {
 export function renderBusinessOverview(data, state, chartHTML) {
   const model = overviewModel(data, state),
     revenue = model.metrics[0];
-  const sessions = model.metrics[3],
-    cr = model.metrics[4];
-  const changeText = !state.yoy
-    ? `Відвантажений виторг за вибраний період — <b>${money(revenue.value)}</b>.`
-    : revenue.delta == null
-      ? "Порівнювана історія за цей період відсутня."
-      : `Виторг ${revenue.delta >= 0 ? "зріс" : "знизився"} на <b>${percent(Math.abs(revenue.delta))}</b> до тих самих дат торік.`;
   const metric =
     model.metrics.find((metric) => metric.key === state.chartMetric) || revenue;
   const graphPeriod = { from: state.from, to: state.to };
@@ -534,7 +527,7 @@ export function renderBusinessOverview(data, state, chartHTML) {
   const chartTotal = metric.value,
     chartPrior = metric.prior;
   const period = `${state.from.split("-").reverse().join(".")} — ${state.to.split("-").reverse().join(".")}`;
-  return `<div class="business-overview"><section class="bo-brief"><div class="bo-ask"><span class="bo-eyebrow">✦ ЗНАЙДІТЬ ВІДПОВІДЬ У ДАНИХ</span><h2>З чого почнемо сьогодні?</h2><form id="bo-ask-form"><input id="bo-question" aria-label="Питання до огляду" placeholder="Наприклад: звідки приходять продажі?"><button aria-label="Знайти у звітах" type="submit">↗</button></form><div class="bo-prompts"><button data-bo-focus="channels">Який канал дає більше виторгу?</button><button data-bo-focus="categories">Які категорії продаються?</button><button data-bo-focus="market">Як наші ціни виглядають на ринку?</button></div><small>Швидкий перехід до показників цього огляду</small></div><div class="bo-insights"><span class="bo-eyebrow">ГОЛОВНЕ ЗА ВИБРАНИЙ ПЕРІОД</span><p class="bo-period-note">${period}</p><button data-bo-focus="revenue"><span class="bo-signal">↗</span><span>${changeText}<small>Відвантажені продажі · ERP</small></span><span class="bo-arrow">↗</span></button><button data-bo-focus="traffic"><span class="bo-signal">◎</span><span>${sessions.value == null ? "Дані користувачів наразі недоступні." : `<b>${short(sessions.value)}</b> унікальних користувачів з України. Конверсія у покупку — <b>${percent(cr.value)}</b>.`}<small>Користувачі — BigQuery · UA; конверсія — покупки / сеанси GA4</small></span><span class="bo-arrow">↗</span></button><button data-bo-focus="catalog"><span class="bo-signal">▦</span><span><b>${data.stock?.available ? number(data.stock.total) : "—"}</b> товарів у наявності. Content Score — <b>${data.content?.available ? number(data.content.score) : "—"} / 100</b>.<small>Поточний стан каталогу · API AGROMAT</small></span><span class="bo-arrow">↗</span></button></div></section><div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${state.chartMetric === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${state.chartMetric === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong><small>${m.hint}</small>${weeklyChart(data.history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({ all: "Усі канали", site: "Сайт", rozetka: "Rozetka", monomarket: "Monomarket" }[state.chartChannel] || state.chartChannel)} · ${esc(state.chartSegment)}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
+  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо дані каналу…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${state.chartMetric === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${state.chartMetric === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong><small>${m.hint}</small>${weeklyChart(data.history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({ all: "Усі канали", site: "Сайт", rozetka: "Rozetka", monomarket: "Monomarket" }[state.chartChannel] || state.chartChannel)} · ${esc(state.chartSegment)}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
     ["day", "Дні"],
     ["week", "Тижні"],
   ]

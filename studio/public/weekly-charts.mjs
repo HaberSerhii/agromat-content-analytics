@@ -1,4 +1,4 @@
-import { graphBins, calendarBins } from "./chart-periods.mjs?v=ga4fallback1";
+import { graphBins, calendarBins } from "./chart-periods.mjs?v=fastoverview2";
 const DAY = 86400000;
 const esc = (v) =>
   String(v ?? "")
