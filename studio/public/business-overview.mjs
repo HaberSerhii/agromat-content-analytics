@@ -1,12 +1,13 @@
-import {renderSiteFunnel} from "./site-funnel.mjs?v=promlegend1";
-import { categoryMosaic, categoryPeriod } from "./category-treemap.mjs?v=promlegend1";
+import {renderSiteFunnel} from "./site-funnel.mjs?v=ga4fallback1";
+import { categoryMosaic, categoryPeriod } from "./category-treemap.mjs?v=ga4fallback1";
 import {
   graphRange,
+  yearBefore,
   miniInterval,
   lastQuarterWeeks,
   calendarBins,
-} from "./chart-periods.mjs?v=promlegend1";
-import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=promlegend1";
+} from "./chart-periods.mjs?v=ga4fallback1";
+import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=ga4fallback1";
 import { chartSeries, defaultRange } from "./chart-data.mjs?v=salesfilters1";
 const esc = (value) =>
   String(value ?? "")
@@ -54,7 +55,18 @@ export function overviewModel(data, state) {
       state.yoy && available(sales?.previous) && sales.previous.hasData
         ? sales.previous.metrics
         : {};
-  const channel = available(data.channels) ? data.channels : null;
+  const dailyTotals = (from,to) => {
+    const web=data.history?.web;
+    if(!web?.available || web.incomplete || web.thresholded)return null;
+    const rows=web.days.filter(row=>row.date>=from&&row.date<=to);
+    const expected=(Date.parse(to)-Date.parse(from))/86400000+1;
+    if(rows.length!==expected || new Set(rows.map(row=>row.date)).size!==expected || rows.some(row=>!Number.isFinite(row.sessions)||!Number.isFinite(row.purchases)||row.sessions<0||row.purchases<0))return null;
+    return {available:true,rows:[{sessions:sum(rows,'sessions'),purchases:sum(rows,'purchases')}]};
+  };
+  const channel = available(data.channels) ? data.channels : (()=>{
+    const current=dailyTotals(state.from,state.to);
+    return current?{...current,previous:dailyTotals(yearBefore(state.from),yearBefore(state.to))}:null;
+  })();
   const previousChannel =
     state.yoy && available(channel?.previous) ? channel.previous : null;
   const metric = (key, label, value, prior, format, hint, lower = false) => ({

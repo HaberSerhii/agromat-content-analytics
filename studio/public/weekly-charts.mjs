@@ -1,4 +1,4 @@
-import { graphBins, calendarBins } from "./chart-periods.mjs?v=promlegend1";
+import { graphBins, calendarBins } from "./chart-periods.mjs?v=ga4fallback1";
 const DAY = 86400000;
 const esc = (v) =>
   String(v ?? "")

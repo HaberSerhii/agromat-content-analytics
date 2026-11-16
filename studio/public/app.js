@@ -1,9 +1,9 @@
-import {bindFunnelTooltips} from "/site-funnel.mjs?v=promlegend1";
-import {bindCategoryTooltips, categoryPeriod} from "/category-treemap.mjs?v=promlegend1";
-import {lastQuarterWeeks} from "/chart-periods.mjs?v=promlegend1";
-import { bindWeeklyCharts } from "/weekly-charts.mjs?v=promlegend1";
-import { renderBusinessOverview, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=promlegend1";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=promlegend1";
+import {bindFunnelTooltips} from "/site-funnel.mjs?v=ga4fallback1";
+import {bindCategoryTooltips, categoryPeriod} from "/category-treemap.mjs?v=ga4fallback1";
+import {lastQuarterWeeks} from "/chart-periods.mjs?v=ga4fallback1";
+import { bindWeeklyCharts } from "/weekly-charts.mjs?v=ga4fallback1";
+import { renderBusinessOverview, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=ga4fallback1";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=ga4fallback1";
 import {
   defaultRange,
   chartSeries,

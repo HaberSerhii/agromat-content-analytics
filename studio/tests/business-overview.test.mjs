@@ -109,3 +109,13 @@ test('category comparison stays independent of the dashboard calendar and YoY to
  assert.match(html,/data-category-period="year" aria-pressed="true"/);
  assert.match(html,/\+100%/);
 });
+
+test('conversion falls back only to complete unthresholded daily GA4 data',()=>{
+ const days=[{date:'2026-11-01',sessions:100,purchases:2},{date:'2025-11-01',sessions:100,purchases:1}];
+ const query={...state,from:'2026-11-01',to:'2026-11-01'};
+ const data={channels:{available:false},history:{web:{available:true,days}}};
+ const metric=overviewModel(data,query).metrics[4];
+ assert.equal(metric.value,2);assert.equal(metric.prior,1);assert.equal(metric.delta,100);
+ assert.equal(overviewModel({...data,history:{web:{available:true,days,thresholded:true}}},query).metrics[4].value,null);
+ assert.equal(overviewModel(data,{...query,to:'2026-11-02'}).metrics[4].value,null);
+});
