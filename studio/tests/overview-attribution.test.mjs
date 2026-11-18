@@ -83,7 +83,7 @@ test('enabled margin uses scoped shipped net revenue and retains ERP zeros', () 
   assert.match(html, /data-bo-metric="margin" aria-pressed="true"/);
   assert.match(html, /data-bo-metric="margin" aria-pressed="true"><div class="bo-kpi-label"><span>Прибуток<\/span>/);
   assert.match(html, /<h2>Прибуток<\/h2>/);
-  assert.match(html, /Маржа, %<\/span><b>3,33%/);
+  assert.match(html, /Прибуток, %<\/span><b>3,33%/);
   assert.match(html, /id="overview-sales-chart".*data-metric="margin"/);
 });
 
