@@ -58,7 +58,6 @@ export function overviewControls(state) {
       <div class="bo-segments" role="group" aria-label="Порівняння періодів">${comparisons.map(([key,label,reason]) =>
         `<button type="button" data-comparison="${key}" aria-pressed="${mode===key}" ${availability[key]?'':'disabled'} title="${reason}">${label}</button>`
       ).join('')}</div>
-      <span class="bo-compare-dates" aria-live="polite">${rangeLabel(comparisonRange(state,mode))}</span>
     </fieldset>
     ${group('salesScope','Канали продажу',[['all','Усі'],['site','Сайт'],['marketplaces','Маркетплейси']])}
     ${group('acquisition','Канали залучення',[['all','Усі'],['direct','Direct'],['organic','Organic'],['cpc','CPC']])}

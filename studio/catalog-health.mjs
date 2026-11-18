@@ -8,6 +8,15 @@ import {comparisonRange, overviewDefaults} from './public/overview-filters.mjs';
 import {dates} from './data.mjs';
 
 const labels = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
+const trafficCategories = new Map([
+  ['Плитка', {root:'Плитка', categories:['Плитка', 'Мозаїка', 'Декорація']}],
+  ['Сантехніка', {root:'Сантехніка', categories:[
+    'Сантехнічна кераміка', 'Змішувачі', 'Душові системи', 'Теплотехніка',
+    'Ванни', 'Аксесуари', 'Душові кабіни', 'Меблі для ванної кімнати',
+    'Інсталяції', 'Сифони', 'Душові канали та трапи', 'Басейни',
+  ]}],
+  ['Підлогові покриття', {root:'Підлогове покриття', categories:['Вінілова підлога', 'Ламінат', 'Паркет']}],
+]);
 const plumbingRoots = new Set([
   'Сантехніка', 'Змішувачі', 'Душові кабіни та системи', 'Унітази та інсталяції',
   'Раковини та умивальники', 'Рушникосушарки', 'Ванни', 'Кухонні мийки',
@@ -63,23 +72,39 @@ async function readTraffic(groups, {range, baseline}) {
     process.env.BIGQUERY_PRODUCT_EVENTS_TABLE || 'items_detailed_events',
   ];
   if (configured.some(part => !/^[\w-]+$/.test(part || ''))) return null;
-  const refs = groups.flatMap(group => [...group.refs].map(ref => ({segment:group.label, ref})));
-  if (!refs.length) return null;
+  const refs = groups.filter(group => !trafficCategories.has(group.label))
+    .flatMap(group => [...group.refs].map(ref => ({segment:group.label, ref})));
+  const gaCategories = [...trafficCategories].flatMap(([segment, {root, categories}]) =>
+    categories.map(category => ({segment, root, category})));
   const require = createRequire('/opt/agromat-content-analytics/package.json');
   const {BigQuery} = require(process.env.STUDIO_BIGQUERY_SDK || '/opt/agromat-content-analytics/node_modules/@google-cloud/bigquery');
   const client = new BigQuery({projectId:configured[0]});
   const [rows] = await client.query({
-    query: `SELECT period.name AS period, r.segment, COUNTIF(e.event_name = 'view_item_list') AS impressions,
+    query: `WITH events AS (
+      SELECT event_date, event_name, item_id, item_category, item_category2
+      FROM \`${configured.join('.')}\`
+      WHERE (event_date BETWEEN DATE(@from) AND DATE(@to)
+        OR event_date BETWEEN DATE(@priorFrom) AND DATE(@priorTo))
+        AND event_name IN ('view_item_list','view_item')
+    ), segments AS (
+      SELECT e.event_date, e.event_name, g.segment
+      FROM events e
+      JOIN UNNEST(@gaCategories) g
+        ON TRIM(e.item_category) = g.root AND TRIM(e.item_category2) = g.category
+      ${refs.length ? `UNION ALL
+      SELECT e.event_date, e.event_name, r.segment
+      FROM events e
+      JOIN UNNEST(@refs) r ON SAFE_CAST(NULLIF(TRIM(e.item_id), '') AS INT64) = r.ref` : ''}
+    )
+    SELECT period.name AS period, e.segment, COUNTIF(e.event_name = 'view_item_list') AS impressions,
       COUNTIF(e.event_name = 'view_item') AS views
-      FROM \`${configured.join('.')}\` e
-      JOIN UNNEST(@refs) r ON SAFE_CAST(NULLIF(TRIM(e.item_id), '') AS INT64) = r.ref
+      FROM segments e
       JOIN UNNEST(@periods) period ON e.event_date BETWEEN CAST(period.startDate AS DATE) AND CAST(period.endDate AS DATE)
-      WHERE (e.event_date BETWEEN DATE(@from) AND DATE(@to)
-        OR e.event_date BETWEEN DATE(@priorFrom) AND DATE(@priorTo))
-        AND e.event_name IN ('view_item_list','view_item')
       GROUP BY 1, 2`,
     params: {
-      ...range, priorFrom:baseline.from, priorTo:baseline.to, refs,
+      ...range, priorFrom:baseline.from, priorTo:baseline.to,
+      ...(refs.length ? {refs} : {}),
+      gaCategories,
       periods:[
         {name:'current', startDate:range.from, endDate:range.to},
         {name:'previous', startDate:baseline.from, endDate:baseline.to},

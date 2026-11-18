@@ -1569,13 +1569,12 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-comparison-control{display:flex;gap:9px;align-items:center;margin-top:7px}
 .bo-comparison-control .bo-segments{padding:2px;gap:1px}
 .bo-comparison-control .bo-segments button{font-size:10px;padding:5px 9px}
-.bo-compare-dates{font-size:9px;color:var(--muted);white-space:nowrap}
 .bo-filter-group{border:0;padding:0;margin:0;min-width:0}
 .bo-filter-group legend{font-size:10px;color:var(--muted);margin-bottom:6px;padding:0}
 .bo-filter-group .bo-segments button{font-size:11px;padding:7px 9px}
 .bo-sticky-header button:disabled{opacity:.35;cursor:not-allowed;box-shadow:none}
-.bo-data-coverage{font-size:10px;color:var(--muted);min-height:17px;margin-top:8px}
-.bo-data-coverage button{font:inherit;color:inherit;background:none;border:0;padding:0;text-align:left}
+.bo-overview-notice{font-size:10px;color:var(--muted);margin-top:8px}
+.bo-overview-notice:empty{display:none}
 .bo-kpis{position:sticky;top:var(--bo-header-height,166px);z-index:21;background:var(--surface);box-shadow:0 7px 14px -12px #0c253e50}
 .bo-kpi{padding:10px 12px 7px}.bo-kpi-label{min-height:21px}.bo-kpi>strong{font-size:25px}
 .bo-kpi .bo-weekly-chart.is-mini svg{height:40px}
@@ -1629,7 +1628,6 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
  .bo-period-control{flex-basis:100%;max-width:none}
  .bo-filter-group .bo-segments button{font-size:10px;padding:6px 8px}
  .bo-filter-group legend{font-size:9px;margin-bottom:4px}
- .bo-data-coverage{font-size:9px;margin-top:6px}
  .bo-overview-summary,.bo-overview-mosaics{grid-template-columns:minmax(0,1fr)}
  .bo-overview-summary>.bo-card,.bo-overview-mosaics>.bo-card{padding:18px}
  .bo-overview-summary>#bo-waterfall{grid-column:auto}
@@ -1679,7 +1677,6 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-comparison-control { display: block; margin: 0; }
 .bo-filter-groups .bo-segments { width: max-content; padding: 3px; gap: 2px; }
 .bo-filter-groups .bo-segments button { padding: 0 9px; height: 28px; font-size: 11px; }
-.bo-compare-dates { display: block; margin-top: 3px; }
 .bo-overview-summary { grid-template-columns: minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr); }
 .bo-catalog-table { border-collapse: collapse; width: 100%; font-size: 11px; }
 .bo-catalog-table th, .bo-catalog-table td { border-bottom: 1px solid var(--line); padding: 10px 3px; }

@@ -1,9 +1,9 @@
-import {overviewDefaults, overviewControls, validComparison, comparisonRange, rangeLabel, scopedSales, scopeKey} from '/overview-filters.mjs';
-import {bindComparisonTooltips} from "/site-funnel.mjs?v=catalog-comparison";
+import {overviewDefaults, overviewControls, validComparison, comparisonRange, scopedSales, scopeKey} from '/overview-filters.mjs?v=overview-copy';
+import {bindComparisonTooltips} from "/site-funnel.mjs?v=overview-copy";
 import {bindCategoryTooltips} from "/category-treemap.mjs?v=fastoverview2";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
-import { renderBusinessOverview, renderSalesBreakdown, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=profit-percent-label";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=margin-tooltip";
+import { renderBusinessOverview, renderSalesBreakdown, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=overview-copy";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=catalog-traffic3";
 import {
   defaultRange,
   chartSeries,
@@ -303,7 +303,7 @@ function syncOverviewHeader() {
 }
 function businessShell() {
   document.body.classList.add('business-page');
-  $('#app').innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav active" data-go="home" aria-current="page">${icon('overview')}<span>Огляд бізнесу</span></button><div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><header class="bo-sticky-header"><section class="bo-heading"><h1>Огляд бізнесу<span>.</span></h1>${['localhost','127.0.0.1','::1'].includes(location.hostname)?'<span class="bo-local-label">Локальний перегляд</span>':''}</section><div class="bo-filterbar">${overviewControls(state)}</div><div id="bo-data-coverage" class="bo-data-coverage" aria-live="polite"></div></header><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+  $('#app').innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav active" data-go="home" aria-current="page">${icon('overview')}<span>Огляд бізнесу</span></button><div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><header class="bo-sticky-header"><section class="bo-heading"><h1>Огляд бізнесу<span>.</span></h1>${['localhost','127.0.0.1','::1'].includes(location.hostname)?'<span class="bo-local-label">Локальний перегляд</span>':''}</section><div class="bo-filterbar">${overviewControls(state)}</div><div id="bo-overview-notice" class="bo-overview-notice" aria-live="polite"></div></header><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
   overviewHeaderObserver?.disconnect();
   overviewHeaderObserver = new ResizeObserver(entries => document.documentElement.style.setProperty('--bo-header-height', Math.ceil(entries[0].target.getBoundingClientRect().height) + 'px'));
   overviewHeaderObserver.observe($('.bo-sticky-header'));
@@ -313,16 +313,10 @@ function businessShell() {
 function renderBusiness() {
   return renderBusinessOverview(data,{...state,graphToday:today});
 }
-function updateOverviewCoverage() {
-  const host=$('#bo-data-coverage'),coverage=data?.attribution?.current;
-  if(!host)return;
-  if(state.salesScope==='marketplaces'){host.textContent='Маркетплейси · відвантаження ERP';return;}
-  if(data?.scopeNotice){host.textContent=data.scopeNotice;return;}
-  if(data?.attribution?.available===false){host.textContent=data.sourceNotice;return;}
-  if(!coverage){host.textContent='Зіставляємо відвантаження ERP з GA4…';return;}
-  const incomplete=data.users?.available&&!data.users.complete;
-  host.innerHTML=`<button type="button" id="bo-attribution-details">GA4 · зіставлено ${num(coverage.matchedDocs)} з ${num(coverage.docs)} відвантажень сайту${incomplete?` · дані до ${esc(data.users.dataThrough.split('-').reverse().join('.'))}`:data.partial&&!data.users?.available?' · вебдані недоступні':''} ⓘ</button>`;
-  $('#bo-attribution-details').onclick=()=>modal('Зв’язок відвантажень ERP з GA4',`<p>${esc(rangeLabel(state))}</p><div class="record-detail"><dl>${[['Відвантаження сайту',coverage.docs],['Однозначно зіставлені',coverage.matchedDocs],['Без ID замовлення сайта',coverage.missingIdDocs],['Не знайдені в GA4',coverage.unmatchedDocs-coverage.missingIdDocs],['Неоднозначні збіги',coverage.ambiguousDocs]].map(([label,value])=>`<div><dt>${label}</dt><dd>${num(value)}</dd></div>`).join('')}</dl></div><p>Використовуємо точний збіг ERP webshopId = GA4 transaction_id. Без збігу джерело та пристрій залишаються невизначеними. Виторг, замовлення, категорії та бренди рахуються за датою відвантаження ERP.</p>${incomplete?`<p>Вивантаження GA4 доступне до ${esc(data.users.dataThrough)}. Порівняння неповних вебперіодів не показуємо.</p>`:''}`);
+function updateOverviewNotice() {
+  const notice = $('#bo-overview-notice');
+  if (notice) notice.textContent = data?.scopeNotice ||
+    (data?.attribution?.available === false ? data.sourceNotice ?? '' : '');
 }
 function bindBusinessOverview() {
   if (section !== 'home' || !$(".business-overview")) return;
@@ -331,7 +325,7 @@ function bindBusinessOverview() {
   bindCategoryTooltips();
   bindComparisonTooltips('funnel');
   bindComparisonTooltips('catalog');
-  updateOverviewCoverage();
+  updateOverviewNotice();
   const render=()=>{ $("#content").innerHTML=renderBusiness(); bindContent(); };
   $$('[data-map][data-measure]').forEach(button => button.onclick = () => {
     const { map, measure } = button.dataset;

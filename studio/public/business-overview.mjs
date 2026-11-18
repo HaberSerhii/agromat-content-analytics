@@ -1,6 +1,6 @@
 import { overviewRevenueWaterfall } from "./revenue-drivers.mjs";
 import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=margin-tooltip';
-import {renderSiteFunnel} from "./site-funnel.mjs?v=catalog-comparison";
+import {renderSiteFunnel} from "./site-funnel.mjs?v=overview-copy";
 import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=fastoverview2";
 import {
   graphRange,
