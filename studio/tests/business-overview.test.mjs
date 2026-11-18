@@ -4,6 +4,7 @@ import {
   overviewModel,
   presetRange,
   renderBusinessOverview,
+  renderCatalogScoreHistory,
 } from "../public/business-overview.mjs";
 const state = {
   from: "2026-11-01",
@@ -147,4 +148,22 @@ test('catalog changes expose both dated values in comparison tooltips', () => {
   assert.deepEqual(stock.rows.map(({dates,value}) => [dates,value]), [['01.11.2026','100'], ['16.11.2026','90']]);
   assert.deepEqual(score.rows.map(row => row.value), ['—','50']);
   assert.match(score.comparisons[0].relative, /Немає бази/);
+});
+
+test('catalog opens daily Content Score history from the monthly change', () => {
+  const tile = {
+    label:'Плитка', scoreBase:60.34, scoreBaseDate:'2026-11-30', score:60.64, scoreDate:'2026-12-02', scoreChange:0.3,
+    scoreHistory:[
+      {date:'2026-12-01', score:60.64, daily:0.3, monthChange:0.3},
+      {date:'2026-12-02', score:60.64, daily:0, monthChange:0.3},
+      {date:'2026-12-03', score:null, daily:null, monthChange:null},
+    ],
+  };
+  const catalogHealth = {available:true, scoreStart:'2026-12-01', scoreDate:'2026-12-02', segments:[tile]};
+  const card = renderBusinessOverview({catalogHealth}, state);
+  assert.match(card, /60,34<button[^>]+data-catalog-score-history="Плитка"[^>]+aria-haspopup="dialog"[^>]*>\+0,3<\/button>/);
+  const history = renderCatalogScoreHistory(tile, catalogHealth.scoreStart);
+  assert.match(history, /<strong>60,34<\/strong> від 30\.11\.2026/);
+  assert.match(history, /03\.12\.2026<\/th><td>Немає даних<\/td>/);
+  assert.match(history, /02\.12\.2026<\/th><td>60,64<\/td>\s*<td class="">0<\/td><td class="up">\+0,3<\/td>/);
 });

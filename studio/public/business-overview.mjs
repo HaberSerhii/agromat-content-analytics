@@ -492,21 +492,38 @@ export function renderRevenueWaterfall(source, state) {
   return card('waterfall','Звідки приріст виручки',sub,`<div class="bo-waterfall-plot"><svg viewBox="0 0 480 250" role="img" aria-label="Внесок замовлень, чека й каналів у зміну відвантаженого виторгу">${bars}</svg></div>`,'','bo-waterfall');
 }
 
+const catalogDecimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
+const catalogScore = value => Number.isFinite(value) ? catalogDecimal.format(value) : '—';
+const catalogDay = date => date ? date.split('-').reverse().join('.') : '—';
+const catalogTone = value => value > 0 ? 'up' : value < 0 ? 'down' : '';
+function catalogSigned(value, precision = 2) {
+  const rounded = Number(value.toFixed(precision));
+  return (rounded > 0 ? '+' : rounded < 0 ? '−' : '') + catalogDecimal.format(Math.abs(rounded));
+}
+
+export function renderCatalogScoreHistory(segment, monthStart) {
+  const changeCell = value => `<td class="${catalogTone(value)}">${Number.isFinite(value) ? catalogSigned(value) : '—'}</td>`;
+  const base = segment.scoreBaseDate
+    ? `База місяця — <strong>${catalogScore(segment.scoreBase)}</strong> від ${esc(catalogDay(segment.scoreBaseDate))}.`
+    : 'База місяця з’явиться після першого знімка CS.';
+  const rows = [...segment.scoreHistory].reverse().map(({date, score, daily, monthChange}) => `<tr>
+    <th scope="row">${esc(catalogDay(date))}</th><td>${Number.isFinite(score) ? catalogScore(score) : 'Немає даних'}</td>
+    ${changeCell(daily)}${changeCell(monthChange)}</tr>`).join('');
+  return `<p class="bo-score-history-note">${base} Зміна за день порівнюється з попередньою календарною датою.</p>
+    <table class="bo-catalog-table bo-score-history"><caption class="sr">Щоденний CS за ${esc(monthStart?.slice(0, 7))}</caption>
+    <thead><tr><th scope="col">Дата</th><th scope="col">CS</th><th scope="col">За день</th><th scope="col">За місяць</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
 function catalogPanel(data) {
   const source = data.catalogHealth;
   const labels = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
-  const decimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
-  const score = value => Number.isFinite(value) ? decimal.format(value) : '—';
-  const signed = (value, precision) => {
-    const rounded = Number(value.toFixed(precision));
-    return (rounded > 0 ? '+' : rounded < 0 ? '−' : '') + decimal.format(Math.abs(rounded));
-  };
-  const day = date => date ? date.split('-').reverse().join('.') : '—';
-  const delta = (value, meta, unit = '', precision = 2) => {
-    const display = Number.isFinite(value) ? signed(value, precision) + unit : '—';
-    const tone = value > 0 ? 'up' : value < 0 ? 'down' : '';
-    const tooltip = {...meta, comparisons:[{label:'Зміна', relative:display === '—' ? 'Немає бази для порівняння' : display}]};
-    return `<button type="button" class="bo-catalog-delta ${tone}" data-catalog-tip="${esc(JSON.stringify(tooltip))}" aria-label="${esc(meta.title + ' · Зміна ' + display)}">${display}</button>`;
+  const delta = (value, meta, unit = '', precision = 2, historyLabel = '') => {
+    const display = Number.isFinite(value) ? catalogSigned(value, precision) + unit : '—';
+    const tooltip = {...meta, comparisons:[{label:'Зміна', relative:display === '—' ? meta.missing || 'Немає бази для порівняння' : display}]};
+    const history = historyLabel ? ` data-catalog-score-history="${esc(historyLabel)}" aria-haspopup="dialog"` : '';
+    const name = meta.title + ' · Зміна ' + display + (historyLabel ? ' · Щоденна історія' : '');
+    return `<button type="button" class="bo-catalog-delta ${catalogTone(value)}" data-catalog-tip="${esc(JSON.stringify(tooltip))}"${history} aria-label="${esc(name)}">${display}</button>`;
   };
   const previousLabel = {wow:'Попередній тиждень', mom:'Попередній місяць', yoy:'Ті самі дати торік'}[source?.compareMode] || 'Попередній період';
   const body = `<table class="bo-catalog-table"><thead><tr>
@@ -518,14 +535,14 @@ function catalogPanel(data) {
     if (!segment) return `<tr><th scope="row">${label}</th><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
     const movement = segment.stockMovement;
     const daily = (date, value, precision) => Number.isFinite(value)
-      ? `До ${day(date)}: ${signed(value, precision)}.` : '';
+      ? `До ${catalogDay(date)}: ${catalogSigned(value, precision)}.` : '';
     const stockNote = movement ? `+${number(movement.gained)} товарів з’явилися, −${number(movement.lost)} вибули.`
       : 'Немає знімка на початок місяця.';
-    const snapshot = (metric, from, to, before, now, note) => ({
+    const snapshot = (metric, from, to, before, now, note, baseLabel = 'Було на початок місяця') => ({
       title:`${label} · ${metric}`, note,
       rows:[
-        {label:'Було на початок місяця', dates:day(from), value:before},
-        {label:'Станом на', dates:day(to), value:now},
+        {label:baseLabel, dates:catalogDay(from), value:before},
+        {label:'Станом на', dates:catalogDay(to), value:now},
       ],
     });
     const traffic = (metric, before, now, note) => ({
@@ -535,6 +552,11 @@ function catalogPanel(data) {
         {label:'Вибраний період', dates:source.trafficRange && rangeLabel(source.trafficRange), value:now},
       ],
     });
+    const scoreTip = snapshot('Content Score', segment.scoreHistory ? segment.scoreBaseDate : source.scoreStart,
+      segment.scoreHistory ? segment.scoreDate : source.scoreDate,
+      catalogScore(segment.scoreBase), catalogScore(segment.score), [daily(segment.scorePriorDay ?? source.scorePriorDay, segment.scoreDaily, 2),
+        segment.scoreHistory && 'Натисніть, щоб відкрити щоденну історію.'].filter(Boolean).join(' '), 'База місяця');
+    if (Number.isFinite(segment.scoreBase) && !Number.isFinite(segment.score)) scoreTip.missing = 'Немає даних за поточний місяць';
     return `<tr><th scope="row">${label}</th>
       <td>${number(segment.stockBase ?? segment.inStock)}${delta(movement?.net, snapshot('У наявності', source.stockStart, source.stockDate,
         number(segment.stockBase), number(segment.inStock), [stockNote, daily(source.stockPriorDay, segment.stockDaily, 0)].filter(Boolean).join(' ')), '', 0)}</td>
@@ -542,8 +564,7 @@ function catalogPanel(data) {
         traffic('Покази товарів', number(segment.priorImpressions), number(segment.impressions)), '%')}</td>
       <td>${percent(segment.ctr)}${delta(segment.ctrChange,
         traffic('CTR', percent(segment.priorCtr), percent(segment.ctr), 'CTR — частка переглядів карток товарів від усіх показів.'), ' в.п.')}</td>
-      <td>${score(segment.scoreBase ?? segment.score)}${delta(segment.scoreChange, snapshot('Content Score', source.scoreStart, source.scoreDate,
-        score(segment.scoreBase), score(segment.score), daily(source.scorePriorDay, segment.scoreDaily, 2)))}</td></tr>`;
+      <td>${catalogScore(segment.scoreBase ?? segment.score)}${delta(segment.scoreChange, scoreTip, '', 2, segment.scoreHistory ? label : '')}</td></tr>`;
   }).join('')}</tbody></table>
   <div class="bo-quarter-tooltip bo-funnel-tooltip" id="catalog-hover-tooltip" role="tooltip" hidden></div>
   ${!source ? '<p class="bo-catalog-period" role="status">Завантажуємо показники…</p>' : !source.available ? '<p class="bo-catalog-period">Дані сегментів тимчасово недоступні.</p>' : ''}`;

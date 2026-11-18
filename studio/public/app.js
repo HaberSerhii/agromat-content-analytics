@@ -2,8 +2,8 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, sc
 import {bindComparisonTooltips} from "/site-funnel.mjs?v=overview-copy";
 import {bindCategoryTooltips} from "/category-treemap.mjs?v=fastoverview2";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
-import { renderBusinessOverview, renderSalesBreakdown, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=overview-copy";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=catalog-traffic4";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=catalog-score-history";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=catalog-score-history";
 import {
   defaultRange,
   chartSeries,
@@ -328,6 +328,11 @@ function bindBusinessOverview() {
   bindCategoryTooltips();
   bindComparisonTooltips('funnel');
   bindComparisonTooltips('catalog');
+  $$('[data-catalog-score-history]').forEach(button => button.onclick = () => {
+    const catalog = data.catalogHealth;
+    const segment = catalog.segments.find(({label}) => label === button.dataset.catalogScoreHistory);
+    if (segment?.scoreHistory) modal(`${segment.label} · Щоденний Content Score`, renderCatalogScoreHistory(segment, catalog.scoreStart));
+  });
   updateOverviewNotice();
   const render=()=>{ $("#content").innerHTML=renderBusiness(); bindContent(); };
   $$('[data-map][data-measure]').forEach(button => button.onclick = () => {
@@ -1402,7 +1407,7 @@ function bindContent() {
 }
 function modal(title, body) {
   $("#detail-body").innerHTML =
-    `<header class="dialoghead"><div><div class="eyebrow">AGROMAT / ДЕТАЛІ</div><h2>${esc(title)}</h2></div><button class="close" aria-label="Закрити">×</button></header><div class="dialogbody">${body}</div>`;
+    `<header class="dialoghead"><div><div class="eyebrow">AGROMAT / ДЕТАЛІ</div><h2 id="detail-title">${esc(title)}</h2></div><button class="close" aria-label="Закрити">×</button></header><div class="dialogbody">${body}</div>`;
   if (!$("#detail").open) $("#detail").showModal();
   $(".close").onclick = () => $("#detail").close();
 }

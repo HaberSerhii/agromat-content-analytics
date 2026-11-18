@@ -1685,6 +1685,12 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-catalog-table td { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bo-catalog-table thead th:not(:first-child) { text-align: right; }
 .bo-catalog-period { font-size: 9px; margin: 9px 0 0; color: var(--muted); }
+.bo-score-history-note { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.bo-score-history th:first-child { padding-left: 8px; text-align: left; }
+.bo-score-history th:last-child, .bo-score-history td:last-child { padding-right: 8px; }
+.bo-score-history .up { color: var(--green, #087243); }
+.bo-score-history .down { color: var(--red, #af312a); }
+.bo-catalog-delta[data-catalog-score-history] { cursor: pointer; }
 .bo-overview-mosaics .bo-card > header { align-items: center; }
 .bo-map-units button { padding: 5px 8px; }
 .bo-overview-mosaics .bo-mosaic-tile strong {

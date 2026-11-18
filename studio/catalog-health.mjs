@@ -39,8 +39,8 @@ export function catalogSegment(product, erpKey = '') {
   return null;
 }
 
-export function catalogGroups(products, scores, erpKeys) {
-  const groups = new Map(labels.map(label => [label, {label, inStock:0, stocked:new Set(), scores:[], refs:new Set()}]));
+function catalogGroups(products, erpKeys) {
+  const groups = new Map(labels.map(label => [label, {label, inStock:0, stocked:new Set(), codes:[], refs:new Set()}]));
   const unique = new Set();
   for (const product of products) {
     if (product.deleted || unique.has(product.id)) continue;
@@ -51,8 +51,7 @@ export function catalogGroups(products, scores, erpKeys) {
       group.inStock++;
       group.stocked.add(product.id);
     }
-    const score = scores?.[product.code];
-    if (Number.isFinite(score)) group.scores.push(score);
+    group.codes.push(product.code);
     if (Number.isSafeInteger(product.goodsRef) && product.goodsRef > 0) group.refs.add(product.goodsRef);
   }
   return [...groups.values()];
@@ -136,10 +135,74 @@ async function readTraffic(groups, {range, baseline}) {
   return new Map(rows.map(row => [row.period + ":" + row.segment, row]));
 }
 
-const meanScore = group => group?.scores.length
-  ? group.scores.reduce((sum, score) => sum + score, 0) / group.scores.length : null;
 const difference = (current, previous) => current == null || previous == null ? null : current - previous;
 const kyivDay = timestamp => new Date(timestamp).toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'});
+
+function meanScore(codes, scores) {
+  let sum = 0, count = 0;
+  for (const code of codes) {
+    const score = scores[code];
+    if (Number.isFinite(score)) {
+      sum += score;
+      count++;
+    }
+  }
+  return count ? Number((sum / count).toFixed(2)) : null;
+}
+
+const scoreDifference = (current, previous) => current == null || previous == null
+  ? null : Number((current - previous).toFixed(2));
+
+export async function readCatalogScoreHistory(groups, directory, today) {
+  const start = today.slice(0, 7) + '-01';
+  const previousEnd = addDays(start, -1);
+  const previousStart = previousEnd.slice(0, 7) + '-01';
+  const files = (await fs.readdir(directory).catch(() => []))
+    .filter(file => /^\d{4}-\d{2}-\d{2}\.json$/.test(file))
+    .map(file => file.slice(0, 10)).filter(date => date >= previousStart && date <= today)
+    .sort().reverse();
+  const byDate = new Map();
+  const previous = groups.map(() => null);
+  for (const date of files) {
+    if (date < start && previous.every(Boolean)) break;
+    const scores = await fs.readFile(path.join(directory, `${date}.json`), 'utf8')
+      .then(JSON.parse).catch(() => null);
+    if (!scores || typeof scores !== 'object' || Array.isArray(scores)) continue;
+    const means = groups.map(({codes}) => meanScore(codes, scores));
+    if (means.every(value => value === null)) continue;
+    if (date >= start) {
+      byDate.set(date, means);
+    } else {
+      means.forEach((value, index) => {
+        if (previous[index] === null && value !== null) previous[index] = {date, value};
+      });
+    }
+  }
+  const days = Array.from({length:Number(today.slice(8))}, (_, index) => addDays(start, index));
+  const date = byDate.keys().next().value ?? null;
+  const priorDay = date && addDays(date, -1);
+  return {
+    start, date, priorDay, available:byDate.size > 0 || previous.some(Boolean),
+    segments:groups.map((_, index) => {
+      const scoreOn = day => byDate.get(day)?.[index] ?? null;
+      const closing = previous[index];
+      const baseDate = closing?.date ?? days.find(day => scoreOn(day) !== null) ?? null;
+      const base = closing?.value ?? scoreOn(baseDate);
+      const history = days.map(day => {
+        const score = scoreOn(day);
+        const previousScore = day === start && closing?.date === previousEnd
+          ? closing.value : scoreOn(addDays(day, -1));
+        return {date:day, score, daily:scoreDifference(score, previousScore), monthChange:scoreDifference(score, base)};
+      });
+      const current = history.findLast(day => day.score !== null);
+      return {
+        score:current?.score ?? null, scoreBase:base, scoreBaseDate:baseDate,
+        scoreDate:current?.date ?? null, scorePriorDay:current ? addDays(current.date, -1) : null,
+        scoreChange:current?.monthChange ?? null, scoreDaily:current?.daily ?? null, scoreHistory:history,
+      };
+    }),
+  };
+}
 
 export function stockMovement(current, previous) {
   if (!previous) return null;
@@ -155,10 +218,6 @@ async function readCatalogHealth(salesRows, selection) {
   const snapshot = JSON.parse(await unzip(await fs.readFile(cachePath)));
   if (!Array.isArray(snapshot.products)) throw Error('invalid_catalog_snapshot');
   const today = kyivDay(new Date());
-  const scoreDir = process.env.PRODUCT_CONTENT_SNAPSHOTS_DIR || '/var/lib/agromat-analytics/product-content-snapshots';
-  const scoreFile = (await fs.readdir(scoreDir).catch(()=>[]))
-    .filter(file => /^\d{4}-\d{2}-\d{2}\.json$/.test(file) && file.slice(0,10) <= today).sort().at(-1);
-  const scores = scoreFile ? await fs.readFile(path.join(scoreDir, scoreFile),'utf8').then(JSON.parse).catch(()=>null) : null;
   const erpKeys = new Map();
   for (const sale of salesRows) {
     const date = sale.shippedDate || sale.createdDate || '';
@@ -170,58 +229,44 @@ async function readCatalogHealth(salesRows, selection) {
     }
   }
   const keys = new Map([...erpKeys].map(([code, entry]) => [code, entry.key]));
-  const groups = catalogGroups(snapshot.products, scores, keys);
+  const groups = catalogGroups(snapshot.products, keys);
   const stockDate = kyivDay(snapshot.syncedAt);
-  const scoreDate = scores ? scoreFile.slice(0,10) : null;
   const stockStart = stockDate.slice(0,7) + '-01';
-  const scoreStart = scoreDate && scoreDate.slice(0,7) + '-01';
   const stockPriorDay = addDays(stockDate,-1);
-  const scorePriorDay = scoreDate && addDays(scoreDate,-1);
   const inventoryDir = process.env.PRODUCT_SNAPSHOTS_DIR || '/var/lib/agromat-analytics/product-snapshots';
+  const scoreDir = process.env.PRODUCT_CONTENT_SNAPSHOTS_DIR || path.join(path.dirname(inventoryDir), 'product-content-snapshots');
   async function historicalStock(date) {
     if (date === stockDate) return groups;
     try {
       const historical = JSON.parse(await unzip(await fs.readFile(path.join(inventoryDir,date + '.json.gz'))));
-      return Array.isArray(historical.products) ? catalogGroups(historical.products,null,keys) : null;
-    } catch { return null; }
-  }
-  async function historicalScore(date) {
-    if (!date) return null;
-    if (date === scoreDate) return groups;
-    try {
-      const historical = JSON.parse(await fs.readFile(path.join(scoreDir,date + '.json'),'utf8'));
-      return catalogGroups(snapshot.products,historical,keys);
+      return Array.isArray(historical.products) ? catalogGroups(historical.products,keys) : null;
     } catch { return null; }
   }
   const monthStock = await historicalStock(stockStart);
   const dayStock = await historicalStock(stockPriorDay);
-  const monthScore = await historicalScore(scoreStart);
-  const dayScore = await historicalScore(scorePriorDay);
+  const scores = await readCatalogScoreHistory(groups, scoreDir, today);
   const traffic = await readTraffic(groups, selection).catch(error => {
     console.error('catalog_traffic_unavailable', error.code || error.name, error.errors?.[0]?.reason || '', error.errors?.[0]?.message?.slice(0,180) || '');
     return null;
   });
   const viewsRate = row => Number(row?.impressions) > 0 ? Number(row.views) / Number(row.impressions) * 100 : null;
   return {
-    available:true, updatedAt:snapshot.syncedAt, stockDate, scoreDate, stockStart, scoreStart, stockPriorDay, scorePriorDay,
-    trafficRange:selection.range, comparisonRange:selection.baseline, compareMode:selection.mode, partial:!traffic || !scores,
+    available:true, updatedAt:snapshot.syncedAt, stockDate, stockStart, stockPriorDay,
+    scoreDate:scores.date, scoreStart:scores.start, scorePriorDay:scores.priorDay,
+    trafficRange:selection.range, comparisonRange:selection.baseline, compareMode:selection.mode, partial:!traffic || !scores.available,
     segments:groups.map((group,index) => {
       const current = traffic?.get('current:' + group.label);
       const previous = traffic?.get('previous:' + group.label);
-      const score = meanScore(group);
       const stockBase = monthStock?.[index];
-      const scoreBase = meanScore(monthScore?.[index]);
       const impressions = current ? Number(current.impressions) : null;
       const priorImpressions = previous ? Number(previous.impressions) : null;
       const ctr = viewsRate(current);
       const priorCtr = viewsRate(previous);
       return {
-        label:group.label, inStock:group.inStock, impressions, ctr, score,
+        label:group.label, inStock:group.inStock, impressions, ctr, ...scores.segments[index],
         stockBase:stockBase?.inStock ?? null,
         stockMovement:stockMovement(group.stocked,stockBase?.stocked),
         stockDaily:difference(group.inStock,dayStock?.[index]?.inStock),
-        scoreBase, scoreChange:difference(score,scoreBase),
-        scoreDaily:difference(score,meanScore(dayScore?.[index])),
         priorImpressions, priorCtr,
         impressionsChange:impressions != null && priorImpressions > 0 ? (impressions / priorImpressions - 1) * 100 : null,
         ctrChange:difference(ctr,priorCtr),
@@ -234,7 +279,7 @@ const cache = new Map();
 const pending = new Map();
 let started = [];
 export async function loadCatalogHealth(salesRows, selection) {
-  const key = JSON.stringify(selection);
+  const key = JSON.stringify([kyivDay(new Date()), selection]);
   const hit = cache.get(key);
   if (hit?.until > Date.now()) return hit.value;
   if (pending.has(key)) return pending.get(key);
