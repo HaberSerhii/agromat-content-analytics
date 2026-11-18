@@ -4,6 +4,8 @@ import {gunzip} from 'node:zlib';
 import {promisify} from 'node:util';
 import {createRequire} from 'node:module';
 import {addDays} from './public/chart-periods.mjs';
+import {comparisonRange, overviewDefaults} from './public/overview-filters.mjs';
+import {dates} from './data.mjs';
 
 const labels = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
 const plumbingRoots = new Set([
@@ -29,14 +31,17 @@ export function catalogSegment(product, erpKey = '') {
 }
 
 export function catalogGroups(products, scores, erpKeys) {
-  const groups = new Map(labels.map(label => [label, {label, inStock:0, scores:[], refs:new Set()}]));
+  const groups = new Map(labels.map(label => [label, {label, inStock:0, stocked:new Set(), scores:[], refs:new Set()}]));
   const unique = new Set();
   for (const product of products) {
     if (product.deleted || unique.has(product.id)) continue;
     unique.add(product.id);
     const group = groups.get(catalogSegment(product, erpKeys.get(String(product.code))));
     if (!group) continue;
-    if (product.stockQty >= 1) group.inStock++;
+    if (product.stockQty >= 1) {
+      group.inStock++;
+      group.stocked.add(product.id);
+    }
     const score = scores?.[product.code];
     if (Number.isFinite(score)) group.scores.push(score);
     if (Number.isSafeInteger(product.goodsRef) && product.goodsRef > 0) group.refs.add(product.goodsRef);
@@ -44,12 +49,14 @@ export function catalogGroups(products, scores, erpKeys) {
   return [...groups.values()];
 }
 
-function currentTrafficRange(today) {
-  const to = addDays(today, -1);
-  return {from: to.slice(0,7) + '-01', to};
+export function catalogSelection(params, today = new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'})) {
+  const range = dates(params, today);
+  const mode = params.get('compareMode') || overviewDefaults(today).compareMode;
+  if (range.to >= today || !['wow','mom','yoy'].includes(mode)) throw Error('invalid_catalog_selection');
+  return {range, mode, baseline:comparisonRange(range, mode)};
 }
 
-async function readTraffic(groups, range) {
+async function readTraffic(groups, {range, baseline}) {
   const configured = [
     process.env.BIGQUERY_PROJECT_ID,
     process.env.BIGQUERY_DATASET_ID,
@@ -62,24 +69,46 @@ async function readTraffic(groups, range) {
   const {BigQuery} = require(process.env.STUDIO_BIGQUERY_SDK || '/opt/agromat-content-analytics/node_modules/@google-cloud/bigquery');
   const client = new BigQuery({projectId:configured[0]});
   const [rows] = await client.query({
-    query: `SELECT r.segment, COUNTIF(e.event_name = 'view_item_list') AS impressions,
+    query: `SELECT period.name AS period, r.segment, COUNTIF(e.event_name = 'view_item_list') AS impressions,
       COUNTIF(e.event_name = 'view_item') AS views
       FROM \`${configured.join('.')}\` e
       JOIN UNNEST(@refs) r ON SAFE_CAST(NULLIF(TRIM(e.item_id), '') AS INT64) = r.ref
-      WHERE e.event_date BETWEEN DATE(@from) AND DATE(@to)
+      JOIN UNNEST(@periods) period ON e.event_date BETWEEN CAST(period.startDate AS DATE) AND CAST(period.endDate AS DATE)
+      WHERE (e.event_date BETWEEN DATE(@from) AND DATE(@to)
+        OR e.event_date BETWEEN DATE(@priorFrom) AND DATE(@priorTo))
         AND e.event_name IN ('view_item_list','view_item')
-      GROUP BY r.segment`,
-    params: {...range, refs},
+      GROUP BY 1, 2`,
+    params: {
+      ...range, priorFrom:baseline.from, priorTo:baseline.to, refs,
+      periods:[
+        {name:'current', startDate:range.from, endDate:range.to},
+        {name:'previous', startDate:baseline.from, endDate:baseline.to},
+      ],
+    },
     location:'EU', maximumBytesBilled:'20000000000', useQueryCache:true, jobTimeoutMs:60000,
   });
-  return new Map(rows.map(row => [row.segment, row]));
+  return new Map(rows.map(row => [row.period + ":" + row.segment, row]));
 }
 
-async function readCatalogHealth(salesRows) {
+const meanScore = group => group?.scores.length
+  ? group.scores.reduce((sum, score) => sum + score, 0) / group.scores.length : null;
+const difference = (current, previous) => current == null || previous == null ? null : current - previous;
+const kyivDay = timestamp => new Date(timestamp).toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'});
+
+export function stockMovement(current, previous) {
+  if (!previous) return null;
+  return {
+    gained:[...current].filter(id => !previous.has(id)).length,
+    lost:[...previous].filter(id => !current.has(id)).length,
+    net:current.size - previous.size,
+  };
+}
+
+async function readCatalogHealth(salesRows, selection) {
   const cachePath = process.env.STUDIO_CATALOG_CACHE || '/var/cache/agromat-analytics/products-lite.json.gz';
   const snapshot = JSON.parse(await unzip(await fs.readFile(cachePath)));
   if (!Array.isArray(snapshot.products)) throw Error('invalid_catalog_snapshot');
-  const today = new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'});
+  const today = kyivDay(new Date());
   const scoreDir = process.env.PRODUCT_CONTENT_SNAPSHOTS_DIR || '/var/lib/agromat-analytics/product-content-snapshots';
   const scoreFile = (await fs.readdir(scoreDir).catch(()=>[]))
     .filter(file => /^\d{4}-\d{2}-\d{2}\.json$/.test(file) && file.slice(0,10) <= today).sort().at(-1);
@@ -94,29 +123,83 @@ async function readCatalogHealth(salesRows) {
       }
     }
   }
-  const groups = catalogGroups(snapshot.products, scores, new Map([...erpKeys].map(([code, entry])=>[code,entry.key])));
-  const trafficRange = currentTrafficRange(today);
-  const traffic = await readTraffic(groups, trafficRange).catch(()=>null);
+  const keys = new Map([...erpKeys].map(([code, entry]) => [code, entry.key]));
+  const groups = catalogGroups(snapshot.products, scores, keys);
+  const stockDate = kyivDay(snapshot.syncedAt);
+  const scoreDate = scores ? scoreFile.slice(0,10) : null;
+  const stockStart = stockDate.slice(0,7) + '-01';
+  const scoreStart = scoreDate && scoreDate.slice(0,7) + '-01';
+  const stockPriorDay = addDays(stockDate,-1);
+  const scorePriorDay = scoreDate && addDays(scoreDate,-1);
+  const inventoryDir = process.env.PRODUCT_SNAPSHOTS_DIR || '/var/lib/agromat-analytics/product-snapshots';
+  async function historicalStock(date) {
+    if (date === stockDate) return groups;
+    try {
+      const historical = JSON.parse(await unzip(await fs.readFile(path.join(inventoryDir,date + '.json.gz'))));
+      return Array.isArray(historical.products) ? catalogGroups(historical.products,null,keys) : null;
+    } catch { return null; }
+  }
+  async function historicalScore(date) {
+    if (!date) return null;
+    if (date === scoreDate) return groups;
+    try {
+      const historical = JSON.parse(await fs.readFile(path.join(scoreDir,date + '.json'),'utf8'));
+      return catalogGroups(snapshot.products,historical,keys);
+    } catch { return null; }
+  }
+  const monthStock = await historicalStock(stockStart);
+  const dayStock = await historicalStock(stockPriorDay);
+  const monthScore = await historicalScore(scoreStart);
+  const dayScore = await historicalScore(scorePriorDay);
+  const traffic = await readTraffic(groups, selection).catch(error => {
+    console.error('catalog_traffic_unavailable', error.code || error.name, error.errors?.[0]?.reason || '', error.errors?.[0]?.message?.slice(0,180) || '');
+    return null;
+  });
+  const viewsRate = row => Number(row?.impressions) > 0 ? Number(row.views) / Number(row.impressions) * 100 : null;
   return {
-    available:true, updatedAt:snapshot.syncedAt, scoreDate:scores ? scoreFile.slice(0,10) : null,
-    trafficRange, partial:!traffic || !scores,
-    segments:groups.map(group => {
-      const impressions = traffic && group.refs.size ? Number(traffic.get(group.label)?.impressions || 0) : null;
+    available:true, updatedAt:snapshot.syncedAt, stockDate, scoreDate, stockStart, scoreStart, stockPriorDay, scorePriorDay,
+    trafficRange:selection.range, comparisonRange:selection.baseline, compareMode:selection.mode, partial:!traffic || !scores,
+    segments:groups.map((group,index) => {
+      const current = traffic?.get('current:' + group.label);
+      const previous = traffic?.get('previous:' + group.label);
+      const score = meanScore(group);
+      const stockBase = monthStock?.[index];
+      const scoreBase = meanScore(monthScore?.[index]);
+      const impressions = current ? Number(current.impressions) : null;
+      const priorImpressions = previous ? Number(previous.impressions) : null;
+      const ctr = viewsRate(current);
+      const priorCtr = viewsRate(previous);
       return {
-        label:group.label, inStock:group.inStock, impressions,
-        ctr:impressions > 0 ? Number(traffic.get(group.label).views) / impressions * 100 : null,
-        score:group.scores.length ? group.scores.reduce((sum, score)=>sum+score,0) / group.scores.length : null,
+        label:group.label, inStock:group.inStock, impressions, ctr, score,
+        stockBase:stockBase?.inStock ?? null,
+        stockMovement:stockMovement(group.stocked,stockBase?.stocked),
+        stockDaily:difference(group.inStock,dayStock?.[index]?.inStock),
+        scoreBase, scoreChange:difference(score,scoreBase),
+        scoreDaily:difference(score,meanScore(dayScore?.[index])),
+        priorImpressions, priorCtr,
+        impressionsChange:impressions != null && priorImpressions > 0 ? (impressions / priorImpressions - 1) * 100 : null,
+        ctrChange:difference(ctr,priorCtr),
       };
     }),
   };
 }
 
-let cached, pending;
-export async function loadCatalogHealth(salesRows) {
-  if (cached?.until > Date.now()) return cached.value;
-  if (!pending) pending = readCatalogHealth(salesRows).then(value => {
-    cached = {value, until:Date.now() + (value.partial ? 60_000 : 10 * 60_000)};
+const cache = new Map();
+const pending = new Map();
+let started = [];
+export async function loadCatalogHealth(salesRows, selection) {
+  const key = JSON.stringify(selection);
+  const hit = cache.get(key);
+  if (hit?.until > Date.now()) return hit.value;
+  if (pending.has(key)) return pending.get(key);
+  started = started.filter(time => Date.now() - time < 3600000);
+  if (pending.size >= 2 || started.length >= 24) throw Error('catalog_query_budget');
+  started.push(Date.now());
+  const task = readCatalogHealth(salesRows,selection).then(value => {
+    if (cache.size >= 12) cache.delete(cache.keys().next().value);
+    cache.set(key,{value,until:Date.now() + (value.partial ? 60_000 : 10 * 60_000)});
     return value;
-  }).finally(()=>{pending = null;});
-  return pending;
+  }).finally(()=>pending.delete(key));
+  pending.set(key,task);
+  return task;
 }

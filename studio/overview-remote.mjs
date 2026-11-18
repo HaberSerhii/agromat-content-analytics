@@ -40,7 +40,7 @@ export function createRemoteOverview(target) {
   }
   return {
     async read(input, kind = "overview"){
-      const selection=kind === "catalog-health" ? undefined : validateSelection(input);
+      const selection=kind === "catalog-health" ? input : validateSelection(input);
       if(pending.size>=12)return unavailable();
       const process=await start(),id=++serial;
       return new Promise(resolve=>{

@@ -463,18 +463,47 @@ export function renderRevenueWaterfall(source, state) {
 function catalogPanel(data) {
   const source = data.catalogHealth;
   const labels = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
-  const period = source?.trafficRange ? rangeLabel(source.trafficRange) : '';
+  const decimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
+  const signed = (value, precision) => {
+    const rounded = Number(value.toFixed(precision));
+    return (rounded > 0 ? '+' : rounded < 0 ? '−' : '') + decimal.format(Math.abs(rounded));
+  };
+  const day = date => date ? date.split('-').reverse().join('.') : '—';
+  const delta = (value, tip, unit = '', precision = 2) => {
+    if (!Number.isFinite(value)) return tip
+      ? `<span class="bo-catalog-delta" tabindex="0" title="${esc(tip)}" aria-label="${esc(tip)}">—</span>`
+      : '';
+    const tone = value > 0 ? 'up' : value < 0 ? 'down' : '';
+    const display = signed(value, precision) + unit;
+    return `<span class="bo-catalog-delta ${tone}" tabindex="0" title="${esc(tip)}" aria-label="${esc(display + ' · ' + tip)}">${display}</span>`;
+  };
+  const comparison = source?.comparisonRange
+    ? `${source.compareMode.toUpperCase()} · ${rangeLabel(source.trafficRange)} → ${rangeLabel(source.comparisonRange)}`
+    : '';
   const body = `<table class="bo-catalog-table"><thead><tr>
     <th scope="col"><span class="sr">Сегмент</span></th><th scope="col" title="Кількість товарів із залишком від 1">У наявності</th>
     <th scope="col" title="Покази товарів">Impressions</th><th scope="col" title="Перегляди карток / покази товарів">CTR</th>
     <th scope="col" title="Середній Content Score">CS</th>
   </tr></thead><tbody>${labels.map(label => {
     const segment = source?.segments?.find(item => item.label === label);
-    return `<tr><th scope="row">${label}</th><td>${number(segment?.inStock)}</td>
-      <td>${number(segment?.impressions)}</td><td>${percent(segment?.ctr)}</td><td>${number(segment?.score)}</td></tr>`;
+    const movement = segment?.stockMovement;
+    const stockTip = movement
+      ? `На ${day(source.stockStart)}: ${number(segment.stockBase)}. На ${day(source.stockDate)}: ${number(segment.inStock)}. +${number(movement.gained)} з’явилися, −${number(movement.lost)} вибули.`
+      : 'Немає знімка на початок місяця.';
+    const stockDaily = Number.isFinite(segment?.stockDaily)
+      ? ` До ${day(source.stockPriorDay)}: ${signed(segment.stockDaily,0)}.` : '';
+    const scoreTip = Number.isFinite(segment?.scoreBase)
+      ? `На ${day(source.scoreStart)}: ${decimal.format(segment.scoreBase)}. На ${day(source.scoreDate)}: ${decimal.format(segment.score)}.`
+      : 'Немає CS на початок місяця.';
+    const scoreDaily = Number.isFinite(segment?.scoreDaily)
+      ? ` До ${day(source.scorePriorDay)}: ${signed(segment.scoreDaily,2)}.` : '';
+    return `<tr><th scope="row">${label}</th>
+      <td>${number(segment?.stockBase ?? segment?.inStock)}${segment ? delta(movement?.net,stockTip + stockDaily,'',0) : ''}</td>
+      <td>${number(segment?.impressions)}${segment ? delta(segment.impressionsChange,comparison + ` · База: ${number(segment.priorImpressions)}`,'%') : ''}</td>
+      <td>${percent(segment?.ctr)}${segment ? delta(segment.ctrChange,comparison + ` · База: ${percent(segment.priorCtr)}`,' в.п.') : ''}</td>
+      <td>${Number.isFinite(segment?.scoreBase ?? segment?.score) ? decimal.format(segment.scoreBase ?? segment.score) : '—'}${segment ? delta(segment.scoreChange,scoreTip + scoreDaily) : ''}</td></tr>`;
   }).join('')}</tbody></table>
-  ${!source ? '<p class="bo-catalog-period" role="status">Завантажуємо показники…</p>' : !source.available ? '<p class="bo-catalog-period">Дані сегментів тимчасово недоступні.</p>' :
-    period ? `<p class="bo-catalog-period">Impressions і CTR · ${esc(period)}</p>` : ''}`;
+  ${!source ? '<p class="bo-catalog-period" role="status">Завантажуємо показники…</p>' : !source.available ? '<p class="bo-catalog-period">Дані сегментів тимчасово недоступні.</p>' : ''}`;
   return card('catalog','Здоров’я каталогу','',body,'','bo-catalog');
 }
 export function renderBusinessOverview(data, state, chartHTML) {

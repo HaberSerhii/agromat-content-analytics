@@ -1,3 +1,4 @@
+import {catalogSelection} from './catalog-health.mjs';
 import {readSiteFunnel} from "./site-funnel.mjs";
 import {loadRevenueWaterfall} from "./revenue-waterfall.mjs";
 import {readPriceIndex} from "./price-index.mjs";
@@ -201,7 +202,9 @@ export const server = http.createServer(async (req, res) => {
       if (waiters.length >= 24) return json(503, { error: "busy" });
       const kind = url.pathname.slice(5);
       if (kind === 'catalog-health') {
-        try { return json(200, await readProductionSource('catalog-health')); }
+        try { catalogSelection(url.searchParams); }
+        catch { return json(400, {available:false,error:'invalid_filter_or_range'}); }
+        try { return json(200, await readProductionSource('catalog-health', url.searchParams)); }
         catch { return json(503, { available:false, notice:'Дані сегментів каталогу тимчасово недоступні.' }); }
       }
       if(kind==='overview') {

@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 import {createInterface} from 'node:readline';
 import {buildOverviewAttribution,validateSelection,erpChannel} from './overview-attribution.mjs';
 import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './overview-query.mjs';
-import {loadCatalogHealth} from './catalog-health.mjs';
+import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
 import {comparisonRange} from './public/overview-filters.mjs';
 
 let erp,origins;
@@ -79,9 +79,10 @@ export function loadOverviewSelection(input) {
   return task.finally(()=>queued--);
 }
 
-export async function readOverviewCatalog() {
+export async function readOverviewCatalog(params = new URLSearchParams()) {
+  const selection = catalogSelection(params);
   const source = await readERP();
-  return loadCatalogHealth(source.rows);
+  return loadCatalogHealth(source.rows, selection);
 }
 
 if(process.argv.includes('--stdio')) {
@@ -89,7 +90,7 @@ if(process.argv.includes('--stdio')) {
   const lines=createInterface({input:process.stdin});
   for await(const line of lines) {
     let request;
-    try {request=JSON.parse(line);const value=request.kind==='catalog-health' ? await readOverviewCatalog() : await loadOverviewSelection(request.selection);process.stdout.write(JSON.stringify({id:request.id,value})+'\n');}
+    try {request=JSON.parse(line);const value=request.kind==='catalog-health' ? await readOverviewCatalog(new URLSearchParams(request.selection)) : await loadOverviewSelection(request.selection);process.stdout.write(JSON.stringify({id:request.id,value})+'\n');}
     catch(error){process.stderr.write(JSON.stringify({event:'overview_source_error',query:error.queryKind,code:error.code,name:error.name,reason:error.errors?.[0]?.reason,message:(error.errors?.[0]?.message||(['TypeError','ReferenceError'].includes(error.name)?error.message:undefined))?.slice(0,300)})+'\n');process.stdout.write(JSON.stringify({id:request?.id,value:{available:false,notice:'Не вдалося отримати повний зв’язок відвантажень ERP з GA4.',error:['invalid_range','invalid_filter','comparison_unavailable','marketplace_web_filter','duplicate_erp_document'].includes(error.message)?error.message:'source_unavailable'}})+'\n');}
   }
 }

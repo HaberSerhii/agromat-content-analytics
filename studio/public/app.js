@@ -438,7 +438,10 @@ async function load({keepView=false}={}) {
     if (section === "home" && view === "overview") {
       const selection = {...state}, range = {from:state.from,to:state.to};
       const baseline = comparisonRange(range, state.compareMode);
-      const catalogSnapshot=Object.fromEntries(['catalogHealth','priceIndex'].filter(key=>previous?.[key]).map(key=>[key,previous[key]]));
+      const catalogSnapshot = previous?.priceIndex ? {priceIndex:previous.priceIndex} : {};
+      const savedCatalog = previous?.catalogHealth;
+      if (savedCatalog?.trafficRange?.from === range.from && savedCatalog.trafficRange.to === range.to &&
+          savedCatalog.compareMode === selection.compareMode) catalogSnapshot.catalogHealth = savedCatalog;
       const dashboard = {...catalogSnapshot,salesChannels:{},quarterChannels:{},comparisonRange:baseline,scope:scopeKey(selection),updating:true};
       data = dashboard;
       let paintQueued = false;
@@ -454,7 +457,7 @@ async function load({keepView=false}={}) {
       };
       const read = (kind,extra={}) => api(kind,extra).catch(() => ({available:false}));
       const catalogJobs = [
-        (async()=>{dashboard.catalogHealth=await read('catalog-health');draw();})(),
+        (async()=>{dashboard.catalogHealth=await read('catalog-health', selection);draw();})(),
         (async()=>{dashboard.priceIndex=await read('price-index');draw();})(),
       ];
       draw();

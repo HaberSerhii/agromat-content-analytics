@@ -17,7 +17,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   let read;
   if (url.pathname === '/catalog-health') {
-    read = readOverviewCatalog;
+    read = () => readOverviewCatalog(url.searchParams);
   } else if (url.pathname === '/overview') {
     let selection;
     try { selection = validateSelection(Object.fromEntries(url.searchParams)); }

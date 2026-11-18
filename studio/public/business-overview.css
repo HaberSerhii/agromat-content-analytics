@@ -1706,3 +1706,7 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
   .bo-filter-groups .bo-segments button { padding-inline: 7px; font-size: 10px; }
   .bo-filter-groups .bo-filter-group { max-width: 100%; }
 }
+
+.bo-catalog-delta{display:block;font-size:10px;color:var(--muted);text-decoration:underline dotted;text-underline-offset:2px}
+.bo-catalog-delta.up{color:var(--green,#087243)}
+.bo-catalog-delta.down{color:var(--red,#af312a)}
