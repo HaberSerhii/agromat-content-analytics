@@ -77,6 +77,13 @@ test("revenue charts use round ceilings and show start, middle and end dates", (
     assert.deepEqual(axisLabels.slice(-3), ["01.11", "09.11", "17.11"]);
   }
 });
+test("orders use a round whole-number axis and keep three date labels", () => {
+  const range = {from:"2026-11-01",to:"2026-11-17"};
+  const days = calendarBins(range).map(bin => ({date:bin.from,docs:bin.from === "2026-11-10" ? 72 : 12,revenue:0}));
+  const history = {range,sales:[{available:true,coverageFrom:range.from,days}]};
+  const labels = [...weeklyChart(history,"docs",{range,interval:"day"}).matchAll(/<text[^>]+>([^<]+)<\/text>/g)].map(match=>match[1]);
+  assert.deepEqual(labels,["0","20","40","60","80","01.11","09.11","17.11"]);
+});
 test("calendar unique-user bins are counted distinctly, never summed from day-level users", () => {
   const range = { from: "2026-10-01", to: "2026-11-15" },
     bins = calendarUserBins(range),

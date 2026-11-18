@@ -38,6 +38,20 @@ test('hover details compare the same stage ratio and preserve missing year data'
  assert.doesNotMatch(renderSiteFunnel(source),/Порівняння та деталі|Як читати воронку/);
 });
 
+test('each funnel bar has period counts and the selected comparison',()=>{
+ const period=(from,to,count)=>({range:{from,to},stages:[{key:'purchase',value:count}]});
+ const source={available:true,selection:true,comparisonMode:'mom',
+   current:period('2026-11-01','2026-11-17',627),previous:period('2026-10-01','2026-10-17',352)};
+ const tip=funnelTooltipData(source,'stage',4);
+ assert.deepEqual(tip.rows.map(({value})=>value),['627','352']);
+ assert.equal(tip.rows[1].dates,'01.10.2026 — 17.10.2026');
+ assert.deepEqual(tip.comparisons,[{label:'MOM',relative:'+78,13%',difference:'+275 зам.'}]);
+ const html=renderSiteFunnel(source);
+ assert.match(html,/aria-label="Замовлення: 627" data-funnel-tip=/);
+ assert.doesNotMatch(html,/<title>/);
+ assert.equal(funnelTooltipData({...source,previous:{...source.previous,available:false}},'stage',4).rows[1].value,'—');
+});
+
 test('funnel adapter supplies the required fixed site URL to the source',async()=>{
  const original=globalThis.fetch;
  let request;

@@ -93,7 +93,7 @@ export function overviewModel(data, state) {
     ),
     metric(
       "docs",
-      "Замовлення",
+      "Успішні замовлення",
       m.shippedDocs ?? null,
       p.shippedDocs,
       number,

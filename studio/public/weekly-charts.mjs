@@ -222,13 +222,24 @@ const fmt = (value, metric) =>
           : "");
 const dateLabel = (date) => date.split("-").reverse().join(".");
 
+function roundStep(target, whole = true) {
+  if (whole) target = Math.max(1, target);
+  const magnitude = 10 ** Math.floor(Math.log10(target));
+  return [1, 2, 2.5, 5, 10].map(unit => unit * magnitude)
+    .find(step => step >= target && (!whole || Number.isInteger(step)));
+}
+
+function countOrRateAxis(peak, whole) {
+  const step = roundStep(peak / 4, whole);
+  const intervals = Math.ceil(peak / step);
+  return { max: intervals * step, ticks: Array.from({length:intervals + 1}, (_, index) => index * step) };
+}
+
 function moneyAxis(peak) {
   const magnitude = 10 ** Math.floor(Math.log10(Math.max(1, peak)));
   const rounding = Math.max(1, peak >= 500_000 ? Math.max(500_000, magnitude / 2) : magnitude / 2);
   const max = Math.ceil(Math.max(1, peak) / rounding) * rounding;
-  const target = max / 4;
-  const tickMagnitude = 10 ** Math.floor(Math.log10(target));
-  const step = Math.max(1, [1, 2, 2.5, 5, 10].map(unit => unit * tickMagnitude).find(value => value >= target));
+  const step = roundStep(max / 4);
   const ticks = [];
   for (let value = 0; value < max; value += step) ticks.push(value);
   return { max, ticks: [...ticks, max] };
@@ -269,7 +280,8 @@ export function weeklyChart(
     ceiling = Math.max(...values, 0.001),
     span = Math.max(ceiling - Math.min(...values), ceiling * 0.05),
     floor = mini ? Math.max(0, Math.min(...values) - span * 0.12) : 0,
-    axis = !mini && (metric === "revenue" || metric === "aov") ? moneyAxis(ceiling) : null,
+    axis = mini ? null : ["revenue", "aov"].includes(metric)
+      ? moneyAxis(ceiling) : countOrRateAxis(ceiling, metric !== "conversion"),
     max = axis?.max ?? (mini ? ceiling + span * 0.12 : ceiling * 1.1);
   const coords = (v, i) => [
     left + (i * (right - left)) / Math.max(rows.length - 1, 1),
@@ -278,10 +290,10 @@ export function weeklyChart(
   const current = segments(rows, "value", coords),
     prior = compare ? segments(rows, "previous", coords) : [];
   const color = metric === "canceled" ? "var(--red)" : "var(--blue)";
-  const axisFormat = new Intl.NumberFormat("uk-UA", { notation: "compact", maximumFractionDigits: 2 });
+  const axisFormat = new Intl.NumberFormat("uk-UA", { notation: "compact", maximumFractionDigits: metric === "conversion" ? 5 : 2 });
   const grid = mini
     ? ""
-    : (axis?.ticks ?? [0, max / 3, max * 2 / 3, max])
+    : axis.ticks
         .map((value) => {
           const y = bottom - (value / max) * (bottom - top);
           return `<path d="M${left} ${y}H${right}" class="bo-chart-grid"/><text x="${left - 9}" y="${y + 3}" text-anchor="end">${axisFormat.format(value)}${metric === "conversion" ? "%" : ""}</text>`;
