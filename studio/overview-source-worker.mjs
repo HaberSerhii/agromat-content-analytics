@@ -5,7 +5,7 @@ import {createInterface} from 'node:readline';
 import {buildOverviewAttribution,validateSelection,erpChannel} from './overview-attribution.mjs';
 import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './overview-query.mjs';
 import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
-import {comparisonRange} from './public/overview-filters.mjs';
+import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
 let erp,origins;
 const reports=new Map();
@@ -41,29 +41,48 @@ async function readOverviewSelection(input) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const [source,rozetka]=await Promise.all([readERP(),readOrigins()]);
   const key=JSON.stringify([range,baseline,source.mtime]);
+  const readTransactions = (run, project, dataset, periods) => {
+    const rows = source.rows.filter(row => erpChannel(row, rozetka) === 'site' && periods.some(({from, to}) =>
+      (row.shippedDate >= from && row.shippedDate <= to) || (row.createdDate >= from && row.createdDate <= to)));
+    const ids = [...new Set(rows.map(row => String(row.webshopId || '')).filter(id => id && id !== '0'))];
+    return ids.length ? readBoundedTransactions(run, project, dataset, periods.map(period => transactionLookback(rows, period)), ids) : Promise.resolve([]);
+  };
+  const querySource = () => {
+    const require = createRequire('/opt/agromat-content-analytics/package.json');
+    const {BigQuery} = require(process.env.STUDIO_BIGQUERY_SDK || '/opt/agromat-content-analytics/node_modules/@google-cloud/bigquery');
+    const project = process.env.BIGQUERY_PROJECT_ID, dataset = process.env.BIGQUERY_DATASET_ID;
+    const client = new BigQuery({projectId: project});
+    const run = async query => {
+      started = started.filter(time => Date.now() - time < 3600000);
+      if (started.length >= 24) throw Error('overview_query_budget');
+      started.push(Date.now());
+      const [rows] = await client.query(query);
+      return rows;
+    };
+    return {run, project, dataset};
+  };
   let report=reports.get(key);
   if(!report||Date.now()-report.time>(report.attributionAvailable&&report.webAvailable?6*3600000:60000)){
-    const rows=source.rows.filter(row=>erpChannel(row,rozetka)==='site'&&((row.shippedDate>=range.from&&row.shippedDate<=range.to)||(row.createdDate>=range.from&&row.createdDate<=range.to)||(row.shippedDate>=baseline.from&&row.shippedDate<=baseline.to)||(row.createdDate>=baseline.from&&row.createdDate<=baseline.to)));
-    const ids=[...new Set(rows.map(row=>String(row.webshopId||'')).filter(id=>id&&id!=='0'))];
-    const require=createRequire('/opt/agromat-content-analytics/package.json'),{BigQuery}=require(process.env.STUDIO_BIGQUERY_SDK||'/opt/agromat-content-analytics/node_modules/@google-cloud/bigquery');
-    const client=new BigQuery({projectId:process.env.BIGQUERY_PROJECT_ID});
-    const project=process.env.BIGQUERY_PROJECT_ID,dataset=process.env.BIGQUERY_DATASET_ID;
-    const run=async query=>{
-      started=started.filter(time=>Date.now()-time<3600000);
-      if(started.length>=24)throw Error('overview_query_budget');
-      started.push(Date.now());
-      const [rows]=await client.query(query);return rows;
-    };
+    const {run, project, dataset} = querySource();
     const [web,transactions]=await Promise.allSettled([
       readBoundedWeb(run,project,dataset,range,baseline),
-      ids.length?readBoundedTransactions(run,project,dataset,[transactionLookback(rows,range),transactionLookback(rows,baseline)],ids):Promise.resolve([]),
+      readTransactions(run,project,dataset,[range,baseline]),
     ]);
     report={time:Date.now(),webRows:web.status==='fulfilled'?web.value:[],transactions:transactions.status==='fulfilled'?transactions.value:[],webAvailable:web.status==='fulfilled',attributionAvailable:transactions.status==='fulfilled'};
     if(reports.size>=6)reports.delete(reports.keys().next().value);
     reports.set(key,report);
   }
-  if(!report.attributionAvailable&&(state.acquisition!=='all'||state.device!=='all'))throw Error('attribution_unavailable');
-  const result=buildOverviewAttribution({rows:source.rows,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report},state);
+  if(!report.attributionAvailable && hasWebSlice(state))throw Error('attribution_unavailable');
+  let previousYearTransactions;
+  if (state.compareMode !== 'yoy' && hasWebSlice(state)) {
+    if (!report.lastYear || (report.lastYear.rows === null && Date.now() - report.lastYear.time > 60000)) {
+      const {run, project, dataset} = querySource();
+      const rows = await readTransactions(run, project, dataset, [comparisonRange(range, 'yoy')]).catch(() => null);
+      report.lastYear = {time:Date.now(), rows};
+    }
+    previousYearTransactions = report.lastYear.rows;
+  }
+  const result=buildOverviewAttribution({rows:source.rows,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report,previousYearTransactions},state);
   result.attribution.available=report.attributionAvailable;
   result.partial=!report.attributionAvailable||!report.webAvailable;
   if(result.partial)result.sourceNotice='Частина даних GA4 тимчасово недоступна; відвантаження ERP показані повністю.';

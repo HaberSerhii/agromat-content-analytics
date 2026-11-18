@@ -2,8 +2,8 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, ra
 import {bindFunnelTooltips} from "/site-funnel.mjs?v=fastoverview2";
 import {bindCategoryTooltips} from "/category-treemap.mjs?v=fastoverview2";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=fastoverview2";
-import { renderBusinessOverview, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=fastoverview2";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=fastoverview2";
+import { renderBusinessOverview, renderSalesBreakdown, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=tile-breakdown";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=tile-breakdown";
 import {
   defaultRange,
   chartSeries,
@@ -344,9 +344,9 @@ function bindBusinessOverview() {
     state.chartInterval=button.dataset.boInterval;saveLocation();render();
   });
   $$("[data-bo-channel]").forEach(button=>button.onclick=()=>{state.chartChannel=button.dataset.boChannel;saveLocation();load({keepView:true});});
-  $$("[data-bo-category]").forEach(button=>button.onclick=()=>{
-    const category=button.dataset.categoryMeta?JSON.parse(button.dataset.categoryMeta):data.chartSales?.categories?.find(row=>row.label===button.dataset.boCategory);
-    modal(button.dataset.boCategory,`<p>Відвантажені продажі · ERP${category?.period ? ` · ${esc(category.period)}` : ""}</p><h2>${esc(category?.formattedValue || money(category?.revenue))}</h2><p>Замовлень: ${num(category?.docs)}</p><p>Товарів: ${num(category?.goods)}</p>${category?.items?category.items.map(row=>`<div class="listline"><span>${esc(row.label)}</span><b>${money(row.revenue)}</b></div>`).join(''):''}`);
+  $$("[data-category-meta]").forEach(button=>button.onclick=()=>{
+    const tile = JSON.parse(button.dataset.categoryMeta);
+    modal(tile.label, renderSalesBreakdown(data.breakdown, tile));
   });
 
 }

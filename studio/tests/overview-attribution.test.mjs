@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {buildOverviewAttribution,transactionIndex,validateSelection} from '../overview-attribution.mjs';
 import {comparisonRange,comparisonAvailability,validComparison,scopedSales,overviewDefaults} from '../public/overview-filters.mjs';
 import {overviewRevenueWaterfall} from '../public/revenue-drivers.mjs';
-import {periodChannelRows,overviewModel,renderBusinessOverview} from '../public/business-overview.mjs';
+import {periodChannelRows,overviewModel,renderBusinessOverview,renderSalesBreakdown} from '../public/business-overview.mjs';
 import {overviewWebQuery,overviewTransactionsQuery,readBoundedTransactions,readBoundedWeb} from '../overview-query.mjs';
 import {apiParams} from '../public/api-cache.mjs';
 import {historySeries} from '../public/weekly-charts.mjs';
@@ -51,6 +51,40 @@ test('ready-to-ship amount is a current ERP snapshot outside the chart series',(
   const markup=renderBusinessOverview(result,selection);
   assert.equal((markup.match(/Транзит/g)||[]).length,1);
   assert.match(markup,/data-bo-metric="revenue"[^]*?Транзит<\/span><b>\+2,8\sтис\.[^]*?<\/button>/);
+});
+
+test('tile drill-down uses scoped net sales and the same dates last year even in WoW',()=>{
+  const source = fixture();
+  source.rows.push(
+    order(110, 80, {items:[item(80,'1','Сантехніка','A')]}),
+    order(111, 70, {items:[item(70,'2','Плитка','B')], returnSum:10, returnGoodsCodes:['2'], returnRowSums:[10]}),
+    order(112, 30, {items:[item(30,'3','Хімія','C')], shippedDate:'2025-11-12'}),
+    order(113, 20, {items:[item(20,'4','Плитка','D')], shippedDate:'2025-11-12'}),
+  );
+  const result = buildOverviewAttribution(source, {...selection, salesScope:'site'});
+  const table = (label,dimension,shownLabels) => renderSalesBreakdown(result.breakdown,{label,dimension,measure:'revenue',shownLabels});
+  const category = table('Плитка','categories');
+  assert.match(category, /11\.11\.2025/);
+  assert.match(category, /<th scope="row">A<\/th><td class="num">600<\/td><td class="num">0<\/td>/);
+  assert.match(category, />B<\/th><td class="num">60<\/td>/);
+  assert.match(category, />D<\/th><td class="num">0<\/td><td class="num">20<\/td>/);
+  assert.doesNotMatch(category, /Хімія/);
+  assert.match(table('A','brands'), />Сантехніка<\/th><td class="num">80<\/td>/);
+  assert.doesNotMatch(table('Інші категорії','categories',['Плитка']), />Плитка<\/th>/);
+  assert.match(table('Інші категорії','categories',['Плитка']), />Хімія<\/th>/);
+  assert.match(table('Інші бренди','brands',['A']), />D<\/th>/);
+  assert.doesNotMatch(table('Інші бренди','brands',['A']), />A<\/th>/);
+
+  const slice = {...selection, salesScope:'site', acquisition:'direct', device:'mobile'};
+  const filtered = buildOverviewAttribution({...source,previousYearTransactions:[
+    {transactionId:'113', acquisition:'direct', device:'mobile'},
+  ]},slice);
+  assert.deepEqual(filtered.breakdown.pairs, [
+    {category:'Плитка',brand:'A',current:{revenue:100,goods:1}},
+    {category:'Плитка',brand:'D',previous:{revenue:20,goods:1}},
+  ]);
+  const missing = buildOverviewAttribution({...source,previousYearTransactions:null},slice);
+  assert.match(renderSalesBreakdown(missing.breakdown,{label:'Плитка',dimension:'categories',measure:'goods'}), /Дані за торішній період тимчасово недоступні/);
 });
 
 test('MoM daily comparison does not count the last day of February four times',()=>{

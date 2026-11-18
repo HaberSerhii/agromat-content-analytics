@@ -312,6 +312,7 @@ function categoryPanel(model, state, data, dimension = 'categories') {
   ).join('')}</div>`;
   const prior = model.sales?.previous?.available && model.sales.previous.hasData ? model.sales.previous[dimension] : null;
   const tiles = categoryMosaic(model.sales?.[dimension], prior, state.yoy, {measure,limit:24,otherLabel:brand?'Інші бренди':'Інші категорії',height:680});
+  const shownLabels = tiles.filter(tile => !tile.items).map(tile => tile.label);
   const baselineLabel = rangeLabel(data.comparisonRange || comparisonRange(range, state.compareMode || 'yoy'));
   return card(
     dimension,
@@ -326,14 +327,17 @@ function categoryPanel(model, state, data, dimension = 'categories') {
                 ? "Немає бази"
                 : (tile.delta > 0 ? "+" : "") + percent(tile.delta);
             const meta = {
-              ...tile,
+              label: tile.label,
+              dimension,
+              measure,
+              shownLabels: tile.items ? shownLabels : undefined,
               measureLabel,
               formattedValue: format(tile[measure]),
               formattedDelta,
               baselineLabel,
               period: `${range.from} — ${range.to}`,
             };
-            return `<button class="bo-mosaic-tile tone-${tile.tone} ${tile.w < 140 || tile.h < 90 ? "is-small" : ""}" title="${esc(tile.label)}" data-bo-category="${esc(tile.label)}" data-category-meta="${esc(JSON.stringify(meta))}" aria-label="${esc(tile.label)}: ${esc(format(tile[measure]))}; ${esc(formattedDelta)}" style="${tile.color ? `background:${tile.color.background};color:${tile.color.foreground};` : ""}left:${tile.x / 10}%;top:${tile.y / 6.8}%;width:calc(${tile.w / 10}% - 3px);height:calc(${tile.h / 6.8}% - 3px)"><strong>${esc(tile.label)}</strong><span>${format(tile[measure])} · ${esc(formattedDelta)}</span></button>`;
+            return `<button type="button" class="bo-mosaic-tile tone-${tile.tone} ${tile.w < 140 || tile.h < 90 ? "is-small" : ""}" title="${esc(tile.label)}" data-category-meta="${esc(JSON.stringify(meta))}" aria-haspopup="dialog" aria-label="${esc(tile.label)}: ${esc(format(tile[measure]))}; ${esc(formattedDelta)}" style="${tile.color ? `background:${tile.color.background};color:${tile.color.foreground};` : ""}left:${tile.x / 10}%;top:${tile.y / 6.8}%;width:calc(${tile.w / 10}% - 3px);height:calc(${tile.h / 6.8}% - 3px)"><strong>${esc(tile.label)}</strong><span>${format(tile[measure])} · ${esc(formattedDelta)}</span></button>`;
           })
           .join(
             "",
@@ -342,6 +346,32 @@ function categoryPanel(model, state, data, dimension = 'categories') {
     controls,
   );
 }
+
+export function renderSalesBreakdown(source, {label, dimension, measure, shownLabels}) {
+  if (!source) return '<p>Деталізація продажів тимчасово недоступна.</p>';
+  const key = dimension === 'brands' ? 'brand' : 'category';
+  const omitted = shownLabels && new Set(shownLabels);
+  const detailsKey = omitted ? key : key === 'brand' ? 'category' : 'brand';
+  const rows = new Map();
+  for (const pair of source.pairs) {
+    if (omitted ? omitted.has(pair[key]) : pair[key] !== label) continue;
+    const name = pair[detailsKey];
+    const row = rows.get(name) || {name, current:0, previous:0};
+    row.current += pair.current?.[measure] ?? 0;
+    row.previous += pair.previous?.[measure] ?? 0;
+    rows.set(name, row);
+  }
+  if (!rows.size) return '<p>У цьому зрізі немає відвантажених продажів.</p>';
+  const sorted = [...rows.values()].sort((a, b) => b.current - a.current || b.previous - a.previous || a.name.localeCompare(b.name, 'uk'));
+  const format = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:measure === 'goods' ? 0 : 2});
+  const dates = range => `<small>${rangeLabel(range).replace(' — ', ' — <wbr>')}</small>`;
+  return `<p class="bo-breakdown-source">Відвантажені продажі · ERP · ${measure === 'goods' ? 'шт.' : 'грн'}</p>
+    <div class="bo-breakdown-table"><table aria-label="Відвантажені продажі за два періоди">
+      <thead><tr><th scope="col">${detailsKey === 'brand' ? 'Бренд' : 'Категорія'}</th><th scope="col" class="num">Вибраний період${dates(source.range)}</th><th scope="col" class="num">Торік${dates(source.lastYear)}</th></tr></thead>
+      <tbody>${sorted.map(row => `<tr><th scope="row">${esc(row.name)}</th><td class="num">${format.format(row.current)}</td><td class="num">${source.previousAvailable ? format.format(row.previous) : '—'}</td></tr>`).join('')}</tbody>
+    </table></div>${source.previousAvailable ? '' : '<p>Дані за торішній період тимчасово недоступні.</p>'}`;
+}
+
 export function trafficAreaMarkup(source) {
   if (!source?.available || !source.weeks?.length)
     return empty("Немає даних GA4 за цим зрізом.");

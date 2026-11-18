@@ -1728,3 +1728,12 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-kpis:has(.bo-ready-to-ship) .bo-kpi-label { width: 100%; }
 .bo-kpis:has(.bo-ready-to-ship) .bo-kpi > .bo-weekly-chart,
 .bo-kpis:has(.bo-ready-to-ship) .bo-kpi > .bo-mini-empty { margin-top: auto; padding-top: 10px; width: 100%; }
+
+.bo-breakdown-source { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+.bo-breakdown-table table { font-size: 13px; }
+.bo-breakdown-table th,
+.bo-breakdown-table td { padding: 9px clamp(5px, 1.3vw, 12px); }
+.bo-breakdown-table thead th { color: var(--text); font-size: 12px; font-weight: 600; }
+.bo-breakdown-table thead small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.bo-breakdown-table tbody th { background: transparent; color: var(--text); font-size: inherit; overflow-wrap: anywhere; }
+.bo-breakdown-table tbody .num { white-space: nowrap; }

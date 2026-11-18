@@ -53,7 +53,33 @@ function salesAggregate(records,range) {
   return {available:true,hasData:docs>0||canceled>0,range,metrics:{shippedRevenue:revenue,shippedDocs:docs,shippedGoods:goods,canceledDocs:canceled},byDate:[...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date)),brands:buckets(brands),categories:buckets(categories)};
 }
 
-export function buildOverviewAttribution({rows,transactions,webRows,rozetkaIds,updatedAt},input) {
+function salesBreakdown(records, range, lastYear, matches, pastMatches) {
+  const pairs = new Map();
+  const add = (items, period) => {
+    for (const item of items) {
+      const category = item.category || 'Не визначено', brand = item.brand || 'Не визначено';
+      const key = JSON.stringify([category, brand]);
+      const pair = pairs.get(key) || {category, brand};
+      const totals = pair[period] ||= {revenue:0, goods:0};
+      totals.revenue += item.revenue;
+      totals.goods += item.qty || 0;
+      pairs.set(key, pair);
+    }
+  };
+  for (const record of records) {
+    const {row} = record;
+    if (!shipped(row) || excluded(row)) continue;
+    const current = inRange(row.shippedDate, range) && matches(record.match);
+    const prior = pastMatches && inRange(row.shippedDate, lastYear) && pastMatches(record);
+    if (!current && !prior) continue;
+    const items = netSalesItems(row);
+    if (current) add(items, 'current');
+    if (prior) add(items, 'previous');
+  }
+  return {range, lastYear, previousAvailable: Boolean(pastMatches), pairs:[...pairs.values()]};
+}
+
+export function buildOverviewAttribution({rows,transactions,previousYearTransactions,webRows,rozetkaIds,updatedAt},input) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const rozetka=new Set(rozetkaIds),index=transactionIndex(transactions);
   const seen=new Set(),records=[];
@@ -70,10 +96,16 @@ export function buildOverviewAttribution({rows,transactions,webRows,rozetkaIds,u
     readyToShip.revenue += row.docsSum - row.returnSum;
     readyToShip.docs++;
   }
-  const matches=record=>(state.acquisition==='all'||record.match?.acquisition===state.acquisition)&&(state.device==='all'||record.match?.device===state.device);
-  const filtered=records.filter(matches);
+  const matches=match=>(state.acquisition==='all'||match?.acquisition===state.acquisition)&&(state.device==='all'||match?.device===state.device);
+  const filtered=records.filter(record=>matches(record.match));
   const aggregate=selection=>({...salesAggregate(selection,range),updatedAt,previous:{...salesAggregate(selection,baseline),updatedAt}});
   const sales=aggregate(filtered),salesChannels=Object.fromEntries(['site','rozetka','monomarket'].map(channel=>[channel,aggregate(filtered.filter(row=>row.channel===channel))]));
+  const lastYear = comparisonRange(range, 'yoy');
+  const scopedRecords = records.filter(({channel}) => state.salesScope === 'all' || (channel === 'site') === (state.salesScope === 'site'));
+  const pastIndex = previousYearTransactions && transactionIndex(previousYearTransactions);
+  const pastMatches = previousYearTransactions === null ? null : ({row, channel, match}) =>
+    matches(pastIndex ? (channel === 'site' ? pastIndex.get(String(row.webshopId)) : null) : match);
+  const breakdown = salesBreakdown(scopedRecords, range, lastYear, matches, pastMatches);
   const coverage=period=>{
     const selected=records.filter(record=>record.channel==='site'&&shipped(record.row)&&inRange(record.row.shippedDate,period)&&!excluded(record.row));
     const count=test=>selected.filter(test).length;
@@ -98,5 +130,5 @@ export function buildOverviewAttribution({rows,transactions,webRows,rozetkaIds,u
   const trafficGroups=[{id:'direct',name:'Direct',color:'#533afd'},{id:'organic',name:'Organic',color:'#8d7afb'},{id:'cpc',name:'CPC',color:'#baaefa'},{id:'other',name:'Інше',color:'#d6d7df'}].filter(group=>state.acquisition==='all'||group.id===state.acquisition);
   const trafficBins=calendarBins(range,rangeDays(range)>90?'month':rangeDays(range)>31?'week':'day');
   const quarterTraffic={available:currentWeb.available,range,groups:trafficGroups,weeks:trafficBins.filter(bin=>get(bin.from+':'+bin.to,'all')?.data_through).map(bin=>{const key=bin.from+':'+bin.to,counts=Object.fromEntries(trafficGroups.map(group=>[group.id,Number(get(key,group.id)?.sessions||0)]));return {...bin,counts,total:trafficGroups.reduce((sum,group)=>sum+counts[group.id],0)};})};
-  return {available:true,range,comparisonRange:baseline,readyToShip,sales,salesChannels,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
+  return {available:true,range,comparisonRange:baseline,readyToShip,sales,salesChannels,breakdown,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
 }
