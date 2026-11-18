@@ -3,7 +3,7 @@ import {bindComparisonTooltips} from "/site-funnel.mjs?v=overview-copy";
 import {bindCategoryTooltips} from "/category-treemap.mjs?v=fastoverview2";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
 import { renderBusinessOverview, renderSalesBreakdown, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=overview-copy";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=catalog-traffic3";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=catalog-traffic4";
 import {
   defaultRange,
   chartSeries,

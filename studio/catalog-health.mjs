@@ -65,6 +65,18 @@ export function catalogSelection(params, today = new Date().toLocaleDateString('
   return {range, mode, baseline:comparisonRange(range, mode)};
 }
 
+export function catalogTrafficReferences(groups) {
+  const memberships = new Map();
+  for (const {refs} of groups) {
+    for (const ref of refs) memberships.set(ref, (memberships.get(ref) ?? 0) + 1);
+  }
+  return groups.flatMap(({label:segment, refs}) => {
+    const nullOnly = trafficCategories.has(segment);
+    return [...refs].filter(ref => !nullOnly || memberships.get(ref) === 1)
+      .map(ref => ({segment, ref, nullOnly}));
+  });
+}
+
 async function readTraffic(groups, {range, baseline}) {
   const configured = [
     process.env.BIGQUERY_PROJECT_ID,
@@ -72,8 +84,7 @@ async function readTraffic(groups, {range, baseline}) {
     process.env.BIGQUERY_PRODUCT_EVENTS_TABLE || 'items_detailed_events',
   ];
   if (configured.some(part => !/^[\w-]+$/.test(part || ''))) return null;
-  const refs = groups.filter(group => !trafficCategories.has(group.label))
-    .flatMap(group => [...group.refs].map(ref => ({segment:group.label, ref})));
+  const refs = catalogTrafficReferences(groups);
   const gaCategories = [...trafficCategories].flatMap(([segment, {root, categories}]) =>
     categories.map(category => ({segment, root, category})));
   const require = createRequire('/opt/agromat-content-analytics/package.json');
@@ -81,26 +92,36 @@ async function readTraffic(groups, {range, baseline}) {
   const client = new BigQuery({projectId:configured[0]});
   const [rows] = await client.query({
     query: `WITH events AS (
-      SELECT event_date, event_name, item_id, item_category, item_category2
-      FROM \`${configured.join('.')}\`
+      SELECT period.name AS period, e.event_name, e.item_id, e.item_category, e.item_category2
+      FROM \`${configured.join('.')}\` e
+      JOIN UNNEST(@periods) period ON e.event_date BETWEEN CAST(period.startDate AS DATE) AND CAST(period.endDate AS DATE)
       WHERE (event_date BETWEEN DATE(@from) AND DATE(@to)
         OR event_date BETWEEN DATE(@priorFrom) AND DATE(@priorTo))
         AND event_name IN ('view_item_list','view_item')
-    ), segments AS (
-      SELECT e.event_date, e.event_name, g.segment
+    )${refs.length ? `, item_totals AS (
+      SELECT period, SAFE_CAST(NULLIF(TRIM(item_id), '') AS INT64) AS ref,
+        item_category IS NULL AS category_missing,
+        COUNTIF(event_name = 'view_item_list') AS impressions,
+        COUNTIF(event_name = 'view_item') AS views
+      FROM events
+      GROUP BY 1, 2, 3
+    )` : ''}, segment_totals AS (
+      SELECT e.period, g.segment,
+        COUNTIF(e.event_name = 'view_item_list') AS impressions,
+        COUNTIF(e.event_name = 'view_item') AS views
       FROM events e
       JOIN UNNEST(@gaCategories) g
         ON TRIM(e.item_category) = g.root AND TRIM(e.item_category2) = g.category
+      GROUP BY 1, 2
       ${refs.length ? `UNION ALL
-      SELECT e.event_date, e.event_name, r.segment
-      FROM events e
-      JOIN UNNEST(@refs) r ON SAFE_CAST(NULLIF(TRIM(e.item_id), '') AS INT64) = r.ref` : ''}
+      SELECT i.period, r.segment, SUM(i.impressions), SUM(i.views)
+      FROM item_totals i
+      JOIN UNNEST(@refs) r ON i.ref = r.ref
+      WHERE NOT r.nullOnly OR i.category_missing
+      GROUP BY 1, 2` : ''}
     )
-    SELECT period.name AS period, e.segment, COUNTIF(e.event_name = 'view_item_list') AS impressions,
-      COUNTIF(e.event_name = 'view_item') AS views
-      FROM segments e
-      JOIN UNNEST(@periods) period ON e.event_date BETWEEN CAST(period.startDate AS DATE) AND CAST(period.endDate AS DATE)
-      GROUP BY 1, 2`,
+    SELECT period, segment, SUM(impressions) AS impressions, SUM(views) AS views
+    FROM segment_totals GROUP BY 1, 2`,
     params: {
       ...range, priorFrom:baseline.from, priorTo:baseline.to,
       ...(refs.length ? {refs} : {}),
