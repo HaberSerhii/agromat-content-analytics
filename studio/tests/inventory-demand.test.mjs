@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {buildTileStockWatch,inventoryItemSignals,tileSalesStart} from '../inventory-demand.mjs';
+import {buildStockWatch,inventoryItemSignals,inventorySection,inventorySegment} from '../inventory-demand.mjs';
 
 const day = (stock, views, siteRevenue=0) => ({stock, views, siteRevenue});
 
@@ -24,23 +24,40 @@ test('risk requires demand and enough consecutive recorded stock changes', () =>
   assert.equal(inventoryItemSignals([...declining.slice(0,-1),day(null,2)],true).risk,'unknown');
 });
 
-test('tile stock watch filters by revenue and views and signals low known stock only', () => {
-  const item = (code, views, stock, segment='Плитка') => ({code,name:code,views,stock,segment,
-    days:[{date:'2026-11-18', stock, views, docs:1, siteRevenue:10}]});
-  const items = [item('low',500,29),item('ok',550,30),item('missing',600,null),
-    item('out',700,0),item('low-views',499,0),item('low-revenue',501,0),
-    item('plumbing',600,0,'Сантехніка')];
-  const revenue = new Map([['low',10_000],['ok',20_000],['missing',30_000],['out',15_000],
-    ['low-views',40_000],['low-revenue',9_999.99],['plumbing',40_000]]);
-  const watch = buildTileStockWatch(items,revenue);
-  assert.equal(watch.alerts,2);
-  assert.deepEqual(watch.rows.map(row=>[row.code,row.status]),
-    [['missing','unknown'],['ok','ok'],['out','low'],['low','low']]);
-  assert.deepEqual(watch.rows[0].days,[{date:'2026-11-18',stock:null,views:600,docs:1}]);
+test('stock watch applies inclusive segment thresholds after YTD sales and weekly GA4 filters', () => {
+  const item = (code, recentViews, stock, segment='Плитка') => ({code,views:500,recentViews,stock,segment});
+  const items = [item('tile',100,20),item('tile-ok',101,21),item('floor',100,20,'Підлогові покриття'),
+    item('plumbing',100,3,'Сантехніка'),item('chemicals',100,3,'Будівельна хімія'),
+    item('station',100,3,'Зарядні станції'),item('station-ok',101,4,'Зарядні станції'),
+    item('missing',102,null),item('low-views',99,0),item('low-revenue',101,0),item('other',100,0,'Інше')];
+  const revenue = new Map(items.map(({code})=>[code,5_000]));
+  revenue.set('missing',10_000);
+  revenue.set('low-revenue',4_999.99);
+  const watch = buildStockWatch(items,revenue);
+  assert.equal(watch.alerts,5);
+  assert.equal(watch.rows[0].code,'missing');
+  assert.deepEqual(Object.fromEntries(watch.rows.map(row=>[row.code,[row.status,row.threshold,row.views]])),{
+    tile:['low',20,100],'tile-ok':['ok',20,101],floor:['low',20,100],plumbing:['low',3,100],
+    chemicals:['low',3,100],station:['low',3,100],'station-ok':['ok',3,101],missing:['unknown',20,102],
+  });
 });
 
-test('the six-month sales window crosses years and clips short months', () => {
-  assert.equal(tileSalesStart('2026-11-19'),'2026-05-19');
-  assert.equal(tileSalesStart('2026-02-19'),'2025-08-19');
-  assert.equal(tileSalesStart('2024-08-31'),'2024-02-29');
+test('charging stations are distinct from plumbing and other power products', () => {
+  assert.equal(inventorySegment({categoryPath:'Джерела живлення / Зарядні станції'},'020.001'),'Зарядні станції');
+  assert.equal(inventorySegment({categoryName:'Зарядні станції'}),'Зарядні станції');
+  assert.equal(inventorySegment({categoryPath:'Джерела живлення / Аксесуари'},'020.001'),null);
+  assert.equal(inventorySegment({categoryName:'Насосні станції'},'002.001'),'Сантехніка');
+});
+
+test('category filtering has its own product ranking and totals beyond the aggregate shortlist', () => {
+  const item = (code,category,views) => ({code,category,views,missedViews:views,outDays:1,risk:'none',opportunity:null});
+  const candidates = [...Array(25)].map((_,i)=>item(`tile-${i}`,'Плитка',10+i));
+  candidates.push(item('sink','Раковини',2));
+  const scope = inventorySection('Усі сегменти',candidates,true);
+  assert.ok(!scope.rows.includes('sink'));
+  const sink = scope.categories.find(category=>category.name==='Раковини');
+  assert.deepEqual(sink.rows,['sink']);
+  assert.equal(sink.views,2);
+  assert.equal(sink.total.missedViews,2);
+  assert.equal(sink.total.outDays,1);
 });

@@ -211,9 +211,9 @@ window.addEventListener("popstate", () => {
 });
 const apiCache = createApiCache();
 const localPreview = ['localhost','127.0.0.1'].includes(location.hostname);
-const localOverviewCache = createApiCache({storage: () => null});
+const sessionApiCache = createApiCache({storage: () => null});
 async function api(kind, extra = {}) {
-  const cache = kind === 'overview' && localPreview ? localOverviewCache : apiCache;
+  const cache = kind === 'overview' && localPreview ? sessionApiCache : apiCache;
   return cache.get("/api/" + kind + "?" + apiParams(kind, state, extra));
 }
 const sourceStatus = new Map();
@@ -438,8 +438,8 @@ async function load({keepView=false}={}) {
   try {
     if (section === 'home' && view === 'inventory-demand') {
       const [module, report] = await Promise.all([
-        import('/inventory-demand.mjs?v=tile-stock1'),
-        (localPreview ? localOverviewCache : apiCache).get('/api/inventory-demand'),
+        import('/inventory-demand.mjs?v=stock-signals2'),
+        sessionApiCache.get('/api/inventory-demand'),
       ]);
       if (id !== requestId) return;
       module.mountInventoryDemand($('#content'), report);

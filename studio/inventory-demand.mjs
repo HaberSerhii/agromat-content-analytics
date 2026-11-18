@@ -7,25 +7,26 @@ import {goodsOnlySalesRow, netSalesItems} from './erp-items.mjs';
 import {addDays} from './public/overview-filters.mjs';
 
 const unzip = promisify(gunzip);
-const segments = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
-const tileStockRule = {minRevenue:10_000, minViews:500, stockBelow:30};
+const stockThresholds = {'Плитка':20, 'Сантехніка':3, 'Підлогові покриття':20, 'Будівельна хімія':3, 'Зарядні станції':3};
+const stockRule = {minRevenue:5_000, minViews:100, viewDays:7, stockThresholds};
 const ignoredReasons = ['створення нового замовлення', 'дубль замовлення', 'фейкове замовлення', 'попередній прорахунок'];
 const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 const readSnapshot = async file => JSON.parse(await unzip(await fs.readFile(file)));
 const publicDays = days => days.map(({date,stock,views,docs}) => ({date,stock,views,docs}));
 
-export function tileSalesStart(today) {
-  const [year, month, day] = today.split('-').map(Number);
-  const lastDay = new Date(Date.UTC(year, month-6, 0)).getUTCDate();
-  return new Date(Date.UTC(year, month-7, Math.min(day,lastDay))).toISOString().slice(0,10);
+export function inventorySegment(product, erpKey) {
+  const categories = `${product.categoryPath || ''}/${product.categoryName || ''}`.split(/[/›>]/);
+  if (categories.some(category => category.trim().toLocaleLowerCase('uk') === 'зарядні станції')) return 'Зарядні станції';
+  return catalogSegment(product, erpKey);
 }
 
-export function buildTileStockWatch(items, revenueByCode) {
-  const {minRevenue,minViews,stockBelow} = tileStockRule;
-  const rows = items.filter(item => item.segment === 'Плитка' &&
-    revenueByCode.get(item.code) >= minRevenue && item.views >= minViews)
-    .map(({code,name,views,stock,days}) => ({code,name,views,stock,days:publicDays(days),
-      revenue:revenueByCode.get(code), status:stock === null ? 'unknown' : stock < stockBelow ? 'low' : 'ok'}))
+export function buildStockWatch(items, revenueByCode) {
+  const {minRevenue,minViews} = stockRule;
+  const rows = items.filter(item => Object.hasOwn(stockThresholds,item.segment) &&
+    revenueByCode.get(item.code) >= minRevenue && item.recentViews >= minViews)
+    .map(({code,segment,stock,recentViews}) => ({code, views:recentViews, stock,
+      revenue:revenueByCode.get(code), threshold:stockThresholds[segment],
+      status:stock === null ? 'unknown' : stock <= stockThresholds[segment] ? 'low' : 'ok'}))
     .sort((a,b) => b.revenue-a.revenue || b.views-a.views || a.code.localeCompare(b.code));
   return {rows, alerts:rows.filter(row => row.status === 'low').length};
 }
@@ -42,7 +43,7 @@ export function inventoryItemSignals(days, siteKnown) {
     missedViews * inStock.reduce((sum, d) => sum + d.siteRevenue, 0) / availableViews -
     absent.reduce((sum, d) => sum + d.siteRevenue, 0)) : null;
 
-  const recent = days.slice(-7);
+  const recent = days.slice(-stockRule.viewDays);
   const current = recent.at(-1).stock;
   const confirmed = recent.filter(d => d.stock !== null);
   const recentViews = recent.reduce((sum, d) => sum + (d.views ?? 0), 0);
@@ -53,6 +54,29 @@ export function inventoryItemSignals(days, siteKnown) {
   const risk = current === null ? 'unknown' : recentViews === 0 ? 'none' :
     current < 1 ? 'out' : cover !== null && cover <= 7 ? 'low' : 'none';
   return {views, missedViews, outDays:absent.length, opportunity, cover, stock:current, recentViews, risk};
+}
+
+function inventorySlice(candidates, trafficAvailable) {
+  const impacted = candidates.filter(item => item.missedViews > 0).sort((a,b) => b.missedViews-a.missedViews);
+  const risks = candidates.filter(item => ['out','low'].includes(item.risk))
+    .sort((a,b) => Number(b.risk==='out')-Number(a.risk==='out') || b.recentViews-a.recentViews);
+  const priced = impacted.filter(item => item.opportunity !== null);
+  const demandLeaders = candidates.filter(item => item.views > 0).sort((a,b) => b.views-a.views);
+  const rows = [...new Set([...impacted.slice(0,24),...risks.slice(0,24),...demandLeaders.slice(0,12)].map(item=>item.code))];
+  return {rows,total:{outDays:candidates.reduce((sum,item)=>sum+item.outDays,0),
+    missedViews:trafficAvailable ? impacted.reduce((sum,item)=>sum+item.missedViews,0) : null,
+    atRisk:risks.length, outNow:risks.filter(item=>item.risk==='out').length,
+    opportunity:priced.length ? priced.reduce((sum,item)=>sum+item.opportunity,0) : null, priced:priced.length}};
+}
+
+export function inventorySection(segment, candidates, trafficAvailable) {
+  const categoryViews = new Map();
+  for (const item of candidates) if (item.missedViews > 0) {
+    categoryViews.set(item.category, (categoryViews.get(item.category) || 0)+item.missedViews);
+  }
+  const categories = [...categoryViews].sort((a,b)=>b[1]-a[1]).slice(0,6).map(([name,views])=>({name,views,
+    ...inventorySlice(candidates.filter(item=>item.category===name),trafficAvailable)}));
+  return {segment,categories,...inventorySlice(candidates,trafficAvailable)};
 }
 
 async function readViews(from, to) {
@@ -75,7 +99,8 @@ async function readViews(from, to) {
 export async function readInventoryDemand(erp, rozetka) {
   const today = new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'});
   const from = addDays(today, -30), to = addDays(today, -1);
-  const salesFrom = tileSalesStart(today);
+  const salesFrom = `${today.slice(0,4)}-01-01`;
+  const viewsFrom = addDays(today,-stockRule.viewDays);
   const dates = Array.from({length:30}, (_, i) => addDays(from, i));
   const dayIndexes = new Map(dates.map((date, index) => [date,index]));
   const keys = new Map();
@@ -97,8 +122,8 @@ export async function readInventoryDemand(erp, rozetka) {
   const items = new Map(), refs = new Map(), ambiguous = new Set();
   for (const p of catalog.products) {
     if (p.deleted || !Number.isSafeInteger(p.goodsRef) || p.goodsRef <= 0) continue;
-    const code = String(p.code), segment = catalogSegment(p,keys.get(code)?.key);
-    if (!segments.includes(segment) || items.has(code)) continue;
+    const code = String(p.code), segment = inventorySegment(p,keys.get(code)?.key);
+    if (!segment || items.has(code)) continue;
     items.set(code,{code, name:p.name, segment, category:p.categoryName || segment,
       days:dates.map(date => ({date,stock:null,views:null,docs:0,siteRevenue:0}))});
     if (refs.has(p.goodsRef)) ambiguous.add(p.goodsRef);
@@ -122,7 +147,8 @@ export async function readInventoryDemand(erp, rozetka) {
   const watchSalesAvailable = hasSalesHistory && Boolean(rozetka);
   for (const raw of erp.rows) {
     const i = dayIndexes.get(raw.shippedDate);
-    if (i === undefined && (!watchSalesAvailable || !raw.shippedDate || raw.shippedDate < salesFrom || raw.shippedDate > to)) continue;
+    const inSalesPeriod = watchSalesAvailable && raw.shippedDate >= salesFrom && raw.shippedDate <= to;
+    if (i === undefined && !inSalesPeriod) continue;
     const attributedToSite = rozetka && raw.webshopId && !raw.cartNumber && !rozetka.has(String(raw.webshopId));
     if ((i === undefined && !attributedToSite) || !String(raw.state).toLocaleLowerCase('uk').includes('повністю відвантаж') ||
       ignoredReasons.some(reason => String(raw.cancelReason || '').toLocaleLowerCase('uk').replace(/\s+/g,' ').includes(reason))) continue;
@@ -131,7 +157,7 @@ export async function readInventoryDemand(erp, rozetka) {
     const counted = new Set();
     for (const line of netSalesItems(row)) {
       const code = String(line.code), item = items.get(code);
-      if (watchSalesAvailable && attributedToSite && item?.segment === 'Плитка') {
+      if (inSalesPeriod && attributedToSite && item) {
         revenueByCode.set(code, (revenueByCode.get(code) || 0)+line.revenue);
       }
       const day = item?.days[i];
@@ -151,31 +177,28 @@ export async function readInventoryDemand(erp, rozetka) {
     }
   }
 
-  const all = [...items.values()].map(item => ({...item,...inventoryItemSignals(item.days, Boolean(rozetka))}));
-  const tileWatch = {...tileStockRule, salesFrom, trafficDays:trafficDays.size,
-    available:watchSalesAvailable && trafficDays.size > 0,
-    notice:!watchSalesAvailable ? 'Дані про виторг сайту за 6 місяців недоступні.' :
-      !trafficDays.size ? 'Дані про перегляди карток недоступні.' : null};
-  if (tileWatch.available) Object.assign(tileWatch, buildTileStockWatch(all,revenueByCode));
-  const sections = ['Усі сегменти',...segments].map(segment => {
-    const candidates = all.filter(item => segment === 'Усі сегменти' || item.segment === segment);
-    const impacted = candidates.filter(item => item.missedViews > 0).sort((a,b) => b.missedViews-a.missedViews);
-    const risks = candidates.filter(item => ['out','low'].includes(item.risk))
-      .sort((a,b) => Number(b.risk==='out')-Number(a.risk==='out') || b.recentViews-a.recentViews);
-    const categories = new Map();
-    for (const item of impacted) categories.set(item.category, (categories.get(item.category) || 0)+item.missedViews);
-    const priced = impacted.filter(item => item.opportunity !== null);
-    const demandLeaders = candidates.filter(item => item.views > 0).sort((a,b) => b.views-a.views);
-    const rows = [...new Map([...impacted.slice(0,24),...risks.slice(0,24),...demandLeaders.slice(0,12)]
-      .map(item => [item.code,item])).values()];
-    return {segment, total:{outDays:candidates.reduce((sum,item)=>sum+item.outDays,0),
-      missedViews:traffic ? impacted.reduce((sum,item)=>sum+item.missedViews,0) : null,
-      atRisk:risks.length, outNow:risks.filter(item=>item.risk==='out').length,
-      opportunity:priced.length ? priced.reduce((sum,item)=>sum+item.opportunity,0) : null, priced:priced.length},
-      categories:[...categories].sort((a,b)=>b[1]-a[1]).slice(0,6),
-      rows:rows.map(({days,...item})=>({...item, days:publicDays(days)}))};
-  });
-  const trafficAvailable = Boolean(traffic?.length);
+  const all = [...items.values()];
+  for (const item of all) Object.assign(item,inventoryItemSignals(item.days,Boolean(rozetka)));
+  const weekCoverage = [...trafficDays].filter(date=>date>=viewsFrom).length;
+  const stockWatch = {...stockRule, salesFrom, viewsFrom, weekCoverage,
+    available:watchSalesAvailable && weekCoverage > 0,
+    notice:!watchSalesAvailable ? 'Дані про виторг сайту з початку року недоступні.' :
+      !weekCoverage ? 'Дані про перегляди карток за тиждень недоступні.' : null};
+  if (stockWatch.available) Object.assign(stockWatch,buildStockWatch(all,revenueByCode));
+  const trafficAvailable = trafficDays.size > 0;
+  const sections = [inventorySection('Усі сегменти',all,trafficAvailable),
+    ...Object.keys(stockThresholds).map(segment=>inventorySection(segment,all.filter(item=>item.segment===segment),trafficAvailable))];
+  const codes = new Set(stockWatch.rows?.map(row=>row.code));
+  for (const section of sections) for (const slice of [section,...section.categories]) {
+    for (const code of slice.rows) codes.add(code);
+  }
+  const products = new Map([...codes].map(code=>{
+    const {days,...item} = items.get(code);
+    return [code,{...item,days:publicDays(days)}];
+  }));
+  const publicSections = sections.map(({rows,categories,...section})=>({...section,
+    rows:rows.map(code=>products.get(code)),categories:categories.map(({name,views})=>[name,views]),categorySlices:categories}));
   return {available:true,from,to,sourceDays:recorded.length,trafficAvailable,
-    partial:!trafficAvailable || !rozetka || !recorded.length || !tileWatch.available, tileWatch,sections};
+    partial:!trafficAvailable || !rozetka || !recorded.length || !stockWatch.available,
+    stockWatch,sections:publicSections,products:[...products.values()]};
 }

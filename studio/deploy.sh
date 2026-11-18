@@ -132,16 +132,23 @@ inventory = json.loads((directory / 'inventory-demand.json').read_text())
 assert overview['available'] and not overview.get('partial'), 'Overview source incomplete'
 assert overview['sales']['available'] and overview['siteFunnel']['available'], 'ERP or funnel unavailable'
 assert catalog['available'] and len(catalog['segments']) == 4 and not catalog.get('partial'), 'Catalog source incomplete'
-assert inventory['available'] and inventory['trafficAvailable'] and inventory['sourceDays'] > 0 and len(inventory['sections']) == 5, 'Inventory demand source incomplete'
-watch = inventory['tileWatch']
-assert watch['available'] and watch['salesFrom'] < inventory['from'], 'Tile stock watch source incomplete'
-assert (watch['minRevenue'], watch['minViews'], watch['stockBelow']) == (10000, 500, 30), 'Tile stock thresholds differ'
-assert watch['alerts'] == sum(row['status'] == 'low' for row in watch['rows']), 'Tile stock signal count differs'
+assert inventory['available'] and inventory['trafficAvailable'] and inventory['sourceDays'] > 0 and len(inventory['sections']) == 6, 'Inventory demand source incomplete'
+watch = inventory['stockWatch']
+assert watch['available'] and watch['salesFrom'].endswith('-01-01'), 'Stock watch source incomplete'
+assert (watch['minRevenue'], watch['minViews'], watch['viewDays']) == (5000, 100, 7), 'Stock watch thresholds differ'
+assert watch['alerts'] == sum(row['status'] == 'low' for row in watch['rows']), 'Stock signal count differs'
+products = {row['code']: row for row in inventory['products']}
 for row in watch['rows']:
-    assert row['revenue'] >= watch['minRevenue'] and row['views'] >= watch['minViews'], 'Tile watch includes ineligible product'
+    product = products[row['code']]
+    assert row['revenue'] >= watch['minRevenue'] and row['views'] >= watch['minViews'], 'Stock watch includes ineligible product'
+    assert row['views'] == sum(day['views'] or 0 for day in product['days'][-7:]), 'Weekly views differ'
     stock = row['stock']
-    assert row['status'] == ('unknown' if stock is None else 'low' if stock < watch['stockBelow'] else 'ok'), 'Tile stock status differs'
-print(f"Studio ERP, GA4, catalog and tile stock verified ({len(watch['rows'])} monitored, {watch['alerts']} alerts)")
+    threshold = watch['stockThresholds'][product['segment']]
+    assert row['threshold'] == threshold and row['status'] == ('unknown' if stock is None else 'low' if stock <= threshold else 'ok'), 'Stock status differs'
+for section in inventory['sections']:
+    for category in section['categorySlices']:
+        assert all(products[code]['category'] == category['name'] for code in category['rows']), 'Category filter includes other products'
+print(f"Studio ERP, GA4, catalog and stock watch verified ({len(watch['rows'])} monitored, {watch['alerts']} alerts)")
 PY_CHECK
 WEB_SWITCHED=1
 ln -sfn "$ROOT/releases/$REVISION/studio" "$ROOT/current"
