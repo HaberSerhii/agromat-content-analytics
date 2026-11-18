@@ -1,5 +1,5 @@
 import { graphBins, calendarBins } from "./chart-periods.mjs?v=fastoverview2";
-import {comparisonRange,addDays} from './overview-filters.mjs';
+import {comparisonRange,addDays,rangeDays} from './overview-filters.mjs';
 const DAY = 86400000;
 const esc = (v) =>
   String(v ?? "")
@@ -221,6 +221,19 @@ const fmt = (value, metric) =>
           ? " ₴"
           : "");
 const dateLabel = (date) => date.split("-").reverse().join(".");
+
+function moneyAxis(peak) {
+  const magnitude = 10 ** Math.floor(Math.log10(Math.max(1, peak)));
+  const rounding = Math.max(1, peak >= 500_000 ? Math.max(500_000, magnitude / 2) : magnitude / 2);
+  const max = Math.ceil(Math.max(1, peak) / rounding) * rounding;
+  const target = max / 4;
+  const tickMagnitude = 10 ** Math.floor(Math.log10(target));
+  const step = Math.max(1, [1, 2, 2.5, 5, 10].map(unit => unit * tickMagnitude).find(value => value >= target));
+  const ticks = [];
+  for (let value = 0; value < max; value += step) ticks.push(value);
+  return { max, ticks: [...ticks, max] };
+}
+
 export function weeklyChart(
   history,
   metric,
@@ -256,7 +269,8 @@ export function weeklyChart(
     ceiling = Math.max(...values, 0.001),
     span = Math.max(ceiling - Math.min(...values), ceiling * 0.05),
     floor = mini ? Math.max(0, Math.min(...values) - span * 0.12) : 0,
-    max = mini ? ceiling + span * 0.12 : ceiling * 1.1;
+    axis = !mini && (metric === "revenue" || metric === "aov") ? moneyAxis(ceiling) : null,
+    max = axis?.max ?? (mini ? ceiling + span * 0.12 : ceiling * 1.1);
   const coords = (v, i) => [
     left + (i * (right - left)) / Math.max(rows.length - 1, 1),
     bottom - ((v - floor) / (max - floor)) * (bottom - top),
@@ -264,22 +278,35 @@ export function weeklyChart(
   const current = segments(rows, "value", coords),
     prior = compare ? segments(rows, "previous", coords) : [];
   const color = metric === "canceled" ? "var(--red)" : "var(--blue)";
+  const axisFormat = new Intl.NumberFormat("uk-UA", { notation: "compact", maximumFractionDigits: 2 });
   const grid = mini
     ? ""
-    : [0, 1, 2, 3]
-        .map((i) => {
-          const y = bottom - (i * (bottom - top)) / 3;
-          return `<path d="M${left} ${y}H${right}" class="bo-chart-grid"/><text x="${left - 13}" y="${y + 3}" text-anchor="end">${new Intl.NumberFormat("uk-UA", { notation: "compact", maximumFractionDigits: 1 }).format((max * i) / 3)}${metric === "conversion" ? "%" : ""}</text>`;
+    : (axis?.ticks ?? [0, max / 3, max * 2 / 3, max])
+        .map((value) => {
+          const y = bottom - (value / max) * (bottom - top);
+          return `<path d="M${left} ${y}H${right}" class="bo-chart-grid"/><text x="${left - 9}" y="${y + 3}" text-anchor="end">${axisFormat.format(value)}${metric === "conversion" ? "%" : ""}</text>`;
         })
         .join("");
+  const tick = (x, label) => `<text x="${x}" y="${bottom + 23}" text-anchor="middle">${label}</text>`;
+  const calendarLabel = date => {
+    const label = dateLabel(date);
+    return range.from.slice(0, 4) === range.to.slice(0, 4) ? label.slice(0, 5) : label;
+  };
+  const middleDate = range && addDays(range.from, Math.floor((rangeDays(range) - 1) / 2));
   const ticks = mini
     ? ""
+    : range
+    ? [
+        tick(left, calendarLabel(range.from)),
+        ...(middleDate !== range.from ? [tick((left + right) / 2, calendarLabel(middleDate))] : []),
+        ...(range.to === range.from ? [] : [tick(right, calendarLabel(range.to))]),
+      ].join("")
     : rows
         .map((r, i) =>
           i % Math.max(1, Math.ceil(rows.length / 13)) === 0 ||
           i === rows.length - 1 ||
           r.week === 1
-            ? `<text x="${coords(0, i)[0]}" y="${bottom + 23}" text-anchor="middle">${r.label}${r.week === 1 || i === 0 ? ` · ${String(r.year).slice(2)}` : ""}</text>`
+            ? tick(coords(0, i)[0], `${r.label}${r.week === 1 || i === 0 ? ` · ${String(r.year).slice(2)}` : ""}`)
             : "",
         )
         .join("");

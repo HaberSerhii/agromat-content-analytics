@@ -7,7 +7,7 @@ import {
   miniInterval,
 } from "../public/chart-periods.mjs";
 import { usersBinsQuery } from "../bigquery-users.mjs";
-import { historySeries } from "../public/weekly-charts.mjs";
+import { historySeries, weeklyChart } from "../public/weekly-charts.mjs";
 import { renderBusinessOverview } from "../public/business-overview.mjs";
 test("mini charts use days through 40 inclusive and clipped weeks above 40", () => {
   assert.equal(miniInterval({ from: "2026-01-01", to: "2026-02-09" }), "day");
@@ -58,6 +58,24 @@ test("calendar drives both graph sizes; daily-weekly switch keeps calendar and m
   );
   assert.doesNotMatch(source, /data-bo-preset/);
   assert.match(source, /state.chartMetric=key;saveLocation\(\);render\(\)/);
+});
+test("revenue charts use round ceilings and show start, middle and end dates", () => {
+  const range = {from:"2026-11-01", to:"2026-11-17"};
+  const labels = (peak, interval) => {
+    const days = calendarBins(range).map(bin => ({
+      date:bin.from, revenue:bin.from === "2026-11-10" ? peak : 0, docs:1,
+    }));
+    const history = {range, sales:[{available:true, coverageFrom:range.from, days}]};
+    return [...weeklyChart(history, "revenue", {range, interval}).matchAll(/<text[^>]+>([^<]+)<\/text>/g)]
+      .map(match => match[1].replace(/\s/g, " "));
+  };
+  assert.deepEqual(labels(800_000, "day").slice(0, 5), ["0", "250 тис.", "500 тис.", "750 тис.", "1 млн"]);
+  assert.deepEqual(labels(800_000, "day").slice(5), ["01.11", "09.11", "17.11"]);
+  for (const [peak, ceiling] of [[1_100_000, "1,5 млн"], [1_510_000, "2 млн"]]) {
+    const axisLabels = labels(peak, "week");
+    assert.equal(axisLabels[axisLabels.indexOf("01.11") - 1], ceiling);
+    assert.deepEqual(axisLabels.slice(-3), ["01.11", "09.11", "17.11"]);
+  }
 });
 test("calendar unique-user bins are counted distinctly, never summed from day-level users", () => {
   const range = { from: "2026-10-01", to: "2026-11-15" },

@@ -136,6 +136,7 @@ function parseLocation() {
   section = defs[s] ? s : "home";
   view = defs[section].tabs.some((t) => t[0] === v) ? v : "overview";
   let params = new URLSearchParams(q);
+  if (section === 'home') Object.assign(state, overviewDefaults(today));
   for (let k of [
     "from",
     "to",
@@ -167,7 +168,7 @@ function parseLocation() {
   state.page = Math.max(1, Number(params.get("page")) || 1);
   state.yoy = params.get("yoy") !== "0";
   if (section === 'home') {
-    try { state.compareMode = validComparison(state, params.get('compareMode') || 'wow');comparisonRange(state,state.compareMode); } catch { Object.assign(state,overviewDefaults(today)); }
+    try { state.compareMode = validComparison(state, state.compareMode);comparisonRange(state,state.compareMode); } catch { Object.assign(state,overviewDefaults(today)); }
     state.yoy = true;
     state.chartChannel = state.salesScope === 'site' ? 'site' : 'all';
   }

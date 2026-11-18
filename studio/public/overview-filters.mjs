@@ -1,12 +1,11 @@
-import { yearBefore } from './chart-periods.mjs';
+import { graphRange, yearBefore } from './chart-periods.mjs';
 
 const DAY = 86400000;
 export const addDays = (date, days) => new Date(Date.parse(date + 'T00:00:00Z') + days * DAY).toISOString().slice(0, 10);
 export const rangeDays = range => Math.round((Date.parse(range.to) - Date.parse(range.from)) / DAY) + 1;
 
 export function overviewDefaults(today) {
-  const to = addDays(today, -1);
-  return { from: addDays(to, -6), to, compareMode: 'wow', salesScope: 'all', acquisition: 'all', device: 'all' };
+  return { ...graphRange(today), compareMode: 'yoy', salesScope: 'all', acquisition: 'all', device: 'all' };
 }
 
 export function comparisonAvailability(range) {

@@ -4,7 +4,7 @@ Isolated read-only dashboard. Production uses `studio/deploy.sh`; never deploy t
 
 ## Current overview
 
-The overview has one calendar, one comparison and one filter scope. A fresh visit selects the last seven completed days in Kyiv with WoW enabled. WoW shifts the dates seven days back and is disabled above seven selected days. MoM shifts to the previous calendar month, clips month ends and is disabled when the interval exceeds the number of days in the selected starting month. YoY uses the same calendar dates one year earlier, including February 29 → February 28. Applying dates selects the next valid comparison when necessary. The comparison's actual dates are visible beside its buttons.
+The overview has one calendar, one comparison and one filter scope. A fresh visit selects the current month through yesterday in Kyiv with YoY enabled and all channels selected (the last completed month on day one). WoW shifts the dates seven days back and is disabled above seven selected days. MoM shifts to the previous calendar month, clips month ends and is disabled when the interval exceeds the number of days in the selected starting month. YoY uses the same calendar dates one year earlier, including February 29 → February 28. Applying dates selects the next valid comparison when necessary. The comparison's actual dates are visible beside its buttons.
 
 Sales buttons select all channels, the website or marketplaces. Acquisition buttons select Direct, Organic or CPC (`medium=cpc`); device buttons select mobile or desktop. Selecting an acquisition/device chooses website sales. Marketplace traffic does not exist in the website's GA4 property, so those combinations are unavailable rather than populated with website data or invented zeroes.
 

@@ -87,7 +87,8 @@ test('marketplace traffic is unavailable rather than website data or a fabricate
 });
 
 test('comparison constraints use seven days, calendar month length and exact prior-year dates',()=>{
-  assert.deepEqual(overviewDefaults('2026-01-03'),{from:'2025-12-27',to:'2026-01-02',compareMode:'wow',salesScope:'all',acquisition:'all',device:'all'});
+  assert.deepEqual(overviewDefaults('2026-11-18'),{from:'2026-11-01',to:'2026-11-17',compareMode:'yoy',salesScope:'all',acquisition:'all',device:'all'});
+  assert.deepEqual(overviewDefaults('2026-12-01'),{from:'2026-11-01',to:'2026-11-30',compareMode:'yoy',salesScope:'all',acquisition:'all',device:'all'});
   assert.deepEqual(comparisonRange({from:'2026-11-13',to:'2026-11-15'},'wow'),{from:'2026-11-06',to:'2026-11-08'});
   assert.equal(comparisonAvailability({from:'2026-11-01',to:'2026-11-08'}).wow,false);
   assert.equal(validComparison({from:'2026-11-01',to:'2026-11-08'},'wow'),'mom');
