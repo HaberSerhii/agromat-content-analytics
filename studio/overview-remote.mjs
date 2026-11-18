@@ -22,27 +22,46 @@ export function createRemoteOverview(target) {
   let child,launch,serial=0;
   const pending=new Map();
   async function start(){
-    if(child)return child;
     if(launch)return launch;
+    if(child)return child;
     launch=(async()=>{
       const source=await bundle(fileURLToPath(new URL('./overview-source-worker.mjs',import.meta.url)));
       const compressed=gzipSync(source).toString('base64');
-      const loader=`const source=(await import('node:zlib')).gunzipSync(Buffer.from('${compressed}','base64')).toString();await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));`;
+      const loader=`import {createInterface} from 'node:readline';import {gunzipSync} from 'node:zlib';const input=createInterface({input:process.stdin});input.once('line',async line=>{input.close();const source=gunzipSync(Buffer.from(line,'base64'));process.stdout.write('ready\\n');await import('data:text/javascript;base64,'+source.toString('base64'));});`;
       child=spawn('ssh',['-o','BatchMode=yes','-o','ConnectTimeout=10','-o','ServerAliveInterval=30',target,'node --input-type=module -e '+quote(loader)+' -- --stdio'],{stdio:['pipe','pipe','pipe']});
-      const lines=createInterface({input:child.stdout});
-      lines.on('line',line=>{try{const message=JSON.parse(line),task=pending.get(message.id);if(task){clearTimeout(task.timer);pending.delete(message.id);task.resolve(message.value);}}catch{}});
-      child.stderr.on('data',chunk=>{if(process.env.STUDIO_PREVIEW_SOURCE_DEBUG==='1')process.stderr.write(chunk);});
-      child.on('error',()=>{for(const task of pending.values()){clearTimeout(task.timer);task.resolve(unavailable());}pending.clear();child=null;});
-      child.on('exit',()=>{for(const task of pending.values()){clearTimeout(task.timer);task.resolve(unavailable());}pending.clear();child=null;});
-      return child;
+      const connection = child;
+      const lines=createInterface({input:connection.stdout});
+      return new Promise(resolve=>{
+        let ended = false;
+        const disconnected=()=>{
+          if (ended) return;
+          ended = true;
+          clearTimeout(timer);
+          if (child===connection) child=null;
+          for(const task of pending.values()){clearTimeout(task.timer);task.resolve(unavailable());}
+          pending.clear();
+          resolve(null);
+        };
+        const timer=setTimeout(()=>{connection.kill();disconnected();},20000);
+        lines.on('line',line=>{
+          if (line==='ready') {clearTimeout(timer);resolve(connection);return;}
+          try{const message=JSON.parse(line),task=pending.get(message.id);if(task){clearTimeout(task.timer);pending.delete(message.id);task.resolve(message.value);}}catch{}
+        });
+        connection.stderr.on('data',chunk=>{if(process.env.STUDIO_PREVIEW_SOURCE_DEBUG==='1')process.stderr.write(chunk);});
+        connection.on('error',disconnected);
+        connection.on('exit',disconnected);
+        connection.stdin.on('error',disconnected);
+        connection.stdin.write(compressed+'\n');
+      });
     })().finally(()=>{launch=null;});
     return launch;
   }
   return {
     async read(input, kind = "overview"){
-      const selection=kind === "catalog-health" ? input : validateSelection(input);
+      const selection=kind === "overview" ? validateSelection(input) : input;
       if(pending.size>=12)return unavailable();
       const process=await start(),id=++serial;
+      if (!process) return unavailable();
       return new Promise(resolve=>{
         const timer=setTimeout(()=>{pending.delete(id);resolve(unavailable());},180000);
         pending.set(id,{resolve,timer});

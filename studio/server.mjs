@@ -128,6 +128,7 @@ const statics = new Map([
   ["/overview-filters.mjs", "overview-filters.mjs"],
   ["/category-treemap.mjs", "category-treemap.mjs"],
   ["/site-funnel.mjs", "site-funnel.mjs"],
+  ["/inventory-demand.mjs", "inventory-demand.mjs"],
   ["/weekly-charts.mjs", "weekly-charts.mjs"],
   ["/chart-periods.mjs", "chart-periods.mjs"],
   ["/business-overview.css", "business-overview.css"],
@@ -201,6 +202,11 @@ export const server = http.createServer(async (req, res) => {
       }
       if (waiters.length >= 24) return json(503, { error: "busy" });
       const kind = url.pathname.slice(5);
+      if (kind === 'inventory-demand') {
+        if (url.searchParams.size) return json(400, {available:false});
+        try { return json(200, await readProductionSource(kind)); }
+        catch { return json(503, {available:false, notice:'Дані звіту «Наявність × попит» тимчасово недоступні.'}); }
+      }
       if (kind === 'catalog-health') {
         try { catalogSelection(url.searchParams); }
         catch { return json(400, {available:false,error:'invalid_filter_or_range'}); }

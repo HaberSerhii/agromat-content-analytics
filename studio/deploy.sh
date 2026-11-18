@@ -122,15 +122,18 @@ QUERY=$(cd "$ROOT/releases/$REVISION/studio" && "$NODE_BIN" --input-type=module 
 ')
 runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock "http://localhost/overview?$QUERY" > "$BACKUP/overview.json"
 runuser -u www-data -- curl -fsS --max-time 80 --unix-socket /run/agromat-studio-source.sock http://localhost/catalog-health > "$BACKUP/catalog.json"
+runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock http://localhost/inventory-demand > "$BACKUP/inventory-demand.json"
 python3 - "$BACKUP" <<'PY_CHECK'
 import json, pathlib, sys
 directory = pathlib.Path(sys.argv[1])
 overview = json.loads((directory / 'overview.json').read_text())
 catalog = json.loads((directory / 'catalog.json').read_text())
+inventory = json.loads((directory / 'inventory-demand.json').read_text())
 assert overview['available'] and not overview.get('partial'), 'Overview source incomplete'
 assert overview['sales']['available'] and overview['siteFunnel']['available'], 'ERP or funnel unavailable'
 assert catalog['available'] and len(catalog['segments']) == 4 and not catalog.get('partial'), 'Catalog source incomplete'
-print('Studio ERP, GA4 and all four catalog segments verified')
+assert inventory['available'] and inventory['trafficAvailable'] and inventory['sourceDays'] > 0 and len(inventory['sections']) == 5, 'Inventory demand source incomplete'
+print('Studio ERP, GA4, catalog and inventory demand verified')
 PY_CHECK
 WEB_SWITCHED=1
 ln -sfn "$ROOT/releases/$REVISION/studio" "$ROOT/current"

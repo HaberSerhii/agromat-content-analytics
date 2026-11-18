@@ -5,9 +5,11 @@ import {createInterface} from 'node:readline';
 import {buildOverviewAttribution,validateSelection,erpChannel} from './overview-attribution.mjs';
 import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './overview-query.mjs';
 import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
+import {readInventoryDemand} from './inventory-demand.mjs';
 import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
 let erp,origins;
+let inventoryReport, inventoryPending;
 const reports=new Map();
 let sourceQueue=Promise.resolve(),queued=0,started=[];
 async function readERP() {
@@ -104,12 +106,37 @@ export async function readOverviewCatalog(params = new URLSearchParams()) {
   return loadCatalogHealth(source.rows, selection);
 }
 
+export function loadInventoryDemand() {
+  if (inventoryPending) return inventoryPending;
+  const today = new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'});
+  if (inventoryReport?.today === today && inventoryReport.expires > Date.now()) {
+    return Promise.resolve(inventoryReport.value);
+  }
+  if (queued >= 12) return Promise.reject(Error('overview_busy'));
+  queued++;
+  inventoryPending = sourceQueue.then(async () => {
+    const [source, origins] = await Promise.all([readERP(), readOrigins().catch(() => null)]);
+    const value = await readInventoryDemand(source, origins);
+    inventoryReport = {today, value, expires:Date.now() + (value.partial ? 60_000 : 600_000)};
+    return value;
+  }).finally(() => {queued--;inventoryPending=null;});
+  sourceQueue = inventoryPending.catch(() => {});
+  return inventoryPending;
+}
+
 if(process.argv.includes('--stdio')) {
   for(const filename of ['/opt/agromat-content-analytics/.env','/opt/agromat-content-analytics/.env.local','/opt/agromat-studio/runtime.env'])try{process.loadEnvFile(filename);}catch{}
   const lines=createInterface({input:process.stdin});
   for await(const line of lines) {
     let request;
-    try {request=JSON.parse(line);const value=request.kind==='catalog-health' ? await readOverviewCatalog(new URLSearchParams(request.selection)) : await loadOverviewSelection(request.selection,{includeMargin:true});process.stdout.write(JSON.stringify({id:request.id,value})+'\n');}
+    try {
+      request=JSON.parse(line);
+      let value;
+      if (request.kind === 'catalog-health') value = await readOverviewCatalog(new URLSearchParams(request.selection));
+      else if (request.kind === 'inventory-demand') value = await loadInventoryDemand();
+      else value = await loadOverviewSelection(request.selection,{includeMargin:true});
+      process.stdout.write(JSON.stringify({id:request.id,value})+'\n');
+    }
     catch(error){process.stderr.write(JSON.stringify({event:'overview_source_error',query:error.queryKind,code:error.code,name:error.name,reason:error.errors?.[0]?.reason,message:(error.errors?.[0]?.message||(['TypeError','ReferenceError'].includes(error.name)?error.message:undefined))?.slice(0,300)})+'\n');process.stdout.write(JSON.stringify({id:request?.id,value:{available:false,notice:'Не вдалося отримати повний зв’язок відвантажень ERP з GA4.',error:['invalid_range','invalid_filter','comparison_unavailable','marketplace_web_filter','duplicate_erp_document'].includes(error.message)?error.message:'source_unavailable'}})+'\n');}
   }
 }

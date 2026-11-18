@@ -28,10 +28,12 @@ test("public server exposes only static assets, health and read-only bounded API
     assert.equal(r.status, 200);
     assert.match(r.headers.get("content-type"), /javascript/);
     assert.match(await r.text(), /createApiCache/);
-    for (const asset of ["business-overview.mjs", "business-overview.css", "revenue-drivers.mjs", "overview-filters.mjs"]) {
+    for (const asset of ["business-overview.mjs", "business-overview.css", "revenue-drivers.mjs", "overview-filters.mjs", "inventory-demand.mjs"]) {
       r = await fetch(base + "/" + asset);
       assert.equal(r.status, 200);
     }
+    r = await fetch(base + "/api/inventory-demand?days=365");
+    assert.equal(r.status,400,"inventory demand uses the fixed 30-day window");
     r=await fetch(base+'/api/overview?from=2026-11-01&to=2026-11-17&compareMode=wow&salesScope=all&acquisition=all&device=all');
     assert.equal(r.status,400,'invalid comparison is rejected before loading sources');
     r=await fetch(base+'/api/overview?from=2026-11-11&to=2026-11-17&compareMode=wow&salesScope=marketplaces&acquisition=all&device=mobile');

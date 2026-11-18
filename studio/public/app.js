@@ -135,6 +135,7 @@ function parseLocation() {
   }
   section = defs[s] ? s : "home";
   view = defs[section].tabs.some((t) => t[0] === v) ? v : "overview";
+  if (section === 'home' && v === 'inventory-demand') view = v;
   let params = new URLSearchParams(q);
   if (section === 'home') Object.assign(state, overviewDefaults(today));
   for (let k of [
@@ -302,8 +303,10 @@ function syncOverviewHeader() {
   if (controls) controls.innerHTML = overviewControls(state);
 }
 function businessShell() {
+  const inventoryDemand = view === 'inventory-demand';
+  const reportNav = `<section class="bo-nav-group" aria-labelledby="mix-analysis-label"><div class="side-label" id="mix-analysis-label">Мікс-аналіз</div><button class="nav ${inventoryDemand?'active':''}" data-view="inventory-demand" ${inventoryDemand?'aria-current="page"':''}>${icon('products')}<span>Наявність × попит</span></button></section>`;
   document.body.classList.add('business-page');
-  $('#app').innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav active" data-go="home" aria-current="page">${icon('overview')}<span>Огляд бізнесу</span></button><div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><header class="bo-sticky-header"><section class="bo-heading"><h1>Огляд бізнесу<span>.</span></h1>${['localhost','127.0.0.1','::1'].includes(location.hostname)?'<span class="bo-local-label">Локальний перегляд</span>':''}</section><div class="bo-filterbar">${overviewControls(state)}</div><div id="bo-overview-notice" class="bo-overview-notice" aria-live="polite"></div></header><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+  $('#app').innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav ${inventoryDemand?'':'active'}" data-go="home" ${inventoryDemand?'':'aria-current="page"'}>${icon('overview')}<span>Огляд бізнесу</span></button>${reportNav}<div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><header class="bo-sticky-header"><section class="bo-heading"><h1>${inventoryDemand?'Наявність × попит':'Огляд бізнесу'}<span>.</span></h1>${['localhost','127.0.0.1','::1'].includes(location.hostname)?'<span class="bo-local-label">Локальний перегляд</span>':''}</section>${`<nav class="bo-report-mobile" aria-label="Звіти"><button data-view="overview" aria-pressed="${!inventoryDemand}">Огляд бізнесу</button><button data-view="inventory-demand" aria-pressed="${inventoryDemand}">Наявність × попит</button></nav>`}${inventoryDemand?'':'<div class="bo-filterbar">'+overviewControls(state)+'</div>'}<div id="bo-overview-notice" class="bo-overview-notice" aria-live="polite"></div></header><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
   overviewHeaderObserver?.disconnect();
   overviewHeaderObserver = new ResizeObserver(entries => document.documentElement.style.setProperty('--bo-header-height', Math.ceil(entries[0].target.getBoundingClientRect().height) + 'px'));
   overviewHeaderObserver.observe($('.bo-sticky-header'));
@@ -350,7 +353,7 @@ function bindBusinessOverview() {
 }
 
 function skeleton() {
-  if (section === "home" && view === "overview") return businessShell();
+  if (section === "home" && (view === "overview" || view === "inventory-demand")) return businessShell();
   document.body.classList.remove("business-page");
   const def = defs[section];
   $("#app").innerHTML =
@@ -375,7 +378,7 @@ function bindShell() {
   $$("[data-view]").forEach(
     (b) => (b.onclick = () => go(section, b.dataset.view)),
   );
-  $("#apply-dates").onclick = () => {
+  if ($("#apply-dates")) $("#apply-dates").onclick = () => {
     let from = $("#date-from").value,
       to = $("#date-to").value;
     if (
@@ -433,6 +436,15 @@ async function load({keepView=false}={}) {
   if(!preserve)skeleton();
   else { syncOverviewHeader(); bindShell(); }
   try {
+    if (section === 'home' && view === 'inventory-demand') {
+      const [module, report] = await Promise.all([
+        import('/inventory-demand.mjs?v=mix-analysis1'),
+        (localPreview ? localOverviewCache : apiCache).get('/api/inventory-demand'),
+      ]);
+      if (id !== requestId) return;
+      module.mountInventoryDemand($('#content'), report);
+      return;
+    }
     if (section === "home" && view === "overview") {
       const selection = {...state}, range = {from:state.from,to:state.to};
       const baseline = comparisonRange(range, state.compareMode);
