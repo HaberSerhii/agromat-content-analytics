@@ -8,9 +8,27 @@ import {addDays} from './public/overview-filters.mjs';
 
 const unzip = promisify(gunzip);
 const segments = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
+const tileStockRule = {minRevenue:10_000, minViews:500, stockBelow:30};
 const ignoredReasons = ['створення нового замовлення', 'дубль замовлення', 'фейкове замовлення', 'попередній прорахунок'];
 const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 const readSnapshot = async file => JSON.parse(await unzip(await fs.readFile(file)));
+const publicDays = days => days.map(({date,stock,views,docs}) => ({date,stock,views,docs}));
+
+export function tileSalesStart(today) {
+  const [year, month, day] = today.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(year, month-6, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month-7, Math.min(day,lastDay))).toISOString().slice(0,10);
+}
+
+export function buildTileStockWatch(items, revenueByCode) {
+  const {minRevenue,minViews,stockBelow} = tileStockRule;
+  const rows = items.filter(item => item.segment === 'Плитка' &&
+    revenueByCode.get(item.code) >= minRevenue && item.views >= minViews)
+    .map(({code,name,views,stock,days}) => ({code,name,views,stock,days:publicDays(days),
+      revenue:revenueByCode.get(code), status:stock === null ? 'unknown' : stock < stockBelow ? 'low' : 'ok'}))
+    .sort((a,b) => b.revenue-a.revenue || b.views-a.views || a.code.localeCompare(b.code));
+  return {rows, alerts:rows.filter(row => row.status === 'low').length};
+}
 
 export function inventoryItemSignals(days, siteKnown) {
   const views = days.reduce((sum, d) => sum + (d.views ?? 0), 0);
@@ -57,12 +75,17 @@ async function readViews(from, to) {
 export async function readInventoryDemand(erp, rozetka) {
   const today = new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'});
   const from = addDays(today, -30), to = addDays(today, -1);
+  const salesFrom = tileSalesStart(today);
   const dates = Array.from({length:30}, (_, i) => addDays(from, i));
   const dayIndexes = new Map(dates.map((date, index) => [date,index]));
   const keys = new Map();
-  for (const sale of erp.rows) for (const item of sale.items || []) {
-    const code = String(item.code), date = sale.shippedDate || sale.createdDate || '';
-    if (item.categoryKey && date >= (keys.get(code)?.date || '')) keys.set(code,{key:item.categoryKey,date});
+  let hasSalesHistory = false;
+  for (const sale of erp.rows) {
+    hasSalesHistory ||= Boolean(sale.shippedDate && sale.shippedDate <= salesFrom);
+    for (const item of sale.items || []) {
+      const code = String(item.code), date = sale.shippedDate || sale.createdDate || '';
+      if (item.categoryKey && date >= (keys.get(code)?.date || '')) keys.set(code,{key:item.categoryKey,date});
+    }
   }
 
   const dir = process.env.PRODUCT_SNAPSHOTS_DIR || '/var/lib/agromat-analytics/product-snapshots';
@@ -95,16 +118,23 @@ export async function readInventoryDemand(erp, rozetka) {
       if (item && !p.deleted && Number.isFinite(p.stockQty)) item.days[index].stock = p.stockQty;
     }
   }
+  const revenueByCode = new Map();
+  const watchSalesAvailable = hasSalesHistory && Boolean(rozetka);
   for (const raw of erp.rows) {
     const i = dayIndexes.get(raw.shippedDate);
-    if (i === undefined || !String(raw.state).toLocaleLowerCase('uk').includes('повністю відвантаж') ||
+    if (i === undefined && (!watchSalesAvailable || !raw.shippedDate || raw.shippedDate < salesFrom || raw.shippedDate > to)) continue;
+    const attributedToSite = rozetka && raw.webshopId && !raw.cartNumber && !rozetka.has(String(raw.webshopId));
+    if ((i === undefined && !attributedToSite) || !String(raw.state).toLocaleLowerCase('uk').includes('повністю відвантаж') ||
       ignoredReasons.some(reason => String(raw.cancelReason || '').toLocaleLowerCase('uk').replace(/\s+/g,' ').includes(reason))) continue;
     const row = goodsOnlySalesRow(raw);
     if (!row) continue;
-    const attributedToSite = rozetka && row.webshopId && !row.cartNumber && !rozetka.has(String(row.webshopId));
     const counted = new Set();
     for (const line of netSalesItems(row)) {
-      const code = String(line.code), day = items.get(code)?.days[i];
+      const code = String(line.code), item = items.get(code);
+      if (watchSalesAvailable && attributedToSite && item?.segment === 'Плитка') {
+        revenueByCode.set(code, (revenueByCode.get(code) || 0)+line.revenue);
+      }
+      const day = item?.days[i];
       if (!day) continue;
       if (!counted.has(code)) day.docs++;
       if (attributedToSite) day.siteRevenue += line.revenue;
@@ -112,9 +142,9 @@ export async function readInventoryDemand(erp, rozetka) {
     }
   }
   const traffic = await trafficTask;
+  const trafficDays = new Set(traffic?.map(row => row.date));
   if (traffic) {
-    const covered = new Set(traffic.map(row => row.date));
-    for (const code of refs.values()) for (const day of items.get(code).days) if (covered.has(day.date)) day.views=0;
+    for (const code of refs.values()) for (const day of items.get(code).days) if (trafficDays.has(day.date)) day.views=0;
     for (const row of traffic) {
       const item = items.get(refs.get(Number(row.ref))), i = dayIndexes.get(row.date);
       if (item && i !== undefined) item.days[i].views = Number(row.views);
@@ -122,6 +152,11 @@ export async function readInventoryDemand(erp, rozetka) {
   }
 
   const all = [...items.values()].map(item => ({...item,...inventoryItemSignals(item.days, Boolean(rozetka))}));
+  const tileWatch = {...tileStockRule, salesFrom, trafficDays:trafficDays.size,
+    available:watchSalesAvailable && trafficDays.size > 0,
+    notice:!watchSalesAvailable ? 'Дані про виторг сайту за 6 місяців недоступні.' :
+      !trafficDays.size ? 'Дані про перегляди карток недоступні.' : null};
+  if (tileWatch.available) Object.assign(tileWatch, buildTileStockWatch(all,revenueByCode));
   const sections = ['Усі сегменти',...segments].map(segment => {
     const candidates = all.filter(item => segment === 'Усі сегменти' || item.segment === segment);
     const impacted = candidates.filter(item => item.missedViews > 0).sort((a,b) => b.missedViews-a.missedViews);
@@ -138,9 +173,9 @@ export async function readInventoryDemand(erp, rozetka) {
       atRisk:risks.length, outNow:risks.filter(item=>item.risk==='out').length,
       opportunity:priced.length ? priced.reduce((sum,item)=>sum+item.opportunity,0) : null, priced:priced.length},
       categories:[...categories].sort((a,b)=>b[1]-a[1]).slice(0,6),
-      rows:rows.map(({days,...item})=>({...item, days:days.map(({date,stock,views,docs})=>({date,stock,views,docs}))}))};
+      rows:rows.map(({days,...item})=>({...item, days:publicDays(days)}))};
   });
   const trafficAvailable = Boolean(traffic?.length);
   return {available:true,from,to,sourceDays:recorded.length,trafficAvailable,
-    partial:!trafficAvailable || !rozetka || !recorded.length,sections};
+    partial:!trafficAvailable || !rozetka || !recorded.length || !tileWatch.available, tileWatch,sections};
 }

@@ -4,6 +4,7 @@ const fmt = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:1});
 const money = new Intl.NumberFormat('uk-UA', {notation:'compact',maximumFractionDigits:1});
 const num = value => Number.isFinite(value) ? fmt.format(value) : '—';
 const hryvnia = value => Number.isFinite(value) ? money.format(value) + ' ₴' : '—';
+const fullHryvnia = new Intl.NumberFormat('uk-UA', {style:'currency',currency:'UAH',maximumFractionDigits:2});
 const dateLabel = date => date.slice(8,10) + '.' + date.slice(5,7);
 const dateFull = date => date.split('-').reverse().join('.');
 const statuses = {out:'Менше 1',low:'Запас до 7 днів',unknown:'Немає даних',none:'—'};
@@ -48,6 +49,24 @@ function dayText(day) {
     <span>Відвантаження <b>${num(day.docs)}</b></span><span>${status(day.stock)}${day.stock === null ? '' : ` <b>${num(day.stock)}</b>`}</span>`;
 }
 
+function tileStockWatch(watch, to, chosen) {
+  const watchStatus = {low:'Низький залишок',ok:'У межах порога',unknown:'Залишок невідомий'};
+  return `<section class="bo-card bo-demand-panel" aria-labelledby="tile-stock-heading">
+    <header><div><h2 id="tile-stock-heading">Контроль залишків плитки</h2>
+      <p>Від ${num(watch.minRevenue)} ₴ виторгу сайту за 6 місяців · від ${num(watch.minViews)} переглядів за 30 днів · сигнал при залишку менше ${num(watch.stockBelow)}</p></div>
+      ${watch.available?`<span class="bo-demand-risk ${watch.alerts?'out':''}">Сигналів ${num(watch.alerts)} · На контролі ${num(watch.rows.length)}</span>`:''}</header>
+    ${watch.available?`<p class="bo-demand-watch-note">Виторг за ${dateFull(watch.salesFrom)} — ${dateFull(to)} · Залишок на ${dateFull(to)} у складських одиницях каталогу${watch.trafficDays<30?` · Дані GA4 за ${num(watch.trafficDays)} із 30 днів`:''}</p>
+      ${watch.rows.length?`<div class="bo-demand-table bo-demand-watch-table" tabindex="0" role="region" aria-labelledby="tile-stock-heading">
+        <table><thead><tr><th scope="col">Товар</th><th scope="col" aria-sort="descending">Виторг сайту за 6 міс.</th><th scope="col">Перегляди за 30 днів</th><th scope="col">Залишок</th><th scope="col">Стан</th></tr></thead>
+        <tbody>${watch.rows.map(row=>`<tr class="${row.code===chosen?'is-selected':''}">
+          <th scope="row"><button type="button" data-demand-row="${escape(row.code)}" aria-pressed="${row.code===chosen}">${escape(row.name)}</button><small>${escape(row.code)}</small></th>
+          <td>${fullHryvnia.format(row.revenue)}</td><td>${num(row.views)}</td><td>${num(row.stock)}</td>
+          <td><span class="bo-demand-risk ${row.status==='low'?'out':row.status}">${watchStatus[row.status]}</span></td></tr>`).join('')}</tbody></table>
+      </div>`:'<p class="bo-demand-empty">За доступними даними плитка з таким виторгом і кількістю переглядів відсутня.</p>'}`:
+      `<p class="bo-demand-empty" role="status">${escape(watch.notice)}</p>`}
+  </section>`;
+}
+
 export function mountInventoryDemand(root, report) {
   if (!report?.available) {
     root.innerHTML = `<div class="bo-card bo-demand-empty">${escape(report?.notice || 'Дані про наявність тимчасово недоступні.')}</div>`;
@@ -68,9 +87,12 @@ export function mountInventoryDemand(root, report) {
   };
   function draw(focus) {
     const segment=report.sections[segmentIndex], {total}=segment;
+    const watch=['Усі сегменти','Плитка'].includes(segment.segment) ? report.tileWatch : null;
+    const products=new Map(segment.rows.map(row=>[row.code,row]));
+    for (const row of watch?.rows || []) if (!products.has(row.code)) products.set(row.code,row);
     const filtered=segment.rows.filter(row=>mode==='risks' ? ['out','low'].includes(row.risk) : row.missedViews>0)
       .sort((a,b)=>compare(a,b)*(descending?-1:1));
-    const item=segment.rows.find(row=>row.code===chosen) || filtered[0] || segment.rows[0];
+    const item=products.get(chosen) || filtered[0] || products.values().next().value;
     chosen=item?.code;
     const max=segment.categories[0]?.[1] || 1;
     root.innerHTML = `<div class="bo-demand">
@@ -79,6 +101,7 @@ export function mountInventoryDemand(root, report) {
         <label class="bo-demand-select">Сегмент <select data-demand-segment aria-label="Сегмент">${report.sections.map((s,i)=>`<option value="${i}" ${segmentIndex===i?'selected':''}>${escape(s.segment)}</option>`).join('')}</select></label>
       </div>
       ${report.trafficAvailable?'':'<p class="bo-demand-empty" role="status">GA4 тимчасово недоступна. Показуємо доступні залишки та відвантаження.</p>'}
+      ${watch?tileStockWatch(watch,report.to,chosen):''}
       <div class="bo-card bo-demand-kpis">
         ${[['Оцінка недоотриманого виторгу',hryvnia(total.opportunity),total.priced?`Оцінено ${num(total.priced)} SKU`:'Недостатньо даних для оцінки'],
            ['SKU-дні без залишку',num(total.outDays),'Залишок менше 1 у знімку'],['Перегляди без залишку',num(total.missedViews),'Перегляди карток у ці дні'],
@@ -87,7 +110,7 @@ export function mountInventoryDemand(root, report) {
       </div>
       <div class="bo-demand-grid">
         <section class="bo-card bo-demand-panel"><header><div><h2>Попит і наявність</h2><p>${item?escape(item.name):''}</p></div>
-          ${segment.rows.length?`<select data-demand-product aria-label="Товар на графіку">${segment.rows.map(row=>`<option value="${escape(row.code)}" ${row.code===chosen?'selected':''}>${escape(row.name)}</option>`).join('')}</select>`:''}</header>
+          ${products.size?`<select data-demand-product aria-label="Товар на графіку">${[...products.values()].map(row=>`<option value="${escape(row.code)}" ${row.code===chosen?'selected':''}>${escape(row.name)}</option>`).join('')}</select>`:''}</header>
           ${timeline(item)}
         </section>
         <section class="bo-card bo-demand-panel"><header><div><h2>Де попит залишився без товару</h2><p>Перегляди карток за категоріями</p></div></header>

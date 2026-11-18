@@ -133,7 +133,15 @@ assert overview['available'] and not overview.get('partial'), 'Overview source i
 assert overview['sales']['available'] and overview['siteFunnel']['available'], 'ERP or funnel unavailable'
 assert catalog['available'] and len(catalog['segments']) == 4 and not catalog.get('partial'), 'Catalog source incomplete'
 assert inventory['available'] and inventory['trafficAvailable'] and inventory['sourceDays'] > 0 and len(inventory['sections']) == 5, 'Inventory demand source incomplete'
-print('Studio ERP, GA4, catalog and inventory demand verified')
+watch = inventory['tileWatch']
+assert watch['available'] and watch['salesFrom'] < inventory['from'], 'Tile stock watch source incomplete'
+assert (watch['minRevenue'], watch['minViews'], watch['stockBelow']) == (10000, 500, 30), 'Tile stock thresholds differ'
+assert watch['alerts'] == sum(row['status'] == 'low' for row in watch['rows']), 'Tile stock signal count differs'
+for row in watch['rows']:
+    assert row['revenue'] >= watch['minRevenue'] and row['views'] >= watch['minViews'], 'Tile watch includes ineligible product'
+    stock = row['stock']
+    assert row['status'] == ('unknown' if stock is None else 'low' if stock < watch['stockBelow'] else 'ok'), 'Tile stock status differs'
+print(f"Studio ERP, GA4, catalog and tile stock verified ({len(watch['rows'])} monitored, {watch['alerts']} alerts)")
 PY_CHECK
 WEB_SWITCHED=1
 ln -sfn "$ROOT/releases/$REVISION/studio" "$ROOT/current"

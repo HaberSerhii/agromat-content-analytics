@@ -438,7 +438,7 @@ async function load({keepView=false}={}) {
   try {
     if (section === 'home' && view === 'inventory-demand') {
       const [module, report] = await Promise.all([
-        import('/inventory-demand.mjs?v=mix-analysis1'),
+        import('/inventory-demand.mjs?v=tile-stock1'),
         (localPreview ? localOverviewCache : apiCache).get('/api/inventory-demand'),
       ]);
       if (id !== requestId) return;

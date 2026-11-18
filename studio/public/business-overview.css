@@ -1790,6 +1790,10 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-demand-table tbody td { font-variant-numeric:tabular-nums; }
 .bo-demand-table tbody button { border:0; background:none; color:var(--text); font:inherit; font-size:11px; font-weight:600; padding:0; text-align:left; cursor:pointer; }
 .bo-demand-table .is-selected { background:#533afd0b; }
+.bo-demand-watch-table { max-height:19rem; }
+.bo-demand-watch-table thead th { position:sticky; top:0; }
+.bo-demand-watch-table td:nth-child(2) { white-space:nowrap; }
+.bo-demand-watch-note { margin:0 0 10px; color:var(--muted); font-size:11px; }
 .bo-demand-risk { display:inline-block; border-radius:4px; padding:2px 5px; color:var(--muted); }
 .bo-demand-risk.out { background:#f9e8e5; color:#9e2019; }
 .bo-demand-risk.low { background:#fff1d8; color:#794907; }
