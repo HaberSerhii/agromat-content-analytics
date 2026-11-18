@@ -81,6 +81,8 @@ test('enabled margin uses scoped shipped net revenue and retains ERP zeros', () 
   assert.equal(weeks[0].marginPercent, 10 / 300 * 100);
   const html = renderBusinessOverview(result, state);
   assert.match(html, /data-bo-metric="margin" aria-pressed="true"/);
+  assert.match(html, /data-bo-metric="margin" aria-pressed="true"><div class="bo-kpi-label"><span>Прибуток<\/span>/);
+  assert.match(html, /<h2>Прибуток<\/h2>/);
   assert.match(html, /Маржа, %<\/span><b>3,33%/);
   assert.match(html, /id="overview-sales-chart".*data-metric="margin"/);
 });

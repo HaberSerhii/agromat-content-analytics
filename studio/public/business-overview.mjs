@@ -91,8 +91,8 @@ export function overviewModel(data, state) {
       money,
       "Відвантажені продажі · ERP",
     ),
-    ...(data.margin ? [metric('margin', 'Маржа', data.margin.amount,
-      state.yoy ? data.margin.previous?.amount : null, money, 'Маржа ERP · Оцінка за відвантаженими замовленнями')] : []),
+    ...(data.margin ? [metric('margin', 'Прибуток', data.margin.amount,
+      state.yoy ? data.margin.previous?.amount : null, money, 'Оцінка за маржею ERP відвантажених замовлень')] : []),
     metric(
       "docs",
       "Успішні замовлення",
