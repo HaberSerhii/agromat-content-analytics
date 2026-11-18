@@ -1798,8 +1798,14 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-demand-category-filter { max-width:100%; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; font-size:11px; cursor:pointer; }
 .bo-demand-category-filter span { margin-left:4px; }
 .bo-demand-watch-table { max-height:19rem; }
+.bo-demand-watch-table table { min-width:0; table-layout:fixed; white-space:normal; }
 .bo-demand-watch-table thead th { position:sticky; top:0; }
+.bo-demand-watch-table thead th:nth-child(2) { width:19%; }
+.bo-demand-watch-table thead th:nth-child(3) { width:15%; }
+.bo-demand-watch-table thead th:nth-child(4) { width:11%; }
+.bo-demand-watch-table tbody th button { white-space:normal; overflow-wrap:anywhere; }
 .bo-demand-watch-table td:nth-child(2) { white-space:nowrap; }
+.bo-demand-mobile-metric { display:none; }
 .bo-demand-risk { display:inline-block; border-radius:4px; padding:2px 5px; color:var(--muted); }
 .bo-demand-risk.out { background:#f9e8e5; color:#9e2019; }
 .bo-demand-risk.low { background:#fff1d8; color:#794907; }
@@ -1822,6 +1828,12 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
   .bo-demand-kpis > div:nth-child(n+3) { border-top:1px solid var(--line); }
   .bo-demand-panel { padding:13px; }
   .bo-demand-watch-controls { width:100%; }
+  .bo-demand-watch-table table, .bo-demand-watch-table tbody { display:block; }
+  .bo-demand-watch-table thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+  .bo-demand-watch-table tbody tr { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1.2fr) minmax(0,.7fr); gap:7px 8px; padding:9px 4px; border-top:1px solid var(--line); }
+  .bo-demand-watch-table tbody th, .bo-demand-watch-table tbody td { padding:0; border:0; }
+  .bo-demand-watch-table tbody th:first-child, .bo-demand-watch-table tbody td:last-child { grid-column:1/-1; width:auto; }
+  .bo-demand-mobile-metric { display:block; margin-bottom:2px; color:var(--muted); font-size:9px; }
 }
 
 .bo-sidebar .bo-nav-group { margin-top:14px; }

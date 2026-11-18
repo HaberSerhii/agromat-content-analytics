@@ -69,10 +69,12 @@ function stockWatchPanel(watch, rows, watchMode, chosen, segmentSelect, category
       </div>
     </header>
     ${visible.length?`<div class="bo-demand-table bo-demand-watch-table" tabindex="0" role="region" aria-labelledby="stock-watch-heading">
-      <table><thead><tr><th scope="col">Товар</th><th scope="col" aria-sort="descending">Виторг сайту з початку року</th><th scope="col">Перегляди за 7 днів</th><th scope="col">Залишок</th><th scope="col">Стан</th></tr></thead>
-      <tbody>${visible.map(row=>`<tr class="${row.code===chosen?'is-selected':''}">
+      <table role="table"><thead role="rowgroup"><tr role="row"><th scope="col">Товар</th><th scope="col" aria-sort="descending">Виторг сайту з початку року</th><th scope="col">Перегляди за 7 днів</th><th scope="col">Залишок</th><th scope="col">Стан</th></tr></thead>
+      <tbody role="rowgroup">${visible.map(row=>`<tr role="row" class="${row.code===chosen?'is-selected':''}">
         <th scope="row"><button type="button" data-demand-row="${escape(row.code)}" aria-pressed="${row.code===chosen}">${escape(row.product.name)}</button><small>${escape(row.code)} · ${escape(row.product.segment)}</small></th>
-        <td>${fullHryvnia.format(row.revenue)}</td><td>${num(row.views)}</td><td title="Поріг сигналу ≤ ${num(row.threshold)}">${num(row.stock)}</td>
+        <td><small class="bo-demand-mobile-metric" aria-hidden="true">Виторг з 01.01</small>${fullHryvnia.format(row.revenue)}</td>
+        <td><small class="bo-demand-mobile-metric" aria-hidden="true">Перегляди за 7 днів</small>${num(row.views)}</td>
+        <td title="Поріг сигналу ≤ ${num(row.threshold)}"><small class="bo-demand-mobile-metric" aria-hidden="true">Залишок</small>${num(row.stock)}</td>
         <td><span class="bo-demand-risk ${row.status==='low'?'out':row.status}">${watchStatus[row.status]}</span></td></tr>`).join('')}</tbody></table>
     </div>`:`<p class="bo-demand-empty" role="status">${escape(empty)}</p>`}
   </section>`;
