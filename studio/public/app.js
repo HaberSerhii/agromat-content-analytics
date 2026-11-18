@@ -1,9 +1,9 @@
 import {overviewDefaults, overviewControls, validComparison, comparisonRange, rangeLabel, scopedSales, scopeKey} from '/overview-filters.mjs';
-import {bindFunnelTooltips} from "/site-funnel.mjs?v=fastoverview2";
+import {bindComparisonTooltips} from "/site-funnel.mjs?v=catalog-comparison";
 import {bindCategoryTooltips} from "/category-treemap.mjs?v=fastoverview2";
-import { bindWeeklyCharts } from "/weekly-charts.mjs?v=fastoverview2";
-import { renderBusinessOverview, renderSalesBreakdown, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=tile-breakdown";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=tile-breakdown";
+import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
+import { renderBusinessOverview, renderSalesBreakdown, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=margin-tooltip";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=margin-tooltip";
 import {
   defaultRange,
   chartSeries,
@@ -158,7 +158,7 @@ function parseLocation() {
   ])
     if (params.has(k)) state[k] = params.get(k);
   for (const [key, allowed, fallback] of [
-    ["chartMetric", ["revenue", "docs", "aov", "users", "conversion", "canceled"], "revenue"],
+    ["chartMetric", ["revenue", "margin", "docs", "aov", "users", "conversion", "canceled"], "revenue"],
     ["chartInterval", ["day", "week", "month"], "day"],
     ["chartSegment", ["Усі", "Плитка", "Сантехніка", "Підлогові покриття", "Джерела живлення", "Будівельна хімія", "Інше"], "Усі"],
     ['salesScope', ['all','site','marketplaces'], 'all'],
@@ -209,8 +209,11 @@ window.addEventListener("popstate", () => {
   load();
 });
 const apiCache = createApiCache();
+const localPreview = ['localhost','127.0.0.1'].includes(location.hostname);
+const localOverviewCache = createApiCache({storage: () => null});
 async function api(kind, extra = {}) {
-  return apiCache.get("/api/" + kind + "?" + apiParams(kind, state, extra));
+  const cache = kind === 'overview' && localPreview ? localOverviewCache : apiCache;
+  return cache.get("/api/" + kind + "?" + apiParams(kind, state, extra));
 }
 const sourceStatus = new Map();
 function sourceTime(value) {
@@ -326,7 +329,8 @@ function bindBusinessOverview() {
   bindWeeklyCharts();
   bindQuarterTooltips();
   bindCategoryTooltips();
-  bindFunnelTooltips();
+  bindComparisonTooltips('funnel');
+  bindComparisonTooltips('catalog');
   updateOverviewCoverage();
   const render=()=>{ $("#content").innerHTML=renderBusiness(); bindContent(); };
   $$('[data-map][data-measure]').forEach(button => button.onclick = () => {
@@ -443,6 +447,7 @@ async function load({keepView=false}={}) {
       if (savedCatalog?.trafficRange?.from === range.from && savedCatalog.trafficRange.to === range.to &&
           savedCatalog.compareMode === selection.compareMode) catalogSnapshot.catalogHealth = savedCatalog;
       const dashboard = {...catalogSnapshot,salesChannels:{},quarterChannels:{},comparisonRange:baseline,scope:scopeKey(selection),updating:true};
+      if (localPreview) dashboard.margin = {amount:null,percent:null};
       data = dashboard;
       let paintQueued = false;
       const draw = () => {

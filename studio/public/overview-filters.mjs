@@ -100,17 +100,21 @@ export function scopedSales(all, channels, scope = 'all') {
   return all || null;
 }
 
-export function selectedHistory(history, sales, range, baseline) {
+export function selectedHistory(history, sales, range, baseline, margin) {
   if (!history && !sales) return null;
-  const period = (source, dates) => {
+  const period = (source, dates, marginPeriod) => {
     if (!source?.available || source.seriesUnavailable) return {available:false,range:dates,days:[]};
     const byDate = new Map((source.byDate || []).map(row => [row.date,row]));
+    const marginByDate = new Map((marginPeriod?.byDate || []).map(row => [row.date,row]));
     const days = [];
     for (let date=dates.from;date<=dates.to;date=addDays(date,1)) {
       const row=byDate.get(date);
-      days.push({date,revenue:row?.revenue||0,docs:row?.docs||0,canceled:row?.canceled??null});
+      const marginDay = marginByDate.get(date);
+      const marginAmount = marginDay ? marginDay.amount : marginPeriod?.coveredDocs ? 0 : null;
+      days.push({date,revenue:row?.revenue||0,docs:row?.docs||0,canceled:row?.canceled??null,
+        margin:marginAmount, marginCoveredRevenue:marginDay?.coveredRevenue ?? 0});
     }
     return {available:true,range:dates,coverageFrom:dates.from,coverageTo:dates.to,days};
   };
-  return {...history,range:{...range,previousFrom:baseline.from,previousTo:baseline.to},sales:[period(sales,range),period(sales?.previous,baseline)]};
+  return {...history,range:{...range,previousFrom:baseline.from,previousTo:baseline.to},sales:[period(sales,range,margin),period(sales?.previous,baseline,margin?.previous)]};
 }

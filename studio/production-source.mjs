@@ -22,7 +22,7 @@ const server = http.createServer(async (req, res) => {
     let selection;
     try { selection = validateSelection(Object.fromEntries(url.searchParams)); }
     catch { return json(400, {available:false}); }
-    read = () => loadOverviewSelection(selection);
+    read = () => loadOverviewSelection(selection, {includeMargin:true});
   } else {
     return json(404, {available:false});
   }

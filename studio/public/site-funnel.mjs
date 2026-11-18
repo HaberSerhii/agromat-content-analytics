@@ -75,18 +75,19 @@ export function funnelTooltipData(source,kind,index=0,mode='week'){
    : 'Старт та етапи до замовлення — унікальні користувачі України. Замовлення — унікальні транзакції purchase або payment_unpaid з усіх країн.';
  return {title,rows,comparisons,note};
 }
-export function bindFunnelTooltips(root=document){
- const tip=root.querySelector('#funnel-hover-tooltip');if(!tip)return;
- root.querySelectorAll('[data-funnel-tip]').forEach(target=>{
-  const meta=JSON.parse(target.dataset.funnelTip);
+export function bindComparisonTooltips(kind,root=document){
+ const tip=root.querySelector(`#${kind}-hover-tooltip`);if(!tip)return;
+ root.querySelectorAll(`[data-${kind}-tip]`).forEach(target=>{
+  const meta=JSON.parse(target.getAttribute(`data-${kind}-tip`));
   const hide=()=>{tip.hidden=true;target.removeAttribute('aria-describedby');};
   const show=event=>{
-   tip.innerHTML=`<div class="bo-funnel-tip-title">${esc(meta.title)}</div>${meta.rows.map(row=>`<div class="bo-funnel-tip-row"><div>${esc(row.label)}<small>${esc(row.dates)}</small></div><div><b>${esc(row.value)}</b>${row.counts?`<small>${esc(row.counts)}</small>`:''}</div></div>`).join('')}<div class="bo-funnel-tip-comparisons">${meta.comparisons.map(row=>`<div><span>${esc(row.label)}</span><b>${esc(row.relative)}<small>${esc(row.difference)}</small></b></div>`).join('')}</div><p>${esc(meta.note)}</p>`;
+   tip.innerHTML=`<div class="bo-funnel-tip-title">${esc(meta.title)}</div>${meta.rows.map(row=>`<div class="bo-funnel-tip-row"><div>${esc(row.label)}<small>${esc(row.dates)}</small></div><div><b>${esc(row.value)}</b>${row.counts?`<small>${esc(row.counts)}</small>`:''}</div></div>`).join('')}<div class="bo-funnel-tip-comparisons">${meta.comparisons.map(row=>`<div><span>${esc(row.label)}</span><b>${esc(row.relative)}${row.difference?`<small>${esc(row.difference)}</small>`:''}</b></div>`).join('')}</div>${meta.note?`<p>${esc(meta.note)}</p>`:''}`;
    tip.hidden=false;target.setAttribute('aria-describedby',tip.id);
    const r=target.getBoundingClientRect(),x=event?.clientX??r.right,y=event?.clientY??r.top;
    tip.style.left=Math.max(8,Math.min(x+12,innerWidth-tip.offsetWidth-8))+'px';
    tip.style.top=Math.max(8,Math.min(y+12,innerHeight-tip.offsetHeight-8))+'px';
   };
   target.addEventListener('pointerenter',show);target.addEventListener('pointermove',show);target.addEventListener('pointerleave',hide);target.addEventListener('focus',()=>show());target.addEventListener('blur',hide);target.addEventListener('keydown',event=>{if(event.key==='Escape')hide();});
+  if(kind==='catalog')target.addEventListener('click',()=>show());
  });
 }

@@ -37,7 +37,7 @@ async function readOrigins() {
   origins={time:Date.now(),ids};return ids;
 }
 
-async function readOverviewSelection(input) {
+async function readOverviewSelection(input, options) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const [source,rozetka]=await Promise.all([readERP(),readOrigins()]);
   const key=JSON.stringify([range,baseline,source.mtime]);
@@ -82,18 +82,18 @@ async function readOverviewSelection(input) {
     }
     previousYearTransactions = report.lastYear.rows;
   }
-  const result=buildOverviewAttribution({rows:source.rows,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report,previousYearTransactions},state);
+  const result=buildOverviewAttribution({rows:source.rows,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report,previousYearTransactions},state,options);
   result.attribution.available=report.attributionAvailable;
   result.partial=!report.attributionAvailable||!report.webAvailable;
   if(result.partial)result.sourceNotice='Частина даних GA4 тимчасово недоступна; відвантаження ERP показані повністю.';
   return result;
 }
 
-export function loadOverviewSelection(input) {
+export function loadOverviewSelection(input, options) {
   const selection=validateSelection(input);
   if(queued>=12)return Promise.reject(Error('overview_busy'));
   queued++;
-  const task=sourceQueue.then(()=>readOverviewSelection(selection));
+  const task=sourceQueue.then(()=>readOverviewSelection(selection, options));
   sourceQueue=task.catch(()=>{});
   return task.finally(()=>queued--);
 }
@@ -109,7 +109,7 @@ if(process.argv.includes('--stdio')) {
   const lines=createInterface({input:process.stdin});
   for await(const line of lines) {
     let request;
-    try {request=JSON.parse(line);const value=request.kind==='catalog-health' ? await readOverviewCatalog(new URLSearchParams(request.selection)) : await loadOverviewSelection(request.selection);process.stdout.write(JSON.stringify({id:request.id,value})+'\n');}
+    try {request=JSON.parse(line);const value=request.kind==='catalog-health' ? await readOverviewCatalog(new URLSearchParams(request.selection)) : await loadOverviewSelection(request.selection,{includeMargin:true});process.stdout.write(JSON.stringify({id:request.id,value})+'\n');}
     catch(error){process.stderr.write(JSON.stringify({event:'overview_source_error',query:error.queryKind,code:error.code,name:error.name,reason:error.errors?.[0]?.reason,message:(error.errors?.[0]?.message||(['TypeError','ReferenceError'].includes(error.name)?error.message:undefined))?.slice(0,300)})+'\n');process.stdout.write(JSON.stringify({id:request?.id,value:{available:false,notice:'Не вдалося отримати повний зв’язок відвантажень ERP з GA4.',error:['invalid_range','invalid_filter','comparison_unavailable','marketplace_web_filter','duplicate_erp_document'].includes(error.message)?error.message:'source_unavailable'}})+'\n');}
   }
 }

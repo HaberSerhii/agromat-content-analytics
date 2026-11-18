@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildOverviewAttribution,transactionIndex,validateSelection} from '../overview-attribution.mjs';
-import {comparisonRange,comparisonAvailability,validComparison,scopedSales,overviewDefaults} from '../public/overview-filters.mjs';
+import {comparisonRange,comparisonAvailability,validComparison,scopedSales,overviewDefaults,selectedHistory} from '../public/overview-filters.mjs';
 import {overviewRevenueWaterfall} from '../public/revenue-drivers.mjs';
 import {periodChannelRows,overviewModel,renderBusinessOverview,renderSalesBreakdown} from '../public/business-overview.mjs';
 import {overviewWebQuery,overviewTransactionsQuery,readBoundedTransactions,readBoundedWeb} from '../overview-query.mjs';
@@ -51,6 +51,38 @@ test('ready-to-ship amount is a current ERP snapshot outside the chart series',(
   const markup=renderBusinessOverview(result,selection);
   assert.equal((markup.match(/Транзит/g)||[]).length,1);
   assert.match(markup,/data-bo-metric="revenue"[^]*?Транзит<\/span><b>\+2,8\sтис\.[^]*?<\/button>/);
+});
+
+test('enabled margin uses scoped shipped net revenue and retains ERP zeros', () => {
+  const source = fixture();
+  source.rows = [
+    order(101, 100, {margin:25, returnSum:20}),
+    order(102, 120, {margin:0}),
+    order(103, 300),
+    order(104, 100, {margin:-10, shippedDate:'2026-11-13'}),
+    order(600, 500, {margin:50, cartNumber:'marketplace'}),
+    order(201, 80, {margin:10, shippedDate:'2026-11-05'}),
+  ];
+  const state = {...selection, salesScope:'site', chartMetric:'margin'};
+  const defaultResult = buildOverviewAttribution(source, {...state, includeMargin:true});
+  assert.ok(!('margin' in defaultResult));
+  const result = buildOverviewAttribution(source, state, {includeMargin:true});
+  assert.equal(result.margin.amount, 10);
+  assert.equal(result.margin.percent, 10 / 300 * 100);
+  assert.equal(result.margin.coveredDocs, 3);
+  assert.equal(result.margin.docs, 4);
+  assert.equal(result.margin.previous.amount, 8);
+  result.chartSales = scopedSales(result.sales, result.salesChannels, state.salesScope);
+  const history = selectedHistory(result.history, result.chartSales, result.range, result.comparisonRange, result.margin);
+  const series = historySeries(history, 'margin', {range:result.range, interval:'day', comparisonMode:state.compareMode});
+  assert.deepEqual(series.slice(0,3).map(({value,previous}) => [value,previous]), [[0,0],[20,8],[-10,0]]);
+  assert.deepEqual(series.slice(0,3).map(row => [row.marginPercent,row.previousMarginPercent]), [[null,null],[10,10],[-10,null]]);
+  const weeks = historySeries(history, 'margin', {range:result.range, interval:'week', comparisonMode:state.compareMode});
+  assert.equal(weeks[0].marginPercent, 10 / 300 * 100);
+  const html = renderBusinessOverview(result, state);
+  assert.match(html, /data-bo-metric="margin" aria-pressed="true"/);
+  assert.match(html, /Маржа, %<\/span><b>3,33%/);
+  assert.match(html, /id="overview-sales-chart".*data-metric="margin"/);
 });
 
 test('tile drill-down uses scoped net sales and the same dates last year even in WoW',()=>{

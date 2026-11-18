@@ -1,6 +1,6 @@
 import { overviewRevenueWaterfall } from "./revenue-drivers.mjs";
-import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs';
-import {renderSiteFunnel} from "./site-funnel.mjs?v=fastoverview2";
+import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=margin-tooltip';
+import {renderSiteFunnel} from "./site-funnel.mjs?v=catalog-comparison";
 import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=fastoverview2";
 import {
   graphRange,
@@ -9,7 +9,7 @@ import {
   lastQuarterWeeks,
   calendarBins,
 } from "./chart-periods.mjs?v=fastoverview2";
-import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=fastoverview2";
+import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=margin-tooltip";
 import { chartSeries, defaultRange } from "./chart-data.mjs?v=salesfilters1";
 const esc = (value) =>
   String(value ?? "")
@@ -91,6 +91,8 @@ export function overviewModel(data, state) {
       money,
       "Відвантажені продажі · ERP",
     ),
+    ...(data.margin ? [metric('margin', 'Маржа', data.margin.amount,
+      state.yoy ? data.margin.previous?.amount : null, money, 'Маржа ERP · Оцінка за відвантаженими замовленнями')] : []),
     metric(
       "docs",
       "Успішні замовлення",
@@ -494,45 +496,56 @@ function catalogPanel(data) {
   const source = data.catalogHealth;
   const labels = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
   const decimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
+  const score = value => Number.isFinite(value) ? decimal.format(value) : '—';
   const signed = (value, precision) => {
     const rounded = Number(value.toFixed(precision));
     return (rounded > 0 ? '+' : rounded < 0 ? '−' : '') + decimal.format(Math.abs(rounded));
   };
   const day = date => date ? date.split('-').reverse().join('.') : '—';
-  const delta = (value, tip, unit = '', precision = 2) => {
-    if (!Number.isFinite(value)) return tip
-      ? `<span class="bo-catalog-delta" tabindex="0" title="${esc(tip)}" aria-label="${esc(tip)}">—</span>`
-      : '';
+  const delta = (value, meta, unit = '', precision = 2) => {
+    const display = Number.isFinite(value) ? signed(value, precision) + unit : '—';
     const tone = value > 0 ? 'up' : value < 0 ? 'down' : '';
-    const display = signed(value, precision) + unit;
-    return `<span class="bo-catalog-delta ${tone}" tabindex="0" title="${esc(tip)}" aria-label="${esc(display + ' · ' + tip)}">${display}</span>`;
+    const tooltip = {...meta, comparisons:[{label:'Зміна', relative:display === '—' ? 'Немає бази для порівняння' : display}]};
+    return `<button type="button" class="bo-catalog-delta ${tone}" data-catalog-tip="${esc(JSON.stringify(tooltip))}" aria-label="${esc(meta.title + ' · Зміна ' + display)}">${display}</button>`;
   };
-  const comparison = source?.comparisonRange
-    ? `${source.compareMode.toUpperCase()} · ${rangeLabel(source.trafficRange)} → ${rangeLabel(source.comparisonRange)}`
-    : '';
+  const previousLabel = {wow:'Попередній тиждень', mom:'Попередній місяць', yoy:'Ті самі дати торік'}[source?.compareMode] || 'Попередній період';
   const body = `<table class="bo-catalog-table"><thead><tr>
     <th scope="col"><span class="sr">Сегмент</span></th><th scope="col" title="Кількість товарів із залишком від 1">У наявності</th>
     <th scope="col" title="Покази товарів">Impressions</th><th scope="col" title="Перегляди карток / покази товарів">CTR</th>
     <th scope="col" title="Середній Content Score">CS</th>
   </tr></thead><tbody>${labels.map(label => {
     const segment = source?.segments?.find(item => item.label === label);
-    const movement = segment?.stockMovement;
-    const stockTip = movement
-      ? `На ${day(source.stockStart)}: ${number(segment.stockBase)}. На ${day(source.stockDate)}: ${number(segment.inStock)}. +${number(movement.gained)} з’явилися, −${number(movement.lost)} вибули.`
+    if (!segment) return `<tr><th scope="row">${label}</th><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+    const movement = segment.stockMovement;
+    const daily = (date, value, precision) => Number.isFinite(value)
+      ? `До ${day(date)}: ${signed(value, precision)}.` : '';
+    const stockNote = movement ? `+${number(movement.gained)} товарів з’явилися, −${number(movement.lost)} вибули.`
       : 'Немає знімка на початок місяця.';
-    const stockDaily = Number.isFinite(segment?.stockDaily)
-      ? ` До ${day(source.stockPriorDay)}: ${signed(segment.stockDaily,0)}.` : '';
-    const scoreTip = Number.isFinite(segment?.scoreBase)
-      ? `На ${day(source.scoreStart)}: ${decimal.format(segment.scoreBase)}. На ${day(source.scoreDate)}: ${decimal.format(segment.score)}.`
-      : 'Немає CS на початок місяця.';
-    const scoreDaily = Number.isFinite(segment?.scoreDaily)
-      ? ` До ${day(source.scorePriorDay)}: ${signed(segment.scoreDaily,2)}.` : '';
+    const snapshot = (metric, from, to, before, now, note) => ({
+      title:`${label} · ${metric}`, note,
+      rows:[
+        {label:'Було на початок місяця', dates:day(from), value:before},
+        {label:'Станом на', dates:day(to), value:now},
+      ],
+    });
+    const traffic = (metric, before, now, note) => ({
+      title:`${label} · ${metric}`, note,
+      rows:[
+        {label:previousLabel, dates:source.comparisonRange && rangeLabel(source.comparisonRange), value:before},
+        {label:'Вибраний період', dates:source.trafficRange && rangeLabel(source.trafficRange), value:now},
+      ],
+    });
     return `<tr><th scope="row">${label}</th>
-      <td>${number(segment?.stockBase ?? segment?.inStock)}${segment ? delta(movement?.net,stockTip + stockDaily,'',0) : ''}</td>
-      <td>${number(segment?.impressions)}${segment ? delta(segment.impressionsChange,comparison + ` · База: ${number(segment.priorImpressions)}`,'%') : ''}</td>
-      <td>${percent(segment?.ctr)}${segment ? delta(segment.ctrChange,comparison + ` · База: ${percent(segment.priorCtr)}`,' в.п.') : ''}</td>
-      <td>${Number.isFinite(segment?.scoreBase ?? segment?.score) ? decimal.format(segment.scoreBase ?? segment.score) : '—'}${segment ? delta(segment.scoreChange,scoreTip + scoreDaily) : ''}</td></tr>`;
+      <td>${number(segment.stockBase ?? segment.inStock)}${delta(movement?.net, snapshot('У наявності', source.stockStart, source.stockDate,
+        number(segment.stockBase), number(segment.inStock), [stockNote, daily(source.stockPriorDay, segment.stockDaily, 0)].filter(Boolean).join(' ')), '', 0)}</td>
+      <td>${number(segment.impressions)}${delta(segment.impressionsChange,
+        traffic('Покази товарів', number(segment.priorImpressions), number(segment.impressions)), '%')}</td>
+      <td>${percent(segment.ctr)}${delta(segment.ctrChange,
+        traffic('CTR', percent(segment.priorCtr), percent(segment.ctr), 'CTR — частка переглядів карток товарів від усіх показів.'), ' в.п.')}</td>
+      <td>${score(segment.scoreBase ?? segment.score)}${delta(segment.scoreChange, snapshot('Content Score', source.scoreStart, source.scoreDate,
+        score(segment.scoreBase), score(segment.score), daily(source.scorePriorDay, segment.scoreDaily, 2)))}</td></tr>`;
   }).join('')}</tbody></table>
+  <div class="bo-quarter-tooltip bo-funnel-tooltip" id="catalog-hover-tooltip" role="tooltip" hidden></div>
   ${!source ? '<p class="bo-catalog-period" role="status">Завантажуємо показники…</p>' : !source.available ? '<p class="bo-catalog-period">Дані сегментів тимчасово недоступні.</p>' : ''}`;
   return card('catalog','Здоров’я каталогу','',body,'','bo-catalog');
 }
@@ -545,7 +558,7 @@ function readyToShipMarkup(snapshot) {
   const tooltip = ['Усі канали · ERP', formatted && 'Станом на ' + formatted,
     number(snapshot.docs) + ' замовлень'].filter(Boolean).join(' · ');
   const sign = snapshot.revenue > 0 ? '+' : '';
-  return `<span class="bo-ready-to-ship" title="${esc(tooltip)}"><span>Транзит</span><b>${sign}${money(snapshot.revenue)}</b></span>`;
+  return `<span class="bo-kpi-subvalue bo-ready-to-ship" title="${esc(tooltip)}"><span>Транзит</span><b>${sign}${money(snapshot.revenue)}</b></span>`;
 }
 export function renderBusinessOverview(data, state, chartHTML) {
   const model = overviewModel(data, state),
@@ -553,7 +566,7 @@ export function renderBusinessOverview(data, state, chartHTML) {
   const metric =
     model.metrics.find((metric) => metric.key === state.chartMetric) || revenue;
   const graphPeriod = { from: state.from, to: state.to };
-  const history = data.scopeNotice ? {range:graphPeriod} : data.comparisonRange ? selectedHistory(data.history,model.sales,graphPeriod,data.comparisonRange) : data.history;
+  const history = data.scopeNotice ? {range:graphPeriod} : data.comparisonRange ? selectedHistory(data.history,model.sales,graphPeriod,data.comparisonRange,data.margin) : data.history;
   const miniOptions = {
     range: graphPeriod,
     interval: miniInterval(graphPeriod),
@@ -566,7 +579,15 @@ export function renderBusinessOverview(data, state, chartHTML) {
   };
   const chartTotal = metric.value,
     chartPrior = metric.prior;
-  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${state.chartMetric === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${state.chartMetric === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${m.key === "revenue" ? readyToShipMarkup(data.readyToShip) : ""}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}${state.acquisition&&state.acquisition!=="all"?" · "+esc(state.acquisition):""}${state.device&&state.device!=="all"?" · "+esc(state.device):""}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
+  const subvalue = key => {
+    if (key === 'revenue') return readyToShipMarkup(data.readyToShip);
+    if (key !== 'margin') return '';
+    const {coveredDocs, docs, percent: marginPercent} = data.margin;
+    const hint = Number.isFinite(coveredDocs)
+      ? `Оцінка ERP · ${number(coveredDocs)} з ${number(docs)} відвантажених замовлень мають маржу` : '';
+    return `<span class="bo-kpi-subvalue" title="${esc(hint)}"><span>Маржа, %</span><b>${percent(marginPercent)}</b></span>`;
+  };
+  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${metric.key === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${metric.key === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${subvalue(m.key)}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}${state.acquisition&&state.acquisition!=="all"?" · "+esc(state.acquisition):""}${state.device&&state.device!=="all"?" · "+esc(state.device):""}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
     ["day", "Дні"],
     ["week", "Тижні"],
   ]

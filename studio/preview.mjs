@@ -52,6 +52,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/health") return json(200, { status: "ok", service: "studio-local-preview", source });
   if (url.pathname === "/api/capabilities") return json(200, { available: true, privateOverview: false });
   if (['/api/overview', '/api/catalog-health'].includes(url.pathname)) {
+    if (!/^(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(req.headers.host || '')) return json(403, {available:false});
     if(!overviewSource)return json(503,{available:false,notice:'Для зв’язку ERP та GA4 не налаштовано джерело локального перегляду.'});
     try {const value=await overviewSource.read(Object.fromEntries(url.searchParams), url.pathname.slice(5));return json(value.available?200:503,value);}
     catch{return json(400,{available:false,notice:'Некоректний період або поєднання фільтрів.'});}

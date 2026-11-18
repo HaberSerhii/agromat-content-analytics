@@ -79,7 +79,28 @@ function salesBreakdown(records, range, lastYear, matches, pastMatches) {
   return {range, lastYear, previousAvailable: Boolean(pastMatches), pairs:[...pairs.values()]};
 }
 
-export function buildOverviewAttribution({rows,transactions,previousYearTransactions,webRows,rozetkaIds,updatedAt},input) {
+function orderMargin(records, range) {
+  const byDate = new Map();
+  let amount = 0, coveredRevenue = 0, coveredDocs = 0, docs = 0;
+  for (const {row} of records) {
+    if (!inRange(row.shippedDate, range) || !shipped(row) || excluded(row)) continue;
+    docs++;
+    const day = byDate.get(row.shippedDate) || {date:row.shippedDate, amount:null, coveredRevenue:0};
+    byDate.set(day.date, day);
+    if (!Number.isFinite(row.margin)) continue;
+    const net = row.docsSum - row.returnSum;
+    const profit = net * row.margin / 100;
+    day.amount = (day.amount ?? 0) + profit;
+    day.coveredRevenue += net;
+    amount += profit;
+    coveredRevenue += net;
+    coveredDocs++;
+  }
+  return {amount:coveredDocs ? amount : null, percent:coveredRevenue > 0 ? amount / coveredRevenue * 100 : null,
+    coveredDocs, docs, byDate:[...byDate.values()]};
+}
+
+export function buildOverviewAttribution({rows,transactions,previousYearTransactions,webRows,rozetkaIds,updatedAt},input,{includeMargin = false} = {}) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const rozetka=new Set(rozetkaIds),index=transactionIndex(transactions);
   const seen=new Set(),records=[];
@@ -106,6 +127,11 @@ export function buildOverviewAttribution({rows,transactions,previousYearTransact
   const pastMatches = previousYearTransactions === null ? null : ({row, channel, match}) =>
     matches(pastIndex ? (channel === 'site' ? pastIndex.get(String(row.webshopId)) : null) : match);
   const breakdown = salesBreakdown(scopedRecords, range, lastYear, matches, pastMatches);
+  const preview = {};
+  if (includeMargin) {
+    const selected = scopedRecords.filter(record => matches(record.match));
+    preview.margin = {...orderMargin(selected, range), previous:orderMargin(selected, baseline)};
+  }
   const coverage=period=>{
     const selected=records.filter(record=>record.channel==='site'&&shipped(record.row)&&inRange(record.row.shippedDate,period)&&!excluded(record.row));
     const count=test=>selected.filter(test).length;
@@ -130,5 +156,5 @@ export function buildOverviewAttribution({rows,transactions,previousYearTransact
   const trafficGroups=[{id:'direct',name:'Direct',color:'#533afd'},{id:'organic',name:'Organic',color:'#8d7afb'},{id:'cpc',name:'CPC',color:'#baaefa'},{id:'other',name:'Інше',color:'#d6d7df'}].filter(group=>state.acquisition==='all'||group.id===state.acquisition);
   const trafficBins=calendarBins(range,rangeDays(range)>90?'month':rangeDays(range)>31?'week':'day');
   const quarterTraffic={available:currentWeb.available,range,groups:trafficGroups,weeks:trafficBins.filter(bin=>get(bin.from+':'+bin.to,'all')?.data_through).map(bin=>{const key=bin.from+':'+bin.to,counts=Object.fromEntries(trafficGroups.map(group=>[group.id,Number(get(key,group.id)?.sessions||0)]));return {...bin,counts,total:trafficGroups.reduce((sum,group)=>sum+counts[group.id],0)};})};
-  return {available:true,range,comparisonRange:baseline,readyToShip,sales,salesChannels,breakdown,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
+  return {available:true,range,comparisonRange:baseline,readyToShip,sales,salesChannels,breakdown,...preview,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
 }

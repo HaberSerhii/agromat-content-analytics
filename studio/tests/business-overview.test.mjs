@@ -120,3 +120,31 @@ test('conversion falls back only to complete unthresholded daily GA4 data',()=>{
  assert.equal(overviewModel({...data,history:{web:{available:true,days,thresholded:true}}},query).metrics[4].value,null);
  assert.equal(overviewModel(data,{...query,to:'2026-11-02'}).metrics[4].value,null);
 });
+
+test('catalog changes expose both dated values in comparison tooltips', () => {
+  const catalogHealth = {
+    available: true,
+    compareMode: 'mom',
+    trafficRange: {from:'2026-11-01',to:'2026-11-15'},
+    comparisonRange: {from:'2026-10-01',to:'2026-10-15'},
+    stockStart:'2026-11-01', stockDate:'2026-11-16',
+    scoreStart:'2026-11-01', scoreDate:'2026-11-16',
+    segments:[{
+      label:'Плитка', stockBase:100,inStock:90,stockMovement:{net:-10,gained:2,lost:12},
+      priorImpressions:100,impressions:500,impressionsChange:400,priorCtr:12,ctr:14,ctrChange:2,
+      scoreBase:null,score:50,
+    }],
+  };
+  const html = renderBusinessOverview({catalogHealth}, state);
+  assert.match(html, /id="catalog-hover-tooltip" role="tooltip" hidden/);
+  const [stock, impressions, ctr, score] = [...html.matchAll(/data-catalog-tip="([^"]+)"/g)]
+    .map(([, meta]) => JSON.parse(meta.replaceAll('&quot;', '"')));
+  assert.deepEqual(impressions.rows.map(({dates,value}) => [dates,value]), [
+    ['01.10.2026 — 15.10.2026','100'], ['01.11.2026 — 15.11.2026','500'],
+  ]);
+  assert.deepEqual(ctr.rows.map(row => row.value), ['12%','14%']);
+  assert.equal(ctr.comparisons[0].relative, '+2 в.п.');
+  assert.deepEqual(stock.rows.map(({dates,value}) => [dates,value]), [['01.11.2026','100'], ['16.11.2026','90']]);
+  assert.deepEqual(score.rows.map(row => row.value), ['—','50']);
+  assert.match(score.comparisons[0].relative, /Немає бази/);
+});
