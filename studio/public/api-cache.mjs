@@ -6,6 +6,8 @@ const MAX_BYTES = 8 * 1024 * 1024;
 
 export function apiParams(kind, state, extra = {}) {
   const values = { ...state, yoy: state.yoy ? "1" : "0", ...extra };
+  if (kind === 'catalog-health') return new URLSearchParams();
+  if(kind==='overview')return new URLSearchParams({schema:'linked3',...Object.fromEntries(['from','to','compareMode','salesScope','acquisition','device'].map(key=>[key,values[key]]))});
   if(kind==='site-funnel')return new URLSearchParams({mode:values.mode||'week'});
   if(kind==='capabilities')return new URLSearchParams();
   if(kind==='price-index')return new URLSearchParams({schema:'price1'});
@@ -96,6 +98,7 @@ export function createApiCache({ fetcher = (...args) => fetch(...args), storage 
     if (!response.ok || !value.available) return {
       available: false, notice: value.notice || "Не вдалося завантажити джерело.",
     };
+    if(value.partial)return value;
     const text = JSON.stringify(value);
     const entry = { value, expires: now() + ttl, bytes: new TextEncoder().encode(text).byteLength };
     remember(url, entry);

@@ -14,6 +14,39 @@ mkdir -p "$ROOT/releases/$REVISION" /var/www/agromat-studio-acme
 chmod 755 "$ROOT" "$ROOT/releases" "$ROOT/releases/$REVISION" /var/www/agromat-studio-acme
 tar -xzf "$ARCHIVE" -C "$ROOT/releases/$REVISION"
 node --test "$ROOT/releases/$REVISION/studio/tests/"*.test.mjs
+# Preserve the active Studio configuration until both new sources respond.
+BACKUP=$(mktemp -d "$ROOT/.deploy-backup.XXXXXX")
+OLD_CURRENT=$(readlink "$ROOT/current" || true)
+for file in "$ROOT/runtime.env" /etc/systemd/system/agromat-studio.service /etc/systemd/system/agromat-studio-source.{service,socket}; do
+  if [[ -f "$file" ]]; then cp -p "$file" "$BACKUP/"; fi
+done
+SOURCE_WAS_ACTIVE=$(systemctl is-active agromat-studio-source.socket || true)
+WEB_SWITCHED=0
+rollback() {
+  local status=$?
+  trap - EXIT
+  if (( status != 0 )); then
+    echo "Studio deployment failed, restoring previous configuration" >&2
+    systemctl stop agromat-studio-source.socket agromat-studio-source.service || true
+    if [[ "$SOURCE_WAS_ACTIVE" != active ]]; then
+      systemctl disable agromat-studio-source.socket || true
+    fi
+    for file in "$ROOT/runtime.env" /etc/systemd/system/agromat-studio.service /etc/systemd/system/agromat-studio-source.{service,socket}; do
+      if [[ -f "$BACKUP/${file##*/}" ]]; then
+        cp -p "$BACKUP/${file##*/}" "$file"
+      else
+        rm -f "$file"
+      fi
+    done
+    if [[ -n "$OLD_CURRENT" ]]; then ln -sfn "$OLD_CURRENT" "$ROOT/current"; fi
+    systemctl daemon-reload
+    if [[ "$SOURCE_WAS_ACTIVE" == active ]]; then systemctl start agromat-studio-source.socket; fi
+    if (( WEB_SWITCHED )); then systemctl restart agromat-studio.service; fi
+  fi
+  rm -rf "$BACKUP"
+  exit "$status"
+}
+trap rollback EXIT
 # Copy only the existing private nginx-to-app header; no AWS/Google credentials
 # or old application runtime files are exported or changed.
 python3 - "$ROOT/runtime.env" "$REVISION" <<'PY'
@@ -30,7 +63,7 @@ shutil.copyfile('/var/lib/agromat-analytics/credentials/ga4-bigquery.json',crede
 shutil.chown(credentials,user='root',group='www-data')
 os.chmod(credentials,0o640)
 with path.open('a') as output:
- output.write('GOOGLE_APPLICATION_CREDENTIALS=/opt/agromat-studio/google-credentials.json\nBIGQUERY_PROJECT_ID=maximal-furnace-385413\nBIGQUERY_DATASET_ID=analytics_321347682\nSTUDIO_BQ_CACHE_DIR=/opt/agromat-studio/bigquery-cache\n')
+ output.write('GOOGLE_APPLICATION_CREDENTIALS=/opt/agromat-studio/google-credentials.json\nBIGQUERY_PROJECT_ID=maximal-furnace-385413\nBIGQUERY_DATASET_ID=analytics_321347682\nSTUDIO_BQ_CACHE_DIR=/opt/agromat-studio/bigquery-cache\nSTUDIO_SOURCE_SOCKET=/run/agromat-studio-source.sock\n')
 for env_name in ['.env.local', '.env']:
  env_file=pathlib.Path('/opt/agromat-content-analytics')/env_name
  if env_file.exists():
@@ -45,6 +78,61 @@ chown www-data:www-data "$ROOT/bigquery-cache"
 chmod 700 "$ROOT/bigquery-cache"
 NODE_BIN=$(node -p 'process.execPath')
 [[ "$NODE_BIN" != /root/* ]] || { echo 'Studio requires a system Node installation'; exit 1; }
+cat > /etc/systemd/system/agromat-studio-source.socket <<'UNIT'
+[Unit]
+Description=Private Studio aggregate socket
+[Socket]
+ListenStream=/run/agromat-studio-source.sock
+SocketUser=root
+SocketGroup=www-data
+SocketMode=0660
+RemoveOnStop=yes
+[Install]
+WantedBy=sockets.target
+UNIT
+cat > /etc/systemd/system/agromat-studio-source.service <<UNIT
+[Unit]
+Description=Read-only Studio aggregate worker
+After=network.target
+[Service]
+Type=simple
+WorkingDirectory=$ROOT/releases/$REVISION/studio
+EnvironmentFile=$ROOT/runtime.env
+ExecStart=$NODE_BIN --max-old-space-size=288 $ROOT/releases/$REVISION/studio/production-source.mjs
+MemoryMax=384M
+Nice=10
+UMask=0077
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+UNIT
+systemctl stop agromat-studio-source.socket agromat-studio-source.service 2>/dev/null || true
+systemctl daemon-reload
+systemctl enable --now agromat-studio-source.socket
+QUERY=$(cd "$ROOT/releases/$REVISION/studio" && "$NODE_BIN" --input-type=module -e '
+  import {overviewDefaults} from "./public/overview-filters.mjs";
+  const today = new Date().toLocaleDateString("sv-SE", {timeZone:"Europe/Kyiv"});
+  console.log(new URLSearchParams(overviewDefaults(today)).toString());
+')
+runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock "http://localhost/overview?$QUERY" > "$BACKUP/overview.json"
+runuser -u www-data -- curl -fsS --max-time 80 --unix-socket /run/agromat-studio-source.sock http://localhost/catalog-health > "$BACKUP/catalog.json"
+python3 - "$BACKUP" <<'PY_CHECK'
+import json, pathlib, sys
+directory = pathlib.Path(sys.argv[1])
+overview = json.loads((directory / 'overview.json').read_text())
+catalog = json.loads((directory / 'catalog.json').read_text())
+assert overview['available'] and not overview.get('partial'), 'Overview source incomplete'
+assert overview['sales']['available'] and overview['siteFunnel']['available'], 'ERP or funnel unavailable'
+assert catalog['available'] and len(catalog['segments']) == 4 and not catalog.get('partial'), 'Catalog source incomplete'
+print('Studio ERP, GA4 and all four catalog segments verified')
+PY_CHECK
+WEB_SWITCHED=1
 ln -sfn "$ROOT/releases/$REVISION/studio" "$ROOT/current"
 cat > /etc/systemd/system/agromat-studio.service <<UNIT
 [Unit]
@@ -77,6 +165,8 @@ python3 - "$ROOT/health.json" "$REVISION" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['revision']==sys.argv[2]
 PY
+curl -fsS --max-time 125 "http://127.0.0.1:3107/api/overview?$QUERY" > /dev/null
+curl -fsS --max-time 80 http://127.0.0.1:3107/api/catalog-health > /dev/null
 if [[ ! -f /etc/letsencrypt/live/agromat-studio/fullchain.pem ]]; then
 cat > /etc/nginx/sites-available/agromat-studio <<'NGINX'
 server {

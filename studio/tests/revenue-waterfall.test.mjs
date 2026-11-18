@@ -22,7 +22,7 @@ const previous = {
   monomarket: sales(340000),
   traffic: { available: true, rows: [{ sessions: 1000, purchases: 140 }] },
 };
-test("waterfall reconciles exactly to ERP with an explicit cross-system adjustment", () => {
+test("waterfall uses a single ERP identity without a cross-system adjustment", () => {
   const report = revenueWaterfall(
     current,
     previous,
@@ -43,16 +43,13 @@ test("waterfall reconciles exactly to ERP with an explicit cross-system adjustme
     ...current,
     traffic: { available: true, rows: [{ sessions: 2000, purchases: 200 }] },
   };
-  assert.ok(
-    revenueWaterfall(changed, previous, {}, {}).steps.some(
-      (step) => step.key === "reconcile",
-    ),
-  );
+  assert.deepEqual(revenueWaterfall(changed, previous, {}, {}).steps, report.steps);
+  assert.ok(!report.steps.some(step=>step.key==='reconcile'));
 });
 test("invalid or missing baselines are explicit rather than fabricated", () => {
   assert.equal(
     revenueWaterfall(
-      { ...current, traffic: { available: false } },
+      { ...current, site: { available: false } },
       previous,
       {},
       {},
@@ -67,4 +64,29 @@ test("invalid or missing baselines are explicit rather than fabricated", () => {
     waterfallComparison({ from: "2026-11-01", to: "2026-11-15" }, "month"),
     { from: "2026-10-01", to: "2026-10-15" },
   );
+});
+
+
+import { overviewRevenueWaterfall } from '../public/revenue-drivers.mjs';
+function overviewFixture(){
+ return {sales:{...current.all,previous:previous.all},salesChannels:Object.fromEntries(['site','rozetka','monomarket'].map(id=>[id,{...current[id],previous:previous[id]}])),history:{web:{available:true,days:[{date:'2026-11-15',sessions:1100,purchases:150},{date:'2025-11-15',sessions:1000,purchases:140},{date:'2026-10-15',sessions:1000,purchases:140}]}}};
+}
+test('overview driver chart reuses ERP aggregates and does not depend on GA4 attribution rates',()=>{
+ const range={from:'2026-11-15',to:'2026-11-15'},data=overviewFixture();
+ const report=overviewRevenueWaterfall(data,range);
+ assert.equal(report.available,true);assert.equal(report.start,3590000);assert.equal(report.end,4040000);
+ assert.ok(Math.abs(report.start+report.steps.reduce((sum,step)=>sum+step.value,0)-report.end)<.01);
+ assert.equal(overviewRevenueWaterfall({...data,history:{web:{...data.history.web,thresholded:true}}},range).available,true);
+ assert.equal(overviewRevenueWaterfall({...data,history:{web:{available:true,days:data.history.web.days.slice(0,1)}}},range).available,true);
+ assert.equal(overviewRevenueWaterfall({...data,salesChannels:{}},range),null);
+});
+test('previous-month drivers accept only the exact requested ERP baseline and preserve missing source data',()=>{
+ const range={from:'2026-11-15',to:'2026-11-15'},data=overviewFixture();
+ assert.equal(overviewRevenueWaterfall(data,range,'month'),null);
+ data.waterfallBaseline={range:{from:'2026-10-15',to:'2026-10-15'},...previous};
+ assert.equal(overviewRevenueWaterfall(data,range,'month').available,true);
+ data.waterfallBaseline.range.to='2026-10-14';
+ assert.equal(overviewRevenueWaterfall(data,range,'month'),null);
+ data.waterfallBaseline.range.to='2026-10-15';data.waterfallBaseline.site={available:false};
+ assert.equal(overviewRevenueWaterfall(data,range,'month').available,false);
 });

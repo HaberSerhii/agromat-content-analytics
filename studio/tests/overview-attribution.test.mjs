@@ -1,0 +1,133 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {buildOverviewAttribution,transactionIndex,validateSelection} from '../overview-attribution.mjs';
+import {comparisonRange,comparisonAvailability,validComparison,scopedSales,overviewDefaults} from '../public/overview-filters.mjs';
+import {overviewRevenueWaterfall} from '../public/revenue-drivers.mjs';
+import {periodChannelRows,overviewModel,renderBusinessOverview} from '../public/business-overview.mjs';
+import {overviewWebQuery,overviewTransactionsQuery,readBoundedTransactions,readBoundedWeb} from '../overview-query.mjs';
+import {apiParams} from '../public/api-cache.mjs';
+import {historySeries} from '../public/weekly-charts.mjs';
+
+const selection={from:'2026-11-11',to:'2026-11-17',compareMode:'wow',salesScope:'all',acquisition:'all',device:'all',yoy:true,chartChannel:'all',chartSegment:'Усі'};
+const item=(revenue,code='1',category='Плитка',brand='A')=>({code,name:'Товар',category,brand,qty:1,revenue});
+const order=(id,revenue,extra={})=>({docsRef:'erp-'+id,number:String(id),webshopId:String(id),state:'повністю відвантажено',createdDate:'2026-10-31',shippedDate:'2026-11-12',cartNumber:'',cancelReason:'',docsSum:revenue,returnSum:0,goodsCount:1,items:[item(revenue)],returnGoodsCodes:[],returnRowSums:[],...extra});
+const fixture=()=>({rows:[order(101,100),order(102,200),order(103,300,{webshopId:''}),order(500,400),order(600,500,{cartNumber:'cart-600'}),order(201,80,{shippedDate:'2026-11-05'}),order(202,120,{shippedDate:'2026-11-05'}),order(501,300,{shippedDate:'2026-11-05'}),order(601,400,{shippedDate:'2026-11-05',cartNumber:'cart-601'})],transactions:[{transactionId:'101',acquisition:'direct',device:'mobile'},{transactionId:'102',acquisition:'organic',device:'desktop'},{transactionId:'201',acquisition:'direct',device:'mobile'},{transactionId:'202',acquisition:'organic',device:'desktop'},{transactionId:'600',acquisition:'direct',device:'mobile'}],rozetkaIds:['500','501'],webRows:[],updatedAt:'2026-11-18T03:00:00Z'});
+
+test('one shipment scope drives totals, channel chart, categories, brands and revenue drivers',()=>{
+  const result=buildOverviewAttribution(fixture(),selection);
+  assert.equal(result.sales.metrics.shippedRevenue,1500);
+  // Creation date is outside the selected period: category/brand still use shipment date.
+  assert.equal(result.sales.categories.reduce((sum,row)=>sum+row.revenue,0),1500);
+  assert.equal(result.sales.brands.reduce((sum,row)=>sum+row.revenue,0),1500);
+  assert.equal(periodChannelRows(result,selection).rows.reduce((sum,row)=>sum+row.total,0),1500);
+  const drivers=overviewRevenueWaterfall(result,selection,'wow');
+  assert.equal(drivers.start+drivers.steps.reduce((sum,step)=>sum+step.value,0),drivers.end);
+  assert.ok(!drivers.steps.some(step=>step.key==='reconcile'));
+  const filteredState={...selection,salesScope:'site',acquisition:'direct',device:'mobile'};
+  const filtered=buildOverviewAttribution(fixture(),filteredState);
+  filtered.chartSales=scopedSales(filtered.sales,filtered.salesChannels,filteredState.salesScope);
+  assert.equal(overviewModel(filtered,filteredState).metrics[0].value,100);
+  assert.equal(filtered.sales.metrics.shippedDocs,1);
+  assert.equal(filtered.sales.categories[0].revenue,100);
+  assert.equal(filtered.sales.brands[0].revenue,100);
+  assert.equal(periodChannelRows(filtered,filteredState).rows.reduce((sum,row)=>sum+row.total,0),100);
+  const html=renderBusinessOverview(filtered,filteredState);
+  assert.match(html,/Бренди/);assert.doesNotMatch(html,/Різниця в обліку/);
+  assert.equal(filtered.attribution.current.matchedDocs,2);
+  assert.equal(filtered.attribution.current.docs,3);
+  assert.doesNotMatch(JSON.stringify(filtered),/"(?:transactionId|webshopId|docsRef|user_pseudo_id|seller|number)"\s*:/);
+});
+
+test('MoM daily comparison does not count the last day of February four times',()=>{
+ const days=(month,length)=>Array.from({length},(_,index)=>({date:`2026-${month}-${String(index+1).padStart(2,'0')}`,revenue:1,docs:1}));
+ const range={from:'2026-03-01',to:'2026-03-31'};
+ const rows=historySeries({range,sales:[{available:true,coverageFrom:'2026-02-01',days:[...days('02',28),...days('03',31)]}]},'revenue',{range,interval:'day',comparisonMode:'mom'});
+ assert.equal(rows.reduce((sum,row)=>sum+(row.previous||0),0),28);
+ assert.equal(rows.filter(row=>row.previous!=null).length,28);
+ assert.deepEqual(rows.slice(-3).map(row=>row.previous),[null,null,null]);
+});
+
+test('weekly conversion uses exact period sessions, including a session crossing midnight',()=>{
+ const range={from:'2026-11-11',to:'2026-11-12'};
+ const history={range,web:{available:true,days:[{date:range.from,sessions:1,purchases:0},{date:range.to,sessions:1,purchases:1}],periods:[{key:range.from+':'+range.to,sessions:1,purchases:1}]}};
+ assert.equal(historySeries(history,'conversion',{range,interval:'week'})[0].value,100);
+});
+
+test('exact IDs, duplicates, missing IDs and conflicting GA4 attributes never fabricate attribution',()=>{
+  const source=fixture();
+  source.transactions.push(source.transactions[0]);
+  source.transactions.push({transactionId:'101',acquisition:'direct',device:'desktop'});
+  const index=transactionIndex(source.transactions);
+  assert.equal(index.get('101').acquisition,'direct');assert.equal(index.get('101').device,null);
+  const filtered=buildOverviewAttribution(source,{...selection,salesScope:'site',acquisition:'direct',device:'mobile'});
+  assert.equal(filtered.sales.metrics.shippedRevenue,0);
+  assert.equal(filtered.attribution.current.ambiguousDocs,1);
+  assert.equal(filtered.attribution.current.missingIdDocs,1);
+  const all=buildOverviewAttribution(source,selection);
+  assert.equal(all.sales.metrics.shippedRevenue,1500);
+  source.rows.push(source.rows[0]);
+  assert.throws(()=>buildOverviewAttribution(source,selection),/duplicate_erp_document/);
+});
+
+test('goods and returns reconcile to ERP without service revenue in category or brand totals',()=>{
+  const source=fixture();
+  source.rows=[order(101,350,{items:[item(100),item(200,'2','Сантехніка','B'),{...item(50,'18385'),name:'Транспортні послуги'}],goodsCount:3,returnSum:20,returnGoodsCodes:['2'],returnRowSums:[20]})];
+  const result=buildOverviewAttribution(source,selection);
+  assert.equal(result.sales.metrics.shippedRevenue,280);
+  assert.equal(result.sales.categories.reduce((sum,row)=>sum+row.revenue,0),280);
+  assert.equal(result.sales.brands.reduce((sum,row)=>sum+row.revenue,0),280);
+});
+
+test('marketplace traffic is unavailable rather than website data or a fabricated zero',()=>{
+  const result=buildOverviewAttribution(fixture(),{...selection,salesScope:'marketplaces'});
+  assert.equal(scopedSales(result.sales,result.salesChannels,'marketplaces').metrics.shippedRevenue,900);
+  assert.equal(result.users.available,false);assert.equal(result.siteFunnel.available,false);
+  assert.equal(result.history.users.periods.length,0);
+  assert.throws(()=>validateSelection({...selection,salesScope:'marketplaces',device:'mobile'}),/marketplace_web_filter/);
+});
+
+test('comparison constraints use seven days, calendar month length and exact prior-year dates',()=>{
+  assert.deepEqual(overviewDefaults('2026-01-03'),{from:'2025-12-27',to:'2026-01-02',compareMode:'wow',salesScope:'all',acquisition:'all',device:'all'});
+  assert.deepEqual(comparisonRange({from:'2026-11-13',to:'2026-11-15'},'wow'),{from:'2026-11-06',to:'2026-11-08'});
+  assert.equal(comparisonAvailability({from:'2026-11-01',to:'2026-11-08'}).wow,false);
+  assert.equal(validComparison({from:'2026-11-01',to:'2026-11-08'},'wow'),'mom');
+  assert.equal(comparisonAvailability({from:'2026-11-01',to:'2026-12-01'}).mom,false);
+  assert.deepEqual(comparisonRange({from:'2026-03-01',to:'2026-03-31'},'mom'),{from:'2026-02-01',to:'2026-02-28'});
+  assert.deepEqual(comparisonRange({from:'2024-02-29',to:'2024-03-03'},'yoy'),{from:'2023-02-28',to:'2023-03-03'});
+});
+
+test('scope participates in cache keys and BigQuery only receives validated parameters',()=>{
+  const first=apiParams('overview',selection),second=apiParams('overview',{...selection,device:'mobile'});
+  assert.notEqual(first.toString(),second.toString());
+  assert.equal(second.get('device'),'mobile');
+  const query=overviewWebQuery('project','dataset',selection,comparisonRange(selection,'wow'));
+  assert.equal(query.params.country,'Ukraine');assert.ok(query.query.includes('COUNT(DISTINCT IF(is_ukraine, user_pseudo_id, NULL))'));
+  const tx=overviewTransactionsQuery('project','dataset',[selection],['101']);
+  assert.deepEqual(tx.params.ids,['101']);assert.ok(!tx.query.includes("'101'"));
+  assert.throws(()=>overviewWebQuery('project` UNION SELECT','dataset',selection,selection),/invalid_dataset/);
+  assert.throws(()=>validateSelection({...selection,device:'tablet'}),/invalid_filter/);
+});
+
+test('complete linked data renders the funnel, charts and both maps together',()=>{
+  const source=fixture();
+  source.webRows=[{key:'current',acquisition:'all',device:'all',users:100,sessions:120,purchases:4,landing:90,view_item:60,cart:12,begin_checkout:6,purchase:7,data_from:'2026-11-11',data_through:'2026-11-17'},{key:'previous',acquisition:'all',device:'all',users:90,sessions:110,purchases:3,view_item:50,cart:10,begin_checkout:5,purchase:3,data_from:'2026-11-04',data_through:'2026-11-10'}];
+  const data=buildOverviewAttribution(source,selection);data.chartSales=data.sales;
+  assert.equal(data.siteFunnel.current.stages.find(stage=>stage.key==='landing').value,90);
+  assert.equal(data.siteFunnel.current.stages.find(stage=>stage.key==='purchase').value,7);
+  assert.equal(data.channels.purchases,4);
+  const html=renderBusinessOverview(data,selection);
+  assert.match(html,/11\.11\.2026 — 17\.11\.2026/);
+  assert.match(html,/04\.11\.2026 — 10\.11\.2026/);
+  assert.doesNotMatch(html,/Різниця в обліку|data-funnel-mode|data-category-period|data-waterfall-mode/);
+});
+
+test('large transaction lookups partition dates while user counts retain whole-period distinctness',async()=>{
+  const limit=()=>Object.assign(new Error('limit'),{errors:[{reason:'bytesBilledLimitExceeded'}]});
+  const calls=[];
+  const tx=await readBoundedTransactions(async query=>{calls.push(query.params);if(query.params.from1)throw limit();return [{transactionId:'101',acquisition:'direct',device:'mobile'}];},'project','dataset',[{from:'2026-11-01',to:'2026-11-17'},{from:'2025-11-01',to:'2025-11-17'}],['101']);
+  assert.equal(calls.length,3);assert.equal(tx.length,2);assert.equal(transactionIndex(tx).size,1);
+  let reads=0;
+  const web=await readBoundedWeb(async query=>{if(++reads===1)throw limit();assert.equal(query.params.currentFrom,query.params.previousFrom);return [{key:'current',users:10},{key:'previous',users:10}];},'project','dataset',{from:'2026-11-01',to:'2026-11-17'},{from:'2025-11-01',to:'2025-11-17'});
+  assert.deepEqual(web,[{key:'current',users:10},{key:'previous',users:10}]);
+  await assert.rejects(()=>readBoundedTransactions(async()=>{throw Error('unavailable');},'project','dataset',[selection],['101']),/unavailable/);
+});

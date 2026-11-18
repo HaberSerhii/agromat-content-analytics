@@ -4,6 +4,8 @@ import {readPriceIndex} from "./price-index.mjs";
 import {readTrafficQuarter} from "./traffic-quarter.mjs";
 import { readOverviewHistory } from "./overview-history.mjs";
 import { readUsers } from "./bigquery-users.mjs";
+import {readProductionSource} from './production-source-client.mjs';
+import {validateSelection} from './overview-attribution.mjs';
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -121,6 +123,8 @@ const statics = new Map([
   ["/api-cache.mjs", "api-cache.mjs"],
   ["/overview-cache.mjs", "overview-cache.mjs"],
   ["/business-overview.mjs", "business-overview.mjs"],
+  ["/revenue-drivers.mjs", "revenue-drivers.mjs"],
+  ["/overview-filters.mjs", "overview-filters.mjs"],
   ["/category-treemap.mjs", "category-treemap.mjs"],
   ["/site-funnel.mjs", "site-funnel.mjs"],
   ["/weekly-charts.mjs", "weekly-charts.mjs"],
@@ -196,6 +200,14 @@ export const server = http.createServer(async (req, res) => {
       }
       if (waiters.length >= 24) return json(503, { error: "busy" });
       const kind = url.pathname.slice(5);
+      if (kind === 'catalog-health') {
+        try { return json(200, await readProductionSource('catalog-health')); }
+        catch { return json(503, { available:false, notice:'Дані сегментів каталогу тимчасово недоступні.' }); }
+      }
+      if(kind==='overview') {
+        let selection;try{selection=validateSelection(Object.fromEntries(url.searchParams));}catch{return json(400,{available:false,error:'invalid_filter_or_range'});}
+        try{return json(200,await readProductionSource('overview', new URLSearchParams(selection)));}catch{return json(503,{available:false,notice:'Джерело зв’язку відвантажень ERP з GA4 тимчасово недоступне.'});}
+      }
       if(kind==='site-funnel'){
         const mode=url.searchParams.get('mode')||'week';
         if(!['week','month'].includes(mode))return json(400,{error:'invalid_mode'});

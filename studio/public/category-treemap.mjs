@@ -4,16 +4,16 @@ export function categoryPeriod(today, mode = "month") {
   return {from, to, empty: from > to};
 }
 /** Squarified layout: area is proportional to revenue, never to rank. */
-export function treemapLayout(items, width = 1000, height = 520) {
+export function treemapLayout(items, width = 1000, height = 520, measure = "revenue") {
   const sorted = items
-    .filter((item) => Number.isFinite(item.revenue) && item.revenue > 0)
+    .filter((item) => Number.isFinite(item[measure]) && item[measure] > 0)
     .map((item) => ({ ...item }))
-    .sort((a, b) => b.revenue - a.revenue);
-  const total = sorted.reduce((sum, item) => sum + item.revenue, 0);
+    .sort((a, b) => b[measure] - a[measure]);
+  const total = sorted.reduce((sum, item) => sum + item[measure], 0);
   if (!total) return [];
   const remaining = sorted.map((item) => ({
     ...item,
-    area: (item.revenue / total) * width * height,
+    area: (item[measure] / total) * width * height,
   }));
   const result = [];
   let rect = { x: 0, y: 0, w: width, h: height };
@@ -66,25 +66,37 @@ export function treemapLayout(items, width = 1000, height = 520) {
 }
 export function categoryTone(delta) {
   if (delta == null || !Number.isFinite(delta)) return "missing";
-  if (Math.abs(delta) <= 1) return "flat";
-  if (delta > 0) return delta >= 15 ? "growth-strong" : "growth";
-  return delta <= -15 ? "decline-strong" : "decline";
+  if (Math.abs(delta) < 2 - 1e-9) return "flat";
+  return delta > 0 ? "growth" : "decline";
 }
-export function categoryMosaic(current, previous, compare = true) {
+export function categoryColor(delta) {
+  if (delta == null || !Number.isFinite(delta)) return null;
+  const step = Math.floor((Math.abs(delta) + 1e-9) / 2);
+  if (!step) return { band: 0, background: "rgb(244,246,250)", foreground: "#0c253e" };
+  const pale = [244,246,250], end = delta > 0 ? [54,72,191] : [180,35,24];
+  const intensity = 1 - Math.exp(-step / 10);
+  const rgb = pale.map((value,index) => Math.round(value + (end[index] - value) * intensity));
+  const luminance = values => values.map(value => value / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4).reduce((sum,value,index) => sum + value * [.2126,.7152,.0722][index],0);
+  const lum = luminance(rgb), dark = luminance([12,37,62]);
+  const whiteContrast = 1.05 / (lum + .05), darkContrast = (lum + .05) / (dark + .05);
+  const foreground = whiteContrast >= 4.5 ? "#ffffff" : darkContrast >= 4.5 ? "#0c253e" : "#000000";
+  return { band: (delta > 0 ? 1 : -1) * step, background: `rgb(${rgb.join(",")})`, foreground };
+}
+export function categoryMosaic(current, previous, compare = true, {limit = 9, otherLabel = 'Інші категорії', width = 1000, height = 520, measure = 'revenue'} = {}) {
   const all = [...(current || [])]
-    .filter((row) => row.revenue > 0)
-    .sort((a, b) => b.revenue - a.revenue);
+    .filter((row) => row[measure] > 0)
+    .sort((a, b) => b[measure] - a[measure]);
   const baseline = previous
-    ? new Map(previous.map((row) => [row.label, row.revenue]))
+    ? new Map(previous.map((row) => [row.label, row[measure]]))
     : null;
   const rows = all
-    .slice(0, 9)
+    .slice(0, limit)
     .map((row) => ({ ...row, prior: baseline?.get(row.label) ?? null }));
-  if (all.length > 9) {
+  if (all.length > limit) {
     const top = new Set(rows.map((row) => row.label)),
-      rest = all.slice(9);
+      rest = all.slice(limit);
     rows.push({
-      label: "Інші категорії",
+      label: otherLabel,
       revenue: rest.reduce((sum, row) => sum + row.revenue, 0),
       docs: rest.reduce((sum, row) => sum + (row.docs || 0), 0),
       goods: rest.reduce((sum, row) => sum + (row.goods || 0), 0),
@@ -99,9 +111,9 @@ export function categoryMosaic(current, previous, compare = true) {
   return treemapLayout(
     rows.map((row) => {
       const delta =
-        compare && row.prior > 0 ? (row.revenue / row.prior - 1) * 100 : null;
-      return { ...row, delta, tone: categoryTone(delta) };
-    }),
+        compare && row.prior > 0 ? (row[measure] / row.prior - 1) * 100 : null;
+      return { ...row, delta, tone: categoryTone(delta), color: categoryColor(delta) };
+    }), width, height, measure,
   );
 }
 const esc = (value) =>
@@ -111,14 +123,14 @@ const esc = (value) =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 export function bindCategoryTooltips(root = document) {
-  const tooltip = root.querySelector("#category-mosaic-tooltip");
-  if (!tooltip) return;
   root.querySelectorAll("[data-category-meta]").forEach((tile) => {
+    const tooltip = tile.closest('.bo-card')?.querySelector('.bo-category-tooltip');
+    if (!tooltip) return;
     const data = JSON.parse(tile.dataset.categoryMeta);
     const show = (event) => {
       tile.classList.add("is-hovered");
       tile.setAttribute("aria-describedby", tooltip.id);
-      tooltip.innerHTML = `<div class="bo-category-tip-name">${esc(data.label)}</div><div class="bo-quarter-tip-row"><span>Виторг</span><b>${esc(data.formattedRevenue)}</b></div><div class="bo-quarter-tip-row"><span>До ${esc(data.baselineYear)}</span><b>${esc(data.formattedDelta)}</b></div>`;
+      tooltip.innerHTML = `<div class="bo-category-tip-name">${esc(data.label)}</div>${data.period?`<small>${esc(data.period)}</small>`:""}<div class="bo-quarter-tip-row"><span>${esc(data.measureLabel || "Виторг")}</span><b>${esc(data.formattedValue || data.formattedRevenue)}</b></div><div class="bo-quarter-tip-row"><span>До ${esc(data.baselineLabel || data.baselineYear)}</span><b>${esc(data.formattedDelta)}</b></div>`;
       tooltip.hidden = false;
       const box = tile.getBoundingClientRect(),
         x = event?.clientX ?? box.right,

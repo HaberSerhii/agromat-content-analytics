@@ -1,5 +1,7 @@
+import { overviewRevenueWaterfall } from "./revenue-drivers.mjs";
+import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs';
 import {renderSiteFunnel} from "./site-funnel.mjs?v=fastoverview2";
-import { categoryMosaic, categoryPeriod } from "./category-treemap.mjs?v=fastoverview2";
+import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=fastoverview2";
 import {
   graphRange,
   yearBefore,
@@ -43,7 +45,7 @@ const change = (now, prior) =>
 const colors = ["#533afd", "#8d7afb", "#baaefa", "#ddd6fc"];
 export const presetRange = graphRange;
 export function overviewModel(data, state) {
-  const sales = available(data.chartSales)
+  const sales = 'comparisonRange' in data ? (available(data.chartSales) ? data.chartSales : null) : available(data.chartSales)
     ? data.chartSales
     : state.chartChannel === "all" &&
         state.chartSegment === "Усі" &&
@@ -65,10 +67,11 @@ export function overviewModel(data, state) {
   };
   const channel = available(data.channels) ? data.channels : (()=>{
     const current=dailyTotals(state.from,state.to);
-    return current?{...current,previous:dailyTotals(yearBefore(state.from),yearBefore(state.to))}:null;
+    const prior=data.comparisonRange || {from:yearBefore(state.from),to:yearBefore(state.to)};
+    return current?{...current,previous:dailyTotals(prior.from,prior.to)}:null;
   })();
   const previousChannel =
-    state.yoy && available(channel?.previous) ? channel.previous : null;
+    state.yoy && available(channel?.previous) && channel.complete !== false && channel.previous.complete !== false ? channel.previous : null;
   const metric = (key, label, value, prior, format, hint, lower = false) => ({
     key,
     label,
@@ -106,10 +109,11 @@ export function overviewModel(data, state) {
     ),
     metric(
       "users",
-      "Користувачі · Україна",
+      "Трафік · Україна",
       data.users?.available ? data.users.users : null,
       state.yoy &&
         data.users?.previous?.available &&
+        data.users.complete !== false && data.users.previous.complete !== false &&
         data.users.previous.hasData
         ? data.users.previous.users
         : null,
@@ -121,15 +125,15 @@ export function overviewModel(data, state) {
       "Конверсія",
       channel
         ? ratio(
-            sum(channel.rows, "purchases"),
-            sum(channel.rows, "sessions"),
+            channel.purchases ?? sum(channel.rows, "purchases"),
+            channel.sessions ?? sum(channel.rows, "sessions"),
             100,
           )
         : null,
       previousChannel
         ? ratio(
-            sum(previousChannel.rows, "purchases"),
-            sum(previousChannel.rows, "sessions"),
+            previousChannel.purchases ?? sum(previousChannel.rows, "purchases"),
+            previousChannel.sessions ?? sum(previousChannel.rows, "sessions"),
             100,
           )
         : null,
@@ -165,8 +169,8 @@ export function overviewModel(data, state) {
   return {
     sales,
     metrics,
-    channels,
-    total: available(data.sales) ? data.sales.metrics?.shippedRevenue : null,
+    channels: channels.filter(channel => state.salesScope === 'site' ? channel.id === 'site' : state.salesScope === 'marketplaces' ? channel.id !== 'site' : true),
+    total: m.shippedRevenue ?? null,
   };
 }
 function badge(delta, lower = false) {
@@ -174,7 +178,7 @@ function badge(delta, lower = false) {
   return `<span class="bo-delta ${(lower ? delta <= 0 : delta >= 0) ? "positive" : "negative"}">${delta >= 0 ? "↗" : "↘"} ${percent(Math.abs(delta))}</span>`;
 }
 function card(id, title, sub, body, extra = "", cls = "") {
-  return `<section class="bo-card ${cls}" id="bo-${id}" tabindex="-1"><header><div><h2>${title}</h2><p>${sub}</p></div>${extra}</header>${body}</section>`;
+  return `<section class="bo-card ${cls}" id="bo-${id}" tabindex="-1"><header><div><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ""}</div>${extra}</header>${body}</section>`;
 }
 function empty(text) {
   return `<div class="bo-empty"><span>↗</span><p>${text}</p></div>`;
@@ -184,7 +188,8 @@ function channelPanel(model, state) {
     known = sum(valid, "value");
   const total = model.total;
   const residual = total != null ? total - known : 0;
-  const complete = valid.length === 3 && total > 0 && residual >= -0.01;
+  const expected = state.salesScope === 'site' ? 1 : state.salesScope === 'marketplaces' ? 2 : 3;
+  const complete = valid.length === expected && total > 0 && residual >= -0.01;
   const rows =
     complete && residual > 0.01
       ? [
@@ -197,22 +202,21 @@ function channelPanel(model, state) {
           },
         ]
       : valid;
-  rows.splice(2, 0, {id:"prom",name:"Prom",value:0,prior:null,color:colors[3]});
+  if (state.salesScope !== 'site') rows.splice(2, 0, {id:"prom",name:"Prom",value:null,prior:null,color:colors[3]});
   let offset = 0;
-  const segments = complete
-    ? rows
-        .map((c) => {
-          const start = offset;
-          offset += (c.value / total) * 100;
-          return `${c.color} ${start}% ${offset}%`;
-        })
-        .join(",")
-    : "var(--line) 0% 100%";
+  const circumference = 2 * Math.PI * 60;
+  const segments = complete ? rows.filter(channel => channel.value > 0).map(channel => {
+    const length = channel.value / total * circumference;
+    const svg = `<circle cx="80" cy="80" r="60" fill="none" stroke="${channel.color}" stroke-width="20" stroke-dasharray="${Math.max(0,length-2)} ${circumference}" stroke-dashoffset="${-offset-1}" transform="rotate(-90 80 80)"><title>${esc(channel.name)}: ${esc(money(channel.value))} · ${esc(percent(channel.value/total*100))}</title></circle>`;
+    offset += length;
+    return svg;
+  }).join('') : '';
+  const count = rows.filter(channel => channel.value > 0).length;
   return card(
     "channels",
     "Канали продажу",
-    "Відвантажений виторг · ERP",
-    `<div class="bo-channel-layout"><div class="bo-donut" style="background:conic-gradient(${segments})"><div><strong>${money(total)}</strong><small>${complete ? "усі канали" : "неповна розбивка"}</small></div></div><div class="bo-channel-list">${rows.map((c) => `<button data-bo-channel="${c.id || "all"}"><span class="bo-dot" style="background:${c.color}"></span><span>${esc(c.name)}<small>${money(c.value)}</small></span><b>${complete ? percent((c.value / total) * 100) : "—"}</b>${state.yoy ? badge(change(c.value, c.prior)) : ""}</button>`).join("")}</div></div><p class="bo-footnote">Prom поки 0% · окрема статистика ще не надходить.${!complete ? " Частки недоступні без повної розбивки." : ""}</p>`,
+    "",
+    `<div class="bo-channel-layout"><svg class="bo-channel-donut" viewBox="0 0 160 160" role="img" aria-label="Частки виторгу за каналами продажу"><circle cx="80" cy="80" r="60" fill="none" stroke="var(--line)" stroke-width="20"/>${segments}<text x="80" y="78" text-anchor="middle" class="bo-donut-total">${esc(money(total))}</text><text x="80" y="98" text-anchor="middle" class="bo-donut-label">${complete ? `${count} ${count===1?'канал':count<5?'канали':'каналів'}` : 'неповна розбивка'}</text></svg><div class="bo-channel-list">${rows.map(c => `<div class="bo-channel-row" title="${esc(c.name)}: ${esc(c.value == null ? 'Джерело не підключено' : money(c.value))}"><span class="bo-dot" style="background:${c.color}"></span><span>${esc(c.name)}</span><b>${complete && c.value != null ? number(c.value / total * 100)+'%' : '—'}</b>${state.yoy ? badge(change(c.value,c.prior)) : ''}</div>`).join('')}</div></div>`,
   );
 }
 export function quarterChannelRows(data, today) {
@@ -254,18 +258,28 @@ export function quarterChannelRows(data, today) {
     })),
   };
 }
+export function periodChannelRows(data,state) {
+  const range={from:state.from,to:state.to},rows=calendarBins(range,rangeDays(range)>90?'month':rangeDays(range)>21?'week':'day');
+  const ids=state.salesScope==='site'?['site']:state.salesScope==='marketplaces'?['rozetka','monomarket']:['site','rozetka','monomarket'];
+  const names={site:'Сайт',rozetka:'Rozetka',monomarket:'Monomarket'};
+  const channels=ids.map(id=>({id,name:names[id],color:colors[['site','rozetka','monomarket'].indexOf(id)],values:rows.map(bin=>{
+    const source=data.salesChannels?.[id];
+    return source?.available&&!source.seriesUnavailable?sum(source.byDate?.filter(row=>row.date>=bin.from&&row.date<=bin.to),'revenue'):null;
+  })}));
+  return {range,channels,rows:rows.map((row,index)=>({...row,total:channels.every(channel=>channel.values[index]!=null)?channels.reduce((total,channel)=>total+channel.values[index],0):null}))};
+}
 function weeklyPanel(data, state) {
   const today =
     state.graphToday ||
     new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" });
-  const { range, channels, rows } = quarterChannelRows(data, today);
+  const { range, channels, rows } = data.comparisonRange ? periodChannelRows(data,state) : quarterChannelRows(data, today);
   const max = Math.max(...rows.map((row) => row.total || 0), 1);
   const formatDate = (date) => date.split("-").reverse().join(".");
   return card(
     "weeks",
     "Виторг за каналами",
-    `Останні 13 завершених тижнів · ${formatDate(range.from)} — ${formatDate(range.to)}`,
-    `<div class="bo-quarter-summary"><strong>${rows.every((row) => row.total !== null) ? money(rows.reduce((sum, row) => sum + row.total, 0)) : "—"}</strong><span>Т${rows[0].week}–Т${rows.at(-1).week} · сайт, Rozetka та Monomarket</span></div><div class="bo-stacked bo-quarter-stacked">${rows
+    "",
+    `<div class="bo-quarter-summary"><strong>${rows.every((row) => row.total !== null) ? money(rows.reduce((sum, row) => sum + row.total, 0)) : "—"}</strong></div><div class="bo-stacked bo-quarter-stacked">${rows
       .map((row, index) => {
         const details = channels
           .map((channel) => `${channel.name}: ${money(channel.values[index])}`)
@@ -285,23 +299,24 @@ function weeklyPanel(data, state) {
       })
       .join(
         "",
-      )}</div><div class="bo-quarter-tooltip" id="quarter-channel-tooltip" role="tooltip" hidden></div><div class="bo-legend">${channels.map((channel) => `<span><i style="background:${channel.color}"></i>${channel.name}</span>`).join("")}</div><p class="bo-footnote">Сума трьох каналів. Окремий квартальний зріз; календар KPI на цей графік не впливає.</p>`,
+      )}</div><div class="bo-quarter-tooltip" id="quarter-channel-tooltip" role="tooltip" hidden></div><div class="bo-legend">${channels.map((channel) => `<span><i style="background:${channel.color}"></i>${channel.name}</span>`).join("")}</div>`,
   );
 }
-function categoryPanel(model, state, data) {
-  const range=categoryPeriod(state.graphToday || state.to,state.categoryPeriod);
-  if ('categorySales' in data) model={...model,sales:data.categorySales};
-  state={...state,yoy:true,from:range.from};
-  const prior =
-    model.sales?.previous?.available && model.sales.previous.hasData
-      ? model.sales.previous.categories
-      : null;
-  const tiles = categoryMosaic(model.sales?.categories, prior, state.yoy);
-  const baselineYear = Number(state.from.slice(0, 4)) - 1;
+function categoryPanel(model, state, data, dimension = 'categories') {
+  const brand = dimension === 'brands', range = {from:state.from,to:state.to};
+  const measure = state[brand ? 'brandMeasure' : 'categoryMeasure'] === 'goods' ? 'goods' : 'revenue';
+  const measureLabel = measure === 'goods' ? 'Кількість' : 'Виторг';
+  const format = measure === 'goods' ? value => `${number(value)} шт.` : money;
+  const controls = `<div class="bo-segments bo-map-units" role="group" aria-label="${brand ? 'Одиниці карти брендів' : 'Одиниці карти категорій'}">${[['revenue','грн'],['goods','шт.']].map(([key,label]) =>
+    `<button type="button" data-map="${dimension}" data-measure="${key}" aria-pressed="${measure === key}">${label}</button>`
+  ).join('')}</div>`;
+  const prior = model.sales?.previous?.available && model.sales.previous.hasData ? model.sales.previous[dimension] : null;
+  const tiles = categoryMosaic(model.sales?.[dimension], prior, state.yoy, {measure,limit:24,otherLabel:brand?'Інші бренди':'Інші категорії',height:680});
+  const baselineLabel = rangeLabel(data.comparisonRange || comparisonRange(range, state.compareMode || 'yoy'));
   return card(
-    "categories",
-    "Категорії",
-    `Площа — виторг, колір — зміна до ${baselineYear} · ${range.from} — ${range.to}`,
+    dimension,
+    brand ? 'Бренди' : 'Категорії',
+    "",
     tiles.length
       ? `<div class="bo-category-mosaic">${tiles
           .map((tile) => {
@@ -312,22 +327,24 @@ function categoryPanel(model, state, data) {
                 : (tile.delta > 0 ? "+" : "") + percent(tile.delta);
             const meta = {
               ...tile,
-              formattedRevenue: money(tile.revenue),
+              measureLabel,
+              formattedValue: format(tile[measure]),
               formattedDelta,
-              baselineYear,
+              baselineLabel,
+              period: `${range.from} — ${range.to}`,
             };
-            return `<button class="bo-mosaic-tile tone-${tile.tone} ${tile.w < 140 || tile.h < 90 ? "is-small" : ""}" data-bo-category="${esc(tile.label)}" data-category-meta="${esc(JSON.stringify(meta))}" style="left:${tile.x / 10}%;top:${tile.y / 5.2}%;width:calc(${tile.w / 10}% - 4px);height:calc(${tile.h / 5.2}% - 4px)"><strong>${esc(tile.label)}</strong><span>${money(tile.revenue)} · ${esc(formattedDelta)}</span></button>`;
+            return `<button class="bo-mosaic-tile tone-${tile.tone} ${tile.w < 140 || tile.h < 90 ? "is-small" : ""}" title="${esc(tile.label)}" data-bo-category="${esc(tile.label)}" data-category-meta="${esc(JSON.stringify(meta))}" aria-label="${esc(tile.label)}: ${esc(format(tile[measure]))}; ${esc(formattedDelta)}" style="${tile.color ? `background:${tile.color.background};color:${tile.color.foreground};` : ""}left:${tile.x / 10}%;top:${tile.y / 6.8}%;width:calc(${tile.w / 10}% - 3px);height:calc(${tile.h / 6.8}% - 3px)"><strong>${esc(tile.label)}</strong><span>${format(tile[measure])} · ${esc(formattedDelta)}</span></button>`;
           })
           .join(
             "",
-          )}</div><div class="bo-category-legend"><span><i class="decline"></i>падіння</span><span><i class="flat"></i>без змін (±1%)</span><span><i class="growth"></i>зростання</span><span><i class="missing"></i>немає бази</span></div><div class="bo-quarter-tooltip bo-category-tooltip" id="category-mosaic-tooltip" role="tooltip" hidden></div><p class="bo-footnote">Насиченіший колір — зміна від 15%. ${!state.yoy ? "Увімкніть порівняння YoY, щоб побачити динаміку." : ""}</p>`
-      : empty(model.sales == null ? "Завантажуємо категорії…" : model.sales.available === false ? "Дані категорій недоступні. Спробуйте ще раз." : "Немає продажів за категоріями."),
-    `<div class="bo-segments" role="group" aria-label="Період категорій">${[ ['month','Поточний місяць'],['year','Поточний рік'] ].map(([key,label])=>`<button data-category-period="${key}" aria-pressed="${(state.categoryPeriod||'month')===key}">${label}</button>`).join('')}</div>`,
+          )}</div><div class="bo-category-legend"><span><i class="decline"></i>падіння</span><div class="bo-heatmap-scale" role="img" aria-label="Тепла шкала падіння, холодна шкала зростання; крок 2%">${Array.from({length:41},(_,index)=>(index-20)*2).map(delta=>`<i style="background:${categoryColor(delta).background}" title="${delta>0?'+':''}${delta}%"></i>`).join("")}</div><span><i class="growth"></i>зростання</span><span><i class="missing"></i>немає бази</span></div><div class="bo-quarter-tooltip bo-category-tooltip" id="${dimension}-mosaic-tooltip" role="tooltip" hidden></div>`
+      : empty(data.scopeNotice || (model.sales == null ? `Завантажуємо ${brand?'бренди':'категорії'}…` : data.scopeNotice || `Немає продажів за ${brand?'брендами':'категоріями'}.`)),
+    controls,
   );
 }
 export function trafficAreaMarkup(source) {
   if (!source?.available || !source.weeks?.length)
-    return empty("Немає тижневих даних GA4 за джерелами.");
+    return empty("Немає даних GA4 за цим зрізом.");
   const rows = source.weeks,
     groups = source.groups,
     width = 480,
@@ -393,13 +410,13 @@ export function trafficAreaMarkup(source) {
       return `<g class="bo-traffic-hover"><rect class="bo-traffic-shade" x="${from}" y="${top}" width="${to - from}" height="${bottom - top}"/><rect class="bo-traffic-hit" tabindex="0" role="img" aria-label="${row.label}: ${number(row.total)} сеансів" data-quarter-tip="${esc(JSON.stringify(info))}" data-tip-target="#traffic-quarter-tooltip" x="${from}" y="${top}" width="${to - from}" height="${bottom - top}" fill="transparent"/></g>`;
     })
     .join("");
-  return `<div class="bo-traffic-area"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Сеанси за джерелами по тижнях, тисячі">${grid}${areas}${ticks}${hits}</svg></div><div class="bo-traffic-legend">${groups.map((group) => `<span><i style="background:${group.color}"></i>${esc(group.name)}</span>`).join("")}</div><div class="bo-quarter-tooltip" id="traffic-quarter-tooltip" role="tooltip" hidden></div><p class="bo-footnote">${source.range.from.split("-").reverse().join(".")} — ${source.range.to.split("-").reverse().join(".")} · GA4${source.thresholded || source.incomplete ? " · Джерело повідомляє про обмеження даних." : ""}</p>`;
+  return `<div class="bo-traffic-area"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Сеанси за джерелами у вибраному періоді, тисячі">${grid}${areas}${ticks}${hits}</svg></div><div class="bo-traffic-legend">${groups.map((group) => `<span><i style="background:${group.color}"></i>${esc(group.name)}</span>`).join("")}</div><div class="bo-quarter-tooltip" id="traffic-quarter-tooltip" role="tooltip" hidden></div>`;
 }
 function trafficPanel(data) {
   return card(
     "traffic",
     "Джерела трафіку",
-    "Сеанси, тис. · останні 13 завершених тижнів",
+    "Сеанси, тис.",
     trafficAreaMarkup(data.quarterTraffic),
   );
 }
@@ -409,106 +426,56 @@ function marketPanel(data) {
     return card(
       "market",
       "Ціна проти ринку",
-      "SKU за ціновим індексом",
+      "",
       empty("Завантажуємо повний ціновий зріз…"),
     );
   const max = Math.max(...source.buckets.map((bin) => bin.count), 1);
   return card(
     "market",
     "Ціна проти ринку",
-    "SKU за ціновим індексом",
-    `<div class="bo-price-index">${source.buckets.map((bin) => `<div class="bo-price-bin" role="img" tabindex="0" aria-label="${esc(bin.label)}%: ${number(bin.count)} SKU"><strong>${number(bin.count)}</strong><i style="height:${(bin.count / max) * 155}px;background:${bin.risk ? "var(--red)" : "var(--blue)"}" title="${esc(bin.label)}% · ${number(bin.count)} SKU"></i><span>${bin.label.replace("<", "&lt;").replace(">", "&gt;")}</span></div>`).join("")}</div><p class="bo-footnote">Індекс = наша ціна / медіана підтверджених цін конкурентів × 100. Нижче 100 — ми дешевші. ${number(source.total)} SKU зі співставленнями · поточний зріз ${esc(source.snapshotDate || "")}.</p>`,
+    "",
+    `<div class="bo-price-index">${source.buckets.map((bin) => `<div class="bo-price-bin" role="img" tabindex="0" aria-label="${esc(bin.label)}%: ${number(bin.count)} SKU"><strong>${number(bin.count)}</strong><i style="height:${(bin.count / max) * 155}px;background:${bin.risk ? "var(--red)" : "var(--blue)"}" title="${esc(bin.label)}% · ${number(bin.count)} SKU"></i><span>${bin.label.replace("<", "&lt;").replace(">", "&gt;")}</span></div>`).join("")}</div>`,
   );
 }
 export function renderRevenueWaterfall(source, state) {
-  const controls = `<div class="bo-segments" aria-label="Порівняння виторгу">${[
-    ["yoy", "Рік до року"],
-    ["month", "До попер. місяця"],
-  ]
-    .map(
-      ([mode, label]) =>
-        `<button data-waterfall-mode="${mode}" aria-pressed="${(state.waterfallMode || "yoy") === mode}">${label}</button>`,
-    )
-    .join("")}</div>`;
-  const sub = "Особистий перегляд · розрахункові внески, млн ₴";
-  if (!source?.available)
-    return card(
-      "waterfall",
-      "Звідки приріст виручки",
-      sub,
-      empty(source?.notice || "Завантажуємо порівнювані дані ERP та GA4…"),
-      controls,
-      "bo-waterfall",
-    );
-  const periodLabel = (range) =>
-    source.mode === "month"
-      ? new Date(range.from + "T00:00:00Z").toLocaleDateString("uk-UA", {
-          month: "short",
-          year: "numeric",
-          timeZone: "UTC",
-        })
-      : range.from.slice(0, 4);
-  const steps = [
-    {
-      label: periodLabel(source.comparisonRange),
-      from: 0,
-      to: source.start,
-      value: source.start,
-      total: true,
-    },
-    ...source.steps.map((step) =>
-      step.key === "reconcile" ? { ...step, label: "Різниця в обліку" } : step,
-    ),
-    {
-      label: periodLabel(source.range),
-      from: 0,
-      to: source.end,
-      value: source.end,
-      total: true,
-    },
-  ];
-  const min = Math.min(0, ...steps.flatMap((step) => [step.from, step.to])),
-    max = Math.max(1, ...steps.flatMap((step) => [step.from, step.to])) * 1.12;
-  const left = 25,
-    right = 735,
-    bottom = 218,
-    top = 25,
-    slot = (right - left) / steps.length,
-    width = Math.min(65, slot * 0.7),
-    x = (index) => left + slot * index + (slot - width) / 2,
-    y = (value) => bottom - ((value - min) / (max - min)) * (bottom - top);
-  const bars = steps
-    .map((step, index) => {
-      const height = Math.max(2, Math.abs(y(step.to) - y(step.from))),
-        barY = Math.min(y(step.to), y(step.from)),
-        color = step.total
-          ? "var(--text)"
-          : step.key === "reconcile"
-            ? "#aab3c2"
-            : step.value >= 0
-              ? "var(--blue)"
-              : "var(--red)";
-      const labels =
-        step.key === "reconcile"
-          ? ["Різниця", "в обліку"]
-          : step.label === "Інші канали"
-            ? ["Інші", "канали"]
-            : [step.label];
-      return `${index < steps.length - 1 ? `<path d="M${x(index) + width} ${y(step.to)}H${x(index + 1)}" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3 4"/>` : ""}<rect x="${x(index)}" y="${barY}" width="${width}" height="${height}" rx="7" fill="${color}"><title>${esc(step.label)}: ${step.value >= 0 && !step.total ? "+" : ""}${number(step.value)} ₴${step.key === "reconcile" ? " · GA4 рахує покупки, ERP — відвантаження. Це не втрачений виторг." : ""}</title></rect><text x="${x(index) + width / 2}" y="${barY - 9}" text-anchor="middle" class="bo-waterfall-number">${!step.total && step.value > 0 ? "+" : ""}${new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 2 }).format(step.value / 1000000)}</text><text x="${x(index) + width / 2}" y="${bottom + 21}" text-anchor="middle">${labels.map((label, i) => `<tspan x="${x(index) + width / 2}" dy="${i ? 12 : 0}">${esc(label)}</tspan>`).join("")}</text>`;
-    })
-    .join("");
-  const date = (range) =>
-    range.from.split("-").reverse().join(".") +
-    " — " +
-    range.to.split("-").reverse().join(".");
-  return card(
-    "waterfall",
-    "Звідки приріст виручки",
-    sub,
-    `<div class="bo-waterfall-plot"><svg viewBox="0 0 760 270" role="img" aria-label="Факторний аналіз зміни виторгу">${bars}</svg></div><details class="bo-accounting-note"><summary>Різниця в обліку · що це означає</summary><p><b>Різниця в обліку</b> — GA4 рахує покупки на сайті, ERP — фактичні відвантаження. Через різні дати, скасування та незареєстровані події підсумки можуть відрізнятися. Це <b>не показник втраченого виторгу</b>.</p></details><p class="bo-footnote">${date(source.comparisonRange)} → ${date(source.range)}. Фактори сайту: трафік → конверсія → чек; маркетплейси — окремо.</p>`,
-    controls,
-    "bo-waterfall",
-  );
+  const mode = state.compareMode || 'yoy';
+  const magnitude=Math.max(Math.abs(source?.start||0),Math.abs(source?.end||0));
+  const scale=magnitude>=1000000?1000000:magnitude>=1000?1000:1;
+  const sub = `${{wow:'WoW',mom:'MoM',yoy:'YoY'}[mode] || mode} · ${scale===1000000?'млн ':scale===1000?'тис. ':''}₴`;
+  if (!source?.available) return card('waterfall','Звідки приріст виручки',sub,empty(source?.notice || 'Завантажуємо порівнювані відвантаження…'),'','bo-waterfall');
+  const label = period => mode === 'yoy' ? period.from.slice(0,4) : `${period.from.slice(8)}.${period.from.slice(5,7)}–${period.to.slice(8)}.${period.to.slice(5,7)}`;
+  const steps = [{label:label(source.comparisonRange),from:0,to:source.start,value:source.start,total:true},...source.steps,{label:label(source.range),from:0,to:source.end,value:source.end,total:true}];
+  const min = Math.min(0,...steps.flatMap(step=>[step.from,step.to]));
+  const max = Math.max(1,...steps.flatMap(step=>[step.from,step.to]));
+  const top=34,bottom=207,left=16,right=464;
+  const y=value=>bottom-(value-min)/(max-min)*(bottom-top);
+  const slot=(right-left)/steps.length, width=Math.min(52,slot*.65), x=index=>left+index*slot+(slot-width)/2;
+  const amount=value=>{const scaled=Math.abs(value)/scale,formatted=scaled>0&&scaled<.005?'<0,01':new Intl.NumberFormat('uk-UA',{maximumFractionDigits:2}).format(scaled);return `${value<0?'−':''}${formatted}`;};
+  const bars=steps.map((step,index)=>{
+    const barY=Math.min(y(step.from),y(step.to)),height=Math.max(2,Math.abs(y(step.to)-y(step.from)));
+    const color=step.total?'var(--text)':step.value>=0?'var(--blue)':'var(--red)';
+    const labels=step.label==='Інші канали'?['Інші','канали']:[step.label];
+    return `${index<steps.length-1?`<path d="M${x(index)+width} ${y(step.to)}H${x(index+1)}" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3 4"/>`:''}<rect x="${x(index)}" y="${barY}" width="${width}" height="${height}" rx="7" fill="${color}"><title>${esc(step.label)}: ${step.value>0&&!step.total?'+':''}${number(step.value)} ₴</title></rect><text x="${x(index)+width/2}" y="${barY-9}" text-anchor="middle" class="bo-waterfall-number">${step.value>0&&!step.total?'+':''}${esc(amount(step.value))}</text><text x="${x(index)+width/2}" y="${bottom+20}" text-anchor="middle">${labels.map((label,i)=>`<tspan x="${x(index)+width/2}" dy="${i?12:0}">${esc(label)}</tspan>`).join('')}</text>`;
+  }).join('');
+  return card('waterfall','Звідки приріст виручки',sub,`<div class="bo-waterfall-plot"><svg viewBox="0 0 480 250" role="img" aria-label="Внесок замовлень, чека й каналів у зміну відвантаженого виторгу">${bars}</svg></div>`,'','bo-waterfall');
+}
+
+function catalogPanel(data) {
+  const source = data.catalogHealth;
+  const labels = ['Плитка', 'Сантехніка', 'Підлогові покриття', 'Будівельна хімія'];
+  const period = source?.trafficRange ? rangeLabel(source.trafficRange) : '';
+  const body = `<table class="bo-catalog-table"><thead><tr>
+    <th scope="col"><span class="sr">Сегмент</span></th><th scope="col" title="Кількість товарів із залишком від 1">У наявності</th>
+    <th scope="col" title="Покази товарів">Impressions</th><th scope="col" title="Перегляди карток / покази товарів">CTR</th>
+    <th scope="col" title="Середній Content Score">CS</th>
+  </tr></thead><tbody>${labels.map(label => {
+    const segment = source?.segments?.find(item => item.label === label);
+    return `<tr><th scope="row">${label}</th><td>${number(segment?.inStock)}</td>
+      <td>${number(segment?.impressions)}</td><td>${percent(segment?.ctr)}</td><td>${number(segment?.score)}</td></tr>`;
+  }).join('')}</tbody></table>
+  ${!source ? '<p class="bo-catalog-period" role="status">Завантажуємо показники…</p>' : !source.available ? '<p class="bo-catalog-period">Дані сегментів тимчасово недоступні.</p>' :
+    period ? `<p class="bo-catalog-period">Impressions і CTR · ${esc(period)}</p>` : ''}`;
+  return card('catalog','Здоров’я каталогу','',body,'','bo-catalog');
 }
 export function renderBusinessOverview(data, state, chartHTML) {
   const model = overviewModel(data, state),
@@ -516,18 +483,20 @@ export function renderBusinessOverview(data, state, chartHTML) {
   const metric =
     model.metrics.find((metric) => metric.key === state.chartMetric) || revenue;
   const graphPeriod = { from: state.from, to: state.to };
+  const history = data.scopeNotice ? {range:graphPeriod} : data.comparisonRange ? selectedHistory(data.history,model.sales,graphPeriod,data.comparisonRange) : data.history;
   const miniOptions = {
     range: graphPeriod,
     interval: miniInterval(graphPeriod),
+    comparisonMode: state.compareMode,
   };
   const chartOptions = {
     range: graphPeriod,
     interval: state.chartInterval === "week" ? "week" : "day",
+    comparisonMode: state.compareMode,
   };
   const chartTotal = metric.value,
     chartPrior = metric.prior;
-  const period = `${state.from.split("-").reverse().join(".")} — ${state.to.split("-").reverse().join(".")}`;
-  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо дані каналу…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${state.chartMetric === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${state.chartMetric === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong><small>${m.hint}</small>${weeklyChart(data.history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({ all: "Усі канали", site: "Сайт", rozetka: "Rozetka", monomarket: "Monomarket" }[state.chartChannel] || state.chartChannel)} · ${esc(state.chartSegment)}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
+  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${state.chartMetric === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${state.chartMetric === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}${state.acquisition&&state.acquisition!=="all"?" · "+esc(state.acquisition):""}${state.device&&state.device!=="all"?" · "+esc(state.device):""}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
     ["day", "Дні"],
     ["week", "Тижні"],
   ]
@@ -537,7 +506,7 @@ export function renderBusinessOverview(data, state, chartHTML) {
     )
     .join(
       "",
-    )}</div></div><div id="overview-sales-chart">${weeklyChart(data.history, metric.key, { id: "revenue-period", compare: state.yoy, ...chartOptions })}</div><p class="bo-footnote">Період: ${period}. Міні-графіки: до 40 днів — за днями, понад 40 — за тижнями.</p></section>${channelPanel(model, state)}${weeklyPanel(data, state)}${data.privateOverview ? renderRevenueWaterfall(data.waterfall, state) : ""}${renderSiteFunnel(data.siteFunnel,state.funnelMode)}${trafficPanel(data)}${marketPanel(data)}${categoryPanel(model, state, data)}<section class="bo-card bo-catalog" id="bo-catalog" tabindex="-1"><header><div><h2>Здоров’я каталогу</h2><p>Поточний стан · API AGROMAT</p></div><span class="bo-tag">LIVE</span></header><div class="bo-catalog-metrics"><div><strong>${data.stock?.available ? short(data.stock.total) : "—"}</strong><span>товарів у наявності</span></div><div><strong>${data.content?.available ? number(data.content.score) : "—"}<small>/100</small></strong><span>середній Content Score</span></div><div><strong>${data.products?.available ? short(data.products.stats?.noImages) : "—"}</strong><span title="Увесь каталог у поточному знімку, незалежно від наявності. API не містить жодного зображення (imagesCount = 0); биті посилання не перевіряються.">товарів без фото · весь каталог ⓘ</span></div></div></section><section class="bo-card bo-calls" id="bo-calls"><header><div><h2>Пропущені дзвінки</h2><p>Дані телефонії</p></div></header><div class="bo-empty"><div><strong>Не підключено</strong><p>Статистика дзвінків з’явиться після підключення телефонії.</p></div></div></section></div></div>`;
+    )}</div></div><div id="overview-sales-chart">${weeklyChart(history, metric.key, { id: "revenue-period", compare: state.yoy, ...chartOptions })}</div></section>${channelPanel(model, state)}<div class="bo-overview-summary">${weeklyPanel(data, state)}${catalogPanel(data)}${renderRevenueWaterfall(overviewRevenueWaterfall(data, state, state.compareMode || "yoy"), state)}</div><div class="bo-overview-trio">${renderSiteFunnel(data.siteFunnel,state.compareMode,{selection:true,notice:data.scopeNotice})}${trafficPanel(data)}${marketPanel(data)}</div><div class="bo-overview-mosaics">${categoryPanel(model, state, data)}${categoryPanel(model, state, data, "brands")}</div></div></div>`;
 }
 
 export function bindQuarterTooltips(root = document) {

@@ -1,8 +1,6 @@
-import {createOverviewCache,overviewCacheKey} from "/overview-cache.mjs?v=fastoverview2";
-const overviewCache=createOverviewCache();
+import {overviewDefaults, overviewControls, validComparison, comparisonRange, rangeLabel, scopedSales, scopeKey} from '/overview-filters.mjs';
 import {bindFunnelTooltips} from "/site-funnel.mjs?v=fastoverview2";
-import {bindCategoryTooltips, categoryPeriod} from "/category-treemap.mjs?v=fastoverview2";
-import {lastQuarterWeeks} from "/chart-periods.mjs?v=fastoverview2";
+import {bindCategoryTooltips} from "/category-treemap.mjs?v=fastoverview2";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=fastoverview2";
 import { renderBusinessOverview, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=fastoverview2";
 import { apiParams, createApiCache } from "/api-cache.mjs?v=fastoverview2";
@@ -111,7 +109,7 @@ const today = new Date().toLocaleDateString("sv-SE", {
 let section = "home",
   view = "overview",
   state = {
-    ...defaultRange(today),
+    ...overviewDefaults(today),
     category: "all",
     brand: "all",
     search: "",
@@ -123,9 +121,6 @@ let section = "home",
     chartMetric: "revenue",
     chartSegment: "Усі",
     chartInterval: "day",
-    waterfallMode: "yoy",
-    categoryPeriod: "month",
-    funnelMode: "week",
   },
   data = null,
   requestId = 0,
@@ -152,22 +147,30 @@ function parseLocation() {
     "chartMetric",
     "chartSegment",
     "chartInterval",
-    "waterfallMode",
-    "categoryPeriod",
-    "funnelMode",
     "ranking",
+    "compareMode",
+    "categoryMeasure",
+    "brandMeasure",
+    "salesScope",
+    "acquisition",
+    "device",
   ])
     if (params.has(k)) state[k] = params.get(k);
   for (const [key, allowed, fallback] of [
-    ["waterfallMode", ["yoy", "month"], "yoy"],
-    ["categoryPeriod", ["month", "year"], "month"],
-    ["funnelMode", ["week", "month"], "week"],
     ["chartMetric", ["revenue", "docs", "aov", "users", "conversion", "canceled"], "revenue"],
     ["chartInterval", ["day", "week", "month"], "day"],
     ["chartSegment", ["Усі", "Плитка", "Сантехніка", "Підлогові покриття", "Джерела живлення", "Будівельна хімія", "Інше"], "Усі"],
+    ['salesScope', ['all','site','marketplaces'], 'all'],
+    ['acquisition', ['all','direct','organic','cpc'], 'all'],
+    ['device', ['all','mobile','desktop'], 'all'],
   ]) if (!allowed.includes(state[key])) state[key] = fallback;
   state.page = Math.max(1, Number(params.get("page")) || 1);
   state.yoy = params.get("yoy") !== "0";
+  if (section === 'home') {
+    try { state.compareMode = validComparison(state, params.get('compareMode') || 'wow');comparisonRange(state,state.compareMode); } catch { Object.assign(state,overviewDefaults(today)); }
+    state.yoy = true;
+    state.chartChannel = state.salesScope === 'site' ? 'site' : 'all';
+  }
 }
 function saveLocation() {
   let q = new URLSearchParams({ ...state, yoy: state.yoy ? "1" : "0" });
@@ -289,17 +292,33 @@ function updateSources() {
   if ($("#source-status-list"))
     $("#source-status-list").innerHTML = sourceStatusHTML();
 }
+let overviewHeaderObserver;
+function syncOverviewHeader() {
+  const controls = document.querySelector('.bo-filterbar');
+  if (controls) controls.innerHTML = overviewControls(state);
+}
 function businessShell() {
-  document.body.classList.add("business-page");
-  $("#app").innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav active" data-go="home" aria-current="page">${icon('overview')}<span>Огляд бізнесу</span></button><div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><div class="bo-breadcrumb">Робочий простір <span>/</span> Головна ${["localhost","127.0.0.1","::1"].includes(location.hostname) ? '<span class="bo-local-label">Локальний перегляд</span>' : ""}</div><section class="bo-heading"><div><h1>Огляд бізнесу<span>.</span></h1><p>Ключові показники. Контекст. Наступний крок.</p></div><div class="bo-heading-actions"><button id="toggle-yoy" class="bo-yoy" aria-pressed="${state.yoy}">Порівняти з ${Number(state.from.slice(0,4))-1} <span>${state.yoy ? '✓' : '+'}</span></button><label class="bo-channel-control">Канал <select id="bo-channel" aria-label="Канал продажів"><option value="all">Усі</option><option value="site">Сайт</option><option value="rozetka">Rozetka</option><option value="monomarket">Monomarket</option></select></label></div></section><div class="bo-context"><div class="dated"><label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}"><span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}"><button id="apply-dates">Застосувати</button></div></div><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
-  $("#bo-channel").value = state.chartChannel;
-  $("#bo-channel").onchange = event => { state.chartChannel=event.target.value; saveLocation(); load({keepView:true}); };
-
-
+  document.body.classList.add('business-page');
+  $('#app').innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav active" data-go="home" aria-current="page">${icon('overview')}<span>Огляд бізнесу</span></button><div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><header class="bo-sticky-header"><section class="bo-heading"><h1>Огляд бізнесу<span>.</span></h1>${['localhost','127.0.0.1','::1'].includes(location.hostname)?'<span class="bo-local-label">Локальний перегляд</span>':''}</section><div class="bo-filterbar">${overviewControls(state)}</div><div id="bo-data-coverage" class="bo-data-coverage" aria-live="polite"></div></header><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+  overviewHeaderObserver?.disconnect();
+  overviewHeaderObserver = new ResizeObserver(entries => document.documentElement.style.setProperty('--bo-header-height', Math.ceil(entries[0].target.getBoundingClientRect().height) + 'px'));
+  overviewHeaderObserver.observe($('.bo-sticky-header'));
   bindShell();
 }
+
 function renderBusiness() {
   return renderBusinessOverview(data,{...state,graphToday:today});
+}
+function updateOverviewCoverage() {
+  const host=$('#bo-data-coverage'),coverage=data?.attribution?.current;
+  if(!host)return;
+  if(state.salesScope==='marketplaces'){host.textContent='Маркетплейси · відвантаження ERP';return;}
+  if(data?.scopeNotice){host.textContent=data.scopeNotice;return;}
+  if(data?.attribution?.available===false){host.textContent=data.sourceNotice;return;}
+  if(!coverage){host.textContent='Зіставляємо відвантаження ERP з GA4…';return;}
+  const incomplete=data.users?.available&&!data.users.complete;
+  host.innerHTML=`<button type="button" id="bo-attribution-details">GA4 · зіставлено ${num(coverage.matchedDocs)} з ${num(coverage.docs)} відвантажень сайту${incomplete?` · дані до ${esc(data.users.dataThrough.split('-').reverse().join('.'))}`:data.partial&&!data.users?.available?' · вебдані недоступні':''} ⓘ</button>`;
+  $('#bo-attribution-details').onclick=()=>modal('Зв’язок відвантажень ERP з GA4',`<p>${esc(rangeLabel(state))}</p><div class="record-detail"><dl>${[['Відвантаження сайту',coverage.docs],['Однозначно зіставлені',coverage.matchedDocs],['Без ID замовлення сайта',coverage.missingIdDocs],['Не знайдені в GA4',coverage.unmatchedDocs-coverage.missingIdDocs],['Неоднозначні збіги',coverage.ambiguousDocs]].map(([label,value])=>`<div><dt>${label}</dt><dd>${num(value)}</dd></div>`).join('')}</dl></div><p>Використовуємо точний збіг ERP webshopId = GA4 transaction_id. Без збігу джерело та пристрій залишаються невизначеними. Виторг, замовлення, категорії та бренди рахуються за датою відвантаження ERP.</p>${incomplete?`<p>Вивантаження GA4 доступне до ${esc(data.users.dataThrough)}. Порівняння неповних вебперіодів не показуємо.</p>`:''}`);
 }
 function bindBusinessOverview() {
   if (section !== 'home' || !$(".business-overview")) return;
@@ -307,30 +326,15 @@ function bindBusinessOverview() {
   bindQuarterTooltips();
   bindCategoryTooltips();
   bindFunnelTooltips();
-  $$("[data-waterfall-mode]").forEach(button=>button.onclick=async()=>{
-    const request=requestId,mode=button.dataset.waterfallMode;state.waterfallMode=mode;saveLocation();data.waterfall=null;
-    $("#content").innerHTML=renderBusiness();bindContent();
-    const result=await api('revenue-waterfall',{mode:state.waterfallMode}).catch(()=>({available:false}));
-    if(request!==requestId || state.waterfallMode!==mode)return;data.waterfall=result;$("#content").innerHTML=renderBusiness();bindContent();
-  });
-  $$("[data-category-period]").forEach(button=>button.onclick=async()=>{
-    const mode=button.dataset.categoryPeriod, request=requestId;
-    state.categoryPeriod=mode;saveLocation();data.categorySales=null;
-    $("#content").innerHTML=renderBusiness();bindContent();
-    const range=categoryPeriod(today,mode);
-    const result=range.empty?{available:true,categories:[]}:await api('sales',{from:range.from,to:range.to,yoy:'1',channel:state.chartChannel,segment:state.chartSegment}).catch(()=>({available:false}));
-    if(request!==requestId || state.categoryPeriod!==mode)return;
-    data.categorySales=result;$("#content").innerHTML=renderBusiness();bindContent();
-    $("#bo-categories")?.scrollIntoView({block:'nearest'});
-  });
-  $$("[data-funnel-mode]").forEach(button=>button.onclick=async()=>{
-    const mode=button.dataset.funnelMode,request=requestId;state.funnelMode=mode;saveLocation();data.siteFunnel=null;
-    $("#content").innerHTML=renderBusiness();bindContent();
-    const result=await api('site-funnel',{mode}).catch(()=>({available:false}));
-    if(request!==requestId || state.funnelMode!==mode)return;
-    data.siteFunnel=result;$("#content").innerHTML=renderBusiness();bindContent();$("#bo-funnel")?.scrollIntoView({block:'nearest'});
-  });
+  updateOverviewCoverage();
   const render=()=>{ $("#content").innerHTML=renderBusiness(); bindContent(); };
+  $$('[data-map][data-measure]').forEach(button => button.onclick = () => {
+    const { map, measure } = button.dataset;
+    state[map === 'brands' ? 'brandMeasure' : 'categoryMeasure'] = measure;
+    saveLocation();
+    render();
+    $(`[data-map="${map}"][data-measure="${measure}"]`)?.focus({preventScroll:true});
+  });
   $$("[data-bo-metric]").forEach(button=>button.onclick=()=>{
     const key=button.dataset.boMetric;
     state.chartMetric=key;saveLocation();render();$("#bo-revenue").scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -341,7 +345,7 @@ function bindBusinessOverview() {
   $$("[data-bo-channel]").forEach(button=>button.onclick=()=>{state.chartChannel=button.dataset.boChannel;saveLocation();load({keepView:true});});
   $$("[data-bo-category]").forEach(button=>button.onclick=()=>{
     const category=button.dataset.categoryMeta?JSON.parse(button.dataset.categoryMeta):data.chartSales?.categories?.find(row=>row.label===button.dataset.boCategory);
-    modal(button.dataset.boCategory,`<p>Відвантажені продажі за вибраний період · ERP</p><h2>${money(category?.revenue)}</h2><p>Замовлень: ${num(category?.docs)}</p><p>Товарів: ${num(category?.goods)}</p>${category?.items?category.items.map(row=>`<div class="listline"><span>${esc(row.label)}</span><b>${money(row.revenue)}</b></div>`).join(''):''}`);
+    modal(button.dataset.boCategory,`<p>Відвантажені продажі · ERP${category?.period ? ` · ${esc(category.period)}` : ""}</p><h2>${esc(category?.formattedValue || money(category?.revenue))}</h2><p>Замовлень: ${num(category?.docs)}</p><p>Товарів: ${num(category?.goods)}</p>${category?.items?category.items.map(row=>`<div class="listline"><span>${esc(row.label)}</span><b>${money(row.revenue)}</b></div>`).join(''):''}`);
   });
 
 }
@@ -379,20 +383,39 @@ function bindShell() {
       !from ||
       !to ||
       from > to ||
+      (section === "home" && to >= today) ||
       (Date.parse(to) - Date.parse(from)) / 86400000 >= 365
     ) {
       modal(
         "Оберіть коректний період",
-        "<p>Початок має бути не пізніше завершення. Максимальний період — 365 днів.</p>",
+        "<p>Початок має бути не пізніше завершення. Максимальний період — 365 днів; для огляду оберіть завершені дні до вчора.</p>",
       );
       return;
     }
     state.from = from;
     state.to = to;
     state.page = 1;
+    if (section === 'home') state.compareMode = validComparison(state,state.compareMode);
     saveLocation();
     load();
   };
+  $$('[data-comparison]').forEach(button => button.onclick = () => {
+    if (button.disabled || state.compareMode === button.dataset.comparison) return;
+    state.compareMode = button.dataset.comparison;
+    state.yoy = true;
+    saveLocation();
+    load({keepView:true});
+  });
+  $$('[data-overview-filter]').forEach(button => button.onclick = () => {
+    if (state[button.dataset.overviewFilter] === button.dataset.value) return;
+    state[button.dataset.overviewFilter] = button.dataset.value;
+    if (button.dataset.overviewFilter === 'salesScope' && state.salesScope === 'marketplaces') {state.acquisition='all';state.device='all';}
+    if (button.dataset.overviewFilter !== 'salesScope' && button.dataset.value !== 'all') state.salesScope = 'site';
+    state.chartChannel = state.salesScope === 'site' ? 'site' : 'all';
+    state.page = 1;
+    saveLocation();
+    load({keepView:true});
+  });
   if ($("#toggle-yoy"))
     $("#toggle-yoy").onclick = () => {
       state.yoy = !state.yoy;
@@ -409,59 +432,45 @@ async function load({keepView=false}={}) {
   let id = ++requestId;
   const previous=data,preserve=keepView&&section==='home'&&view==='overview'&&previous;
   if(!preserve)skeleton();
-  else if($("#bo-channel"))$("#bo-channel").value=state.chartChannel;
+  else { syncOverviewHeader(); bindShell(); }
   try {
     if (section === "home" && view === "overview") {
-      if (
-        !["all", "site", "monomarket", "rozetka", "prom"].includes(
-          state.chartChannel,
-        )
-      )
-        state.chartChannel = "all";
-      const dashboard = preserve?{...previous,salesChannels:{...previous.salesChannels},quarterChannels:{...previous.quarterChannels},categorySales:null,updating:true}:{ salesChannels: {}, quarterChannels: {}, categorySales:null };
-      if(preserve&&state.chartSegment==='Усі'){
-        const warm=state.chartChannel==='all'?previous.sales:previous.salesChannels?.[state.chartChannel];
-        if(warm?.available)dashboard.chartSales=warm;
-      }
-      const cacheKey=overviewCacheKey(state,today),saved=overviewCache.read(cacheKey);
-      if(saved)Object.assign(dashboard,saved.data,{cachedAt:saved.savedAt});
+      const selection = {...state}, range = {from:state.from,to:state.to};
+      const baseline = comparisonRange(range, state.compareMode);
+      const catalogSnapshot=Object.fromEntries(['catalogHealth','priceIndex'].filter(key=>previous?.[key]).map(key=>[key,previous[key]]));
+      const dashboard = {...catalogSnapshot,salesChannels:{},quarterChannels:{},comparisonRange:baseline,scope:scopeKey(selection),updating:true};
       data = dashboard;
-      let paintQueued=false,saveTimer,freshSales=false;
+      let paintQueued = false;
       const draw = () => {
         if (id !== requestId || data !== dashboard || paintQueued) return;
-        paintQueued=true;
-        requestAnimationFrame(()=>{
-          paintQueued=false;if(id!==requestId || data!==dashboard)return;
-          $("#content").innerHTML=renderBusiness();updateSources();bindContent();
+        paintQueued = true;
+        requestAnimationFrame(() => {
+          paintQueued = false;
+          if (id !== requestId || data !== dashboard) return;
+          dashboard.chartSales = scopedSales(dashboard.sales,dashboard.salesChannels,selection.salesScope);
+          $('#content').innerHTML = renderBusiness(); updateSources(); bindContent();
         });
-        clearTimeout(saveTimer);
-        if(freshSales)saveTimer=setTimeout(()=>{if(id===requestId)overviewCache.write(cacheKey,dashboard);},500);
       };
-      draw();
-      const read = async (kind, extra = {}) => api(kind, extra).catch(() => ({available:false}));
-      const quarterRange=lastQuarterWeeks(today);
-      const primary=[
-        (async()=>{dashboard.sales=await read('sales');freshSales=dashboard.sales.available===true;if(state.chartChannel==='all'&&state.chartSegment==='Усі')dashboard.chartSales=dashboard.sales;draw();})(),
-        (async()=>{dashboard.history=await read('overview-history',{channel:state.chartChannel});draw();})(),
-        (async()=>{dashboard.users=await read('users');draw();})(),
-        ...(state.chartChannel==='all'&&state.chartSegment==='Усі'?[]:[(async()=>{dashboard.chartSales=state.chartChannel==='prom'?{available:false}:await read('sales',{channel:state.chartChannel,segment:state.chartSegment});draw();})()]),
-      ];
-      await Promise.all(primary);
-      if(id!==requestId)return;
-      delete dashboard.updating;draw();
-      const jobs=[
-        ...['site','rozetka','monomarket'].map(async channel=>{dashboard.salesChannels[channel]=await read('sales',{channel,segment:'Усі',chartInterval:'day'});draw();}),
-        (async()=>{const mode=state.categoryPeriod,range=categoryPeriod(today,mode);const result=range.empty?{available:true,categories:[]}:await read('sales',{from:range.from,to:range.to,yoy:'1',channel:state.chartChannel,segment:state.chartSegment});if(state.categoryPeriod===mode){dashboard.categorySales=result;draw();}})(),
-        (async()=>{const mode=state.funnelMode,result=await read('site-funnel',{mode});if(state.funnelMode===mode){dashboard.siteFunnel=result;draw();}})(),
-        ...[['products','products'],['stock','inventory'],['content','content']].map(async([key,kind])=>{dashboard[key]=await read(kind,kind==='content'?{yoy:'0'}:{});draw();}),
+      const read = (kind,extra={}) => api(kind,extra).catch(() => ({available:false}));
+      const catalogJobs = [
+        (async()=>{dashboard.catalogHealth=await read('catalog-health');draw();})(),
         (async()=>{dashboard.priceIndex=await read('price-index');draw();})(),
-        (async()=>{dashboard.quarterTraffic=await read('traffic-quarter');draw();})(),
-        ...['site','rozetka','monomarket'].map(async channel=>{dashboard.quarterChannels[channel]=await read('sales',{...quarterRange,channel,segment:'Усі',chartInterval:'day',yoy:'0'});draw();}),
-        (async()=>{const caps=await read('capabilities');if(!caps.privateOverview)return;dashboard.privateOverview=true;draw();const mode=state.waterfallMode||'yoy',result=await read('revenue-waterfall',{mode});if((state.waterfallMode||'yoy')===mode){dashboard.waterfall=result;draw();}})(),
       ];
-      await Promise.all(jobs);
-      clearTimeout(saveTimer);delete dashboard.cachedAt;if(freshSales)overviewCache.write(cacheKey,dashboard);draw();
+      draw();
+      const overview = await read('overview',selection);
       if (id !== requestId) return;
+      if (overview.available) Object.assign(dashboard,overview);
+      else {
+        dashboard.scopeNotice = overview.notice;
+        dashboard.sales = {available:false};
+        dashboard.salesChannels = Object.fromEntries(['site','rozetka','monomarket'].map(channel=>[channel,{available:false}]));
+      }
+
+      if (id !== requestId) return;
+      delete dashboard.updating; draw();
+      await Promise.all(catalogJobs);
+      if (id !== requestId) return;
+      draw();
     } else {
       let kind = section,
         extra = {};

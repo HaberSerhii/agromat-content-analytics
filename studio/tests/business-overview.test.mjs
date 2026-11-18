@@ -97,17 +97,18 @@ test("public overview escapes category labels and marks missing integrations wit
   const html = renderBusinessOverview(data, state, "<div>chart</div>");
   assert.doesNotMatch(html, /<script>alert/);
   assert.match(html, /&lt;script&gt;/);
-  assert.match(html, /Не підключено/);
+  assert.doesNotMatch(html, /Пропущені дзвінки/);
+  assert.match(html, /Звідки приріст виручки/);
   assert.match(html, /неповна розбивка/);
 });
-test('category comparison stays independent of the dashboard calendar and YoY toggle',()=>{
+test('category and brand maps share the selected dates and comparison',()=>{
  const sales=source({shippedRevenue:20,shippedDocs:2});
- sales.categories=[{label:'Плитка',revenue:20}];
- sales.previous={...source({}),categories:[{label:'Плитка',revenue:10}]};
- const html=renderBusinessOverview({categorySales:sales},{...state,from:'2026-02-01',to:'2026-02-02',yoy:false,graphToday:'2026-11-16',categoryPeriod:'year'});
- assert.match(html,/2026-01-01 — 2026-11-15/);
- assert.match(html,/data-category-period="year" aria-pressed="true"/);
- assert.match(html,/\+100%/);
+ sales.categories=[{label:'Плитка',revenue:20}];sales.brands=[{label:'A',revenue:20}];
+ sales.previous={...source({}),categories:[{label:'Плитка',revenue:10}],brands:[{label:'A',revenue:10}]};
+ const html=renderBusinessOverview({chartSales:sales,sales},{...state,from:'2026-02-01',to:'2026-02-02',compareMode:'yoy'});
+ assert.match(html,/2026-02-01 — 2026-02-02/);
+ assert.doesNotMatch(html,/data-category-period=/);
+ assert.match(html,/Бренди/);assert.match(html,/\+100%/);
 });
 
 test('conversion falls back only to complete unthresholded daily GA4 data',()=>{

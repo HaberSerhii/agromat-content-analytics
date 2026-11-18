@@ -1511,3 +1511,198 @@ body.business-page .bo-heading h1 {
 }
 .bo-sidebar .nav svg{width:18px;height:18px;stroke-width:1.6;flex:none}.bo-cache-notice{font-size:10px;color:var(--muted);margin:0 0 12px}.bo-context{justify-content:flex-start}
 .business-overview.is-updating .bo-kpis,.business-overview.is-updating .bo-main-chart{opacity:.7;transition:opacity .16s ease}.business-overview .bo-kpis,.business-overview .bo-main-chart{transition:opacity .16s ease}.bo-cache-notice{min-height:15px}
+
+/* Overview composition: one shared row for weekly revenue and catalog health. */
+.bo-overview-pair,.bo-overview-trio{grid-column:1/-1;display:grid;gap:16px;min-width:0}
+.bo-overview-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
+.bo-overview-trio{grid-template-columns:repeat(3,minmax(0,1fr))}
+.bo-overview-pair>.bo-card,.bo-overview-trio>.bo-card{grid-column:auto;min-width:0;padding:18px 20px;border-radius:16px}
+.bo-overview-pair>#bo-catalog{order:0;display:flex;flex-direction:column}
+.bo-overview-pair .bo-catalog-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;flex:1;align-items:center}
+.bo-overview-pair .bo-catalog-metrics>div{min-width:0}
+.bo-overview-pair .bo-catalog-metrics strong{font-size:28px;white-space:nowrap}
+.bo-grid>#bo-categories,.bo-grid>#bo-waterfall{grid-column:1/-1}
+.bo-category-mosaic{aspect-ratio:1000/320;min-height:320px}
+.bo-mosaic-tile strong{width:100%;hyphens:none;overflow-wrap:anywhere;max-height:3.75em}
+@container category-tile (max-width:45px){
+ .bo-mosaic-tile strong{display:block;white-space:nowrap;text-overflow:ellipsis;max-height:1.25em}
+}
+.bo-category-legend{align-items:center;gap:10px 16px}
+.bo-heatmap-scale{display:flex;min-width:140px;width:280px;height:10px;gap:1px;border-radius:3px;overflow:hidden}
+.bo-heatmap-scale i{flex:1;width:auto;height:10px;border-radius:0}
+.bo-category-legend .growth{background:rgb(54,72,191)}
+.bo-category-legend .decline{background:rgb(180,35,24)}
+.bo-waterfall-plot{max-width:1000px;margin:22px auto 0}
+.bo-waterfall-plot svg{display:block;width:100%;height:auto;max-height:355px;min-width:0}
+.bo-waterfall-number{font-size:14px}
+@media(max-width:1150px) and (min-width:761px){
+ .bo-overview-trio{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .bo-overview-trio>#bo-market{grid-column:1/-1}
+ .bo-overview-pair .bo-catalog-metrics{grid-template-columns:1fr;gap:12px}
+}
+@media(max-width:760px){
+ .bo-overview-pair,.bo-overview-trio{grid-template-columns:minmax(0,1fr)}
+ .bo-overview-pair>.bo-card,.bo-overview-trio>.bo-card{padding:18px}
+ .bo-overview-pair .bo-catalog-metrics{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+ .bo-overview-pair .bo-catalog-metrics strong{font-size:23px}
+ .bo-category-mosaic{aspect-ratio:auto;min-height:360px}
+ .bo-heatmap-scale{width:100%;order:1}
+ .bo-waterfall-plot{overflow-x:auto}
+ .bo-waterfall-plot svg{min-width:620px;max-height:none}
+}
+
+@media(max-width:600px){
+ .bo-overview-pair .bo-catalog-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+ .bo-overview-pair .bo-catalog-metrics>div:first-child{grid-column:1/-1}
+}
+
+/* A single period and filter context stays with the executive overview. */
+.business-page main.bo-main{max-width:1464px;padding:12px 28px 0}
+.bo-sticky-header{position:sticky;top:0;z-index:30;background:var(--bg);margin-top:-12px;margin-bottom:12px;padding:12px 0 8px;box-shadow:0 6px 10px -10px #0c253e40}
+.bo-sticky-header .bo-heading{margin:0 0 14px;gap:12px}
+body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
+.bo-filterbar{display:flex;align-items:flex-start;flex-wrap:wrap;gap:12px 18px}
+.bo-period-control{flex:1 0 325px;max-width:370px;min-width:0}
+.bo-period-control .dated{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.bo-period-control .dated input{width:114px;min-width:0;flex:1;font-size:11px;padding:7px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.bo-period-control .dated button{font-size:10px;padding:8px 10px;border-radius:6px;white-space:nowrap}
+.bo-comparison-control{display:flex;gap:9px;align-items:center;margin-top:7px}
+.bo-comparison-control .bo-segments{padding:2px;gap:1px}
+.bo-comparison-control .bo-segments button{font-size:10px;padding:5px 9px}
+.bo-compare-dates{font-size:9px;color:var(--muted);white-space:nowrap}
+.bo-filter-group{border:0;padding:0;margin:0;min-width:0}
+.bo-filter-group legend{font-size:10px;color:var(--muted);margin-bottom:6px;padding:0}
+.bo-filter-group .bo-segments button{font-size:11px;padding:7px 9px}
+.bo-sticky-header button:disabled{opacity:.35;cursor:not-allowed;box-shadow:none}
+.bo-data-coverage{font-size:10px;color:var(--muted);min-height:17px;margin-top:8px}
+.bo-data-coverage button{font:inherit;color:inherit;background:none;border:0;padding:0;text-align:left}
+.bo-kpis{position:sticky;top:var(--bo-header-height,166px);z-index:21;background:var(--surface);box-shadow:0 7px 14px -12px #0c253e50}
+.bo-kpi{padding:10px 12px 7px}.bo-kpi-label{min-height:21px}.bo-kpi>strong{font-size:25px}
+.bo-kpi .bo-weekly-chart.is-mini svg{height:40px}
+.bo-card{scroll-margin-top:calc(var(--bo-header-height,166px) + 145px)}
+.bo-grid>#bo-revenue,.bo-grid>#bo-channels{min-height:355px}
+.bo-main-chart .bo-weekly-chart:not(.is-mini) svg{height:215px}
+.bo-channel-layout{grid-template-columns:clamp(125px,10.5vw,160px) minmax(0,1fr);gap:18px;margin-top:22px;align-items:center}
+.bo-channel-donut{width:100%;max-width:160px;aspect-ratio:1;display:block;overflow:visible}
+.bo-channel-donut text{font-family:inherit;fill:var(--text)}
+.bo-channel-donut .bo-donut-total{font-size:17px;font-weight:600;letter-spacing:-.6px}
+.bo-channel-donut .bo-donut-label{font-size:10px;fill:var(--muted)}
+.bo-channel-row{display:grid;grid-template-columns:6px minmax(68px,1fr) auto auto;align-items:center;gap:6px;padding:11px 0;border-bottom:1px solid var(--line);font-size:11px;min-width:0}
+.bo-channel-row:last-child{border-bottom:0}
+.bo-channel-row>span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis}
+.bo-channel-row>b{font-size:10px;white-space:nowrap;font-weight:500;color:var(--muted)}
+.bo-channel-list .bo-channel-row .bo-delta{display:inline-flex;position:static;grid-column:auto;font-size:8px;white-space:nowrap;bottom:auto;right:auto;padding:3px 4px}
+.bo-overview-summary,.bo-overview-mosaics{display:grid;grid-column:1/-1;gap:16px;min-width:0}
+.bo-overview-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
+.bo-overview-mosaics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.bo-overview-summary>.bo-card,.bo-overview-mosaics>.bo-card{grid-column:auto;min-width:0;padding:18px 20px;border-radius:16px}
+.bo-overview-summary>#bo-catalog{order:0;display:flex;flex-direction:column}
+.bo-overview-summary .bo-catalog-metrics{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,.85fr);gap:12px;align-items:center;flex:1}
+.bo-overview-summary .bo-catalog-metrics>div{min-width:0;padding:8px 0}
+.bo-overview-summary .bo-catalog-metrics strong{font-size:24px;white-space:nowrap}
+.bo-overview-summary .bo-catalog-metrics>div>span{font-size:9px}
+.bo-overview-summary .bo-quarter-summary strong{font-size:23px}
+.bo-overview-summary .bo-quarter-stacked{min-height:205px;gap:5px}
+.bo-overview-summary .bo-quarter-stacked .bo-stack{height:155px}
+.bo-overview-summary .bo-waterfall-plot{margin:22px auto 0;overflow:visible;max-width:none}
+.bo-overview-summary .bo-waterfall-plot svg{min-width:0;width:100%;height:auto;max-height:250px}
+.bo-overview-summary .bo-waterfall-plot text{font-size:11px}
+.bo-overview-summary .bo-waterfall-plot .bo-waterfall-number{font-size:15px}
+.bo-overview-mosaics .bo-category-mosaic{height:clamp(320px,25vw,380px);min-height:0;aspect-ratio:auto}
+.bo-overview-mosaics .bo-category-legend{gap:7px 10px;font-size:8px}
+.bo-overview-mosaics .bo-heatmap-scale{width:150px;min-width:80px;flex:1}
+.bo-overview-mosaics .bo-mosaic-tile{padding:8px;border-radius:8px}
+.bo-overview-mosaics .bo-mosaic-tile.is-small{padding:5px}
+@media(max-width:1250px){
+ .bo-overview-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .bo-overview-summary>#bo-waterfall{grid-column:1/-1}
+ .bo-overview-summary .bo-waterfall-plot{max-width:600px}
+ .bo-channel-layout{grid-template-columns:130px minmax(0,1fr);gap:14px}
+ .bo-channel-donut{width:130px}
+}
+@media(max-width:1000px){.bo-kpis{position:static}.bo-card{scroll-margin-top:calc(var(--bo-header-height,230px) + 12px)}}
+@media(max-width:760px){
+ .business-page main.bo-main{padding:12px 16px 0}
+ .bo-sticky-header .bo-heading{margin-bottom:10px}
+ body.business-page .bo-sticky-header h1{font-size:25px}
+ .bo-filterbar{gap:9px 14px}
+ .bo-period-control{flex-basis:100%;max-width:none}
+ .bo-filter-group .bo-segments button{font-size:10px;padding:6px 8px}
+ .bo-filter-group legend{font-size:9px;margin-bottom:4px}
+ .bo-data-coverage{font-size:9px;margin-top:6px}
+ .bo-overview-summary,.bo-overview-mosaics{grid-template-columns:minmax(0,1fr)}
+ .bo-overview-summary>.bo-card,.bo-overview-mosaics>.bo-card{padding:18px}
+ .bo-overview-summary>#bo-waterfall{grid-column:auto}
+ .bo-overview-mosaics .bo-category-mosaic{height:340px}
+ .bo-channel-layout{grid-template-columns:130px minmax(0,1fr);gap:14px}
+ .bo-channel-row{font-size:10px;gap:6px}
+ .bo-channel-row>b{font-size:9px}
+ .bo-channel-list .bo-channel-row .bo-delta{font-size:7px}
+ .bo-card{scroll-margin-top:calc(var(--bo-header-height,280px) + 12px)}
+}
+@media(max-width:420px){
+ .bo-channel-layout{grid-template-columns:110px minmax(0,1fr);gap:10px}
+ .bo-channel-donut{width:110px}
+ .bo-channel-row{grid-template-columns:5px minmax(62px,1fr) auto auto;gap:5px;padding:9px 0}
+ .bo-sticky-header .bo-local-label{display:none}
+}
+
+@media(max-width:760px){
+ body.business-page .bo-sidebar{position:static;display:flex;align-items:center;justify-content:flex-start;width:auto;height:48px;min-height:0;padding:10px 16px;border-right:0;border-bottom:1px solid var(--line)}
+ body.business-page .bo-sidebar .logo{display:block;margin:0;padding:0;width:auto}
+ body.business-page .bo-sidebar .logo img{display:block;width:130px;height:auto;max-width:none}
+ body.business-page .bo-sidebar .logo small,body.business-page .bo-sidebar .nav,body.business-page .bo-sidebar .side-label,body.business-page .bo-sidebar .bo-side-bottom{display:none}
+}
+@media(max-width:600px){
+ .bo-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .bo-kpi>strong{font-size:23px;white-space:nowrap}
+}
+
+/* Date controls sit above the filter groups. All switch tracks share a baseline. */
+.bo-filterbar { display: grid; gap: 10px; }
+.bo-period-control { width: min(100%, 354px); max-width: none; }
+.bo-period-control .dated {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto repeat(2,minmax(0,1fr));
+}
+.bo-period-control .dated :is(input, button) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.bo-filter-groups { display: flex; align-items: start; flex-wrap: wrap; gap: 9px 16px; }
+.bo-comparison-control { display: block; margin: 0; }
+.bo-filter-groups .bo-segments { width: max-content; padding: 3px; gap: 2px; }
+.bo-filter-groups .bo-segments button { padding: 0 9px; height: 28px; font-size: 11px; }
+.bo-compare-dates { display: block; margin-top: 3px; }
+.bo-overview-summary { grid-template-columns: minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr); }
+.bo-catalog-table { border-collapse: collapse; width: 100%; font-size: 11px; }
+.bo-catalog-table th, .bo-catalog-table td { border-bottom: 1px solid var(--line); padding: 10px 3px; }
+.bo-catalog-table thead th { color: var(--muted); font-weight: 500; font-size: 9px; }
+.bo-catalog-table tbody th { text-align: left; font-weight: 600; }
+.bo-catalog-table td { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bo-catalog-table thead th:not(:first-child) { text-align: right; }
+.bo-catalog-period { font-size: 9px; margin: 9px 0 0; color: var(--muted); }
+.bo-overview-mosaics .bo-card > header { align-items: center; }
+.bo-map-units button { padding: 5px 8px; }
+.bo-overview-mosaics .bo-mosaic-tile strong {
+  display: block;
+  width: 100%;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  max-height: 1.25em;
+}
+@media (max-width: 1250px) {
+  .bo-overview-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 760px) {
+  .bo-overview-summary { grid-template-columns: minmax(0,1fr); }
+  .bo-filter-groups .bo-segments button { padding-inline: 7px; font-size: 10px; }
+  .bo-filter-groups .bo-filter-group { max-width: 100%; }
+}

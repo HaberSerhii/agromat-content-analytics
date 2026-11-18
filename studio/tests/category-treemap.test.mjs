@@ -4,6 +4,7 @@ import {
   categoryPeriod,
   treemapLayout,
   categoryTone,
+  categoryColor,
   categoryMosaic,
 } from "../public/category-treemap.mjs";
 test("mosaic tile areas preserve revenue proportions without overlapping", () => {
@@ -35,10 +36,10 @@ test("mosaic tile areas preserve revenue proportions without overlapping", () =>
     }
 });
 test("colors encode growth, decline, flat values, and absent history rather than category rank", () => {
-  assert.equal(categoryTone(20), "growth-strong");
+  assert.equal(categoryTone(20), "growth");
   assert.equal(categoryTone(9), "growth");
   assert.equal(categoryTone(-7), "decline");
-  assert.equal(categoryTone(-20), "decline-strong");
+  assert.equal(categoryTone(-20), "decline");
   assert.equal(categoryTone(0.5), "flat");
   assert.equal(categoryTone(null), "missing");
   const current = [
@@ -52,8 +53,24 @@ test("colors encode growth, decline, flat values, and absent history rather than
     ];
   const tiles = categoryMosaic(current, previous);
   assert.equal(tiles.find((t) => t.label === "A").tone, "growth");
-  assert.equal(tiles.find((t) => t.label === "B").tone, "decline-strong");
+  assert.equal(tiles.find((t) => t.label === "B").tone, "decline");
   assert.equal(tiles.find((t) => t.label === "New").delta, null);
+});
+
+test("quantity mode ranks, sizes and colors the tiles by shipped units", () => {
+  const current = [
+    { label: "A", revenue: 10000, goods: 3 },
+    { label: "B", revenue: 0, goods: 12 },
+  ];
+  const previous = [
+    { label: "A", revenue: 5000, goods: 6 },
+    { label: "B", revenue: 0, goods: 8 },
+  ];
+  const [first, second] = categoryMosaic(current, previous, true, { measure: "goods" });
+  assert.equal(first.label, "B");
+  assert.equal(first.delta, 50);
+  assert.equal(second.delta, -50);
+  assert.equal(first.w * first.h / (second.w * second.h), 4);
 });
 
 test("category month and year use current calendar period through yesterday",()=>{
@@ -61,4 +78,24 @@ test("category month and year use current calendar period through yesterday",()=
  assert.deepEqual(categoryPeriod("2026-11-16","year"),{from:"2026-01-01",to:"2026-11-15",empty:false});
  assert.equal(categoryPeriod("2026-01-01","year").empty,true);
  assert.equal(categoryPeriod("2026-03-01","month").empty,true);
+});
+
+
+test('heatmap color bands change every two percent in opposite thermal directions',()=>{
+ assert.equal(categoryTone(1.99),'flat');assert.equal(categoryTone(-1.99),'flat');
+ assert.equal(categoryColor(1.99).band,0);
+ assert.deepEqual(categoryColor(2),categoryColor(3.99));
+ assert.notEqual(categoryColor(2).background,categoryColor(4).background);
+ assert.equal(categoryColor(-4).band,-2);assert.equal(categoryColor(4).band,2);
+ assert.notEqual(categoryColor(-4).background,categoryColor(4).background);
+ assert.equal(categoryColor(null),null);assert.equal(categoryColor(Infinity),null);
+ const rgb=color=>color.match(/\d+/g).map(Number);
+ assert.ok(rgb(categoryColor(-20).background)[0]>rgb(categoryColor(-20).background)[2]);
+ assert.ok(rgb(categoryColor(20).background)[2]>rgb(categoryColor(20).background)[0]);
+ const luminance=values=>values.map(value=>value/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
+ for(let step=-100;step<=100;step++){
+  const color=categoryColor(step*2),bg=luminance(rgb(color.background));
+  const fg=luminance(color.foreground.slice(1).match(/../g).map(v=>parseInt(v,16)));
+  assert.ok((Math.max(bg,fg)+.05)/(Math.min(bg,fg)+.05)>=4.5,`contrast at ${step*2}%`);
+ }
 });

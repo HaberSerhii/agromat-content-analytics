@@ -1,4 +1,5 @@
 import { graphBins, calendarBins } from "./chart-periods.mjs?v=fastoverview2";
+import {comparisonRange,addDays} from './overview-filters.mjs';
 const DAY = 86400000;
 const esc = (v) =>
   String(v ?? "")
@@ -46,6 +47,7 @@ export function historySeries(history, metric, mini = false) {
     (history.web?.days || []).map((row) => [row.date, row]),
   );
   const webDates = [...webDays.keys()].sort();
+  const webPeriods=new Map((history.web?.periods||[]).map(row=>[row.key,row]));
   const range = history.range,
     year = Number(range.to.slice(0, 4));
   const daily = new Map();
@@ -78,6 +80,8 @@ export function historySeries(history, metric, mini = false) {
       return period?.hasData ? period.users : null;
     }
     if (selection && metric === "conversion") {
+      const period=webPeriods.get(row.from+':'+row.to);
+      if(period)return period.sessions>0?period.purchases/period.sessions*100:null;
       if (
         !webDates.length ||
         row.from < webDates[0] ||
@@ -113,15 +117,24 @@ export function historySeries(history, metric, mini = false) {
     if (metric === "aov") return docs > 0 ? revenue / docs : null;
     return { revenue, docs, canceled }[metric] ?? null;
   }
-  if (selection)
+  if (selection) {
+    let previousEnd;
     return (
       selection.range
         ? calendarBins(selection.range, selection.interval)
         : graphBins(selection.today, selection.preset)
-    ).map((row) => ({
+    ).map((original) => {
+      let row=original;
+      if(selection.comparisonMode) {
+        const prior=comparisonRange({from:row.from,to:row.to},selection.comparisonMode);
+        if(previousEnd&&prior.from<=previousEnd)prior.from=addDays(previousEnd,1);
+        previousEnd=prior.to;
+        row={...row,previousFrom:prior.from,previousTo:prior.to};
+      }
+      return ({
       ...row,
       value: value(row),
-      previous: value({
+      previous: row.previousFrom > row.previousTo ? null : value({
         ...row,
         from: row.previousFrom,
         to: row.previousTo,
@@ -131,7 +144,8 @@ export function historySeries(history, metric, mini = false) {
         metric === "users"
           ? userPeriods.get(row.from + ":" + row.to)?.dataThrough
           : null,
-    }));
+    });});
+  }
   return bins(mini ? `${year}-01-01` : range.from, range.to)
     .filter((r) => !mini || r.year === year)
     .map((row) => {
@@ -218,12 +232,14 @@ export function weeklyChart(
     today,
     range,
     interval,
+    showCaption = true,
+    comparisonMode,
   } = {},
 ) {
   const rows = historySeries(
       history,
       metric,
-      range ? { range, interval } : preset ? { preset, today } : mini,
+      range ? { range, interval, comparisonMode } : preset ? { preset, today } : mini,
     ),
     valid = rows.some((r) => r.value != null);
   if (!valid)
@@ -275,7 +291,7 @@ export function weeklyChart(
   }));
   const active = rows.findLast((r) => r.value != null),
     first = rows[0];
-  return `<div class="bo-weekly-chart ${mini ? "is-mini" : ""}" data-weekly-chart data-metric="${metric}" data-rows="${esc(JSON.stringify(points))}" data-mini="${mini}" data-compare="${compare}"><svg preserveAspectRatio="none" viewBox="0 0 ${width} ${height}" role="img" aria-label="${preset || range ? "Вибраний період графіків" : mini ? "Поточний рік" : "Останні 52 тижні"} · ${esc(metric)} · ${rows[0]?.interval==='day'?'денне':'тижневе'} порівняння"><defs><linearGradient id="${id}-fill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="${color}" stop-opacity=".17"/><stop offset="1" stop-color="${color}" stop-opacity=".01"/></linearGradient></defs>${grid}${!mini ? current.map((p) => `<path d="${smoothPath(p)} L${p.at(-1)[0]},${bottom} L${p[0][0]},${bottom}Z" fill="url(#${id}-fill)"/>`).join("") : ""}${prior.map((p) => `<path d="${smoothPath(p)}" class="bo-prior-line"/>`).join("")}${current.map((p) => `<path d="${smoothPath(p)}" stroke="${color}" class="bo-current-line"/>`).join("")}${ticks}<g class="bo-chart-cursor" visibility="hidden"><path class="bo-crosshair" d="M0 ${top}V${bottom}"/><circle class="bo-focus-prior" r="3.5"/><circle class="bo-focus-now" r="4.5" stroke="${color}"/></g></svg><div class="bo-week-tooltip" role="tooltip" hidden></div>${mini ? `<span class="bo-mini-range">${preset || range ? `${first?.from.slice(8)}.${first?.from.slice(5, 7)}–${rows.at(-1)?.to.slice(8)}.${rows.at(-1)?.to.slice(5, 7)} · ${first?.interval === "day" ? "дні" : "тижні"}` : `${first?.year} · Т${first?.week}–Т${active?.week}`}${compare ? " · ┄ торік" : ""}</span>` : `<div class="bo-week-legend"><span><i style="background:${color}"></i>${preset || range ? "Вибраний період" : "Останні 52 тижні"}</span>${compare ? `<span><i class="prior"></i>${preset || range ? "Ті самі дати торік" : "Ті самі ISO-тижні торік"}</span>` : ""}<small>Наведіть на ${rows[0]?.interval==='day'?'день':'тиждень'}</small></div>`}</div>`;
+  return `<div class="bo-weekly-chart ${mini ? "is-mini" : ""}" data-weekly-chart data-metric="${metric}" data-rows="${esc(JSON.stringify(points))}" data-mini="${mini}" data-compare="${compare}" data-comparison-mode="${comparisonMode || "yoy"}"><svg preserveAspectRatio="none" viewBox="0 0 ${width} ${height}" role="img" aria-label="${preset || range ? "Вибраний період графіків" : mini ? "Поточний рік" : "Останні 52 тижні"} · ${esc(metric)} · ${rows[0]?.interval==='day'?'денне':'тижневе'} порівняння"><defs><linearGradient id="${id}-fill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="${color}" stop-opacity=".17"/><stop offset="1" stop-color="${color}" stop-opacity=".01"/></linearGradient></defs>${grid}${!mini ? current.map((p) => `<path d="${smoothPath(p)} L${p.at(-1)[0]},${bottom} L${p[0][0]},${bottom}Z" fill="url(#${id}-fill)"/>`).join("") : ""}${prior.map((p) => `<path d="${smoothPath(p)}" class="bo-prior-line"/>`).join("")}${current.map((p) => `<path d="${smoothPath(p)}" stroke="${color}" class="bo-current-line"/>`).join("")}${ticks}<g class="bo-chart-cursor" visibility="hidden"><path class="bo-crosshair" d="M0 ${top}V${bottom}"/><circle class="bo-focus-prior" r="3.5"/><circle class="bo-focus-now" r="4.5" stroke="${color}"/></g></svg><div class="bo-week-tooltip" role="tooltip" hidden></div>${mini ? showCaption ? `<span class="bo-mini-range">${preset || range ? `${first?.from.slice(8)}.${first?.from.slice(5, 7)}–${rows.at(-1)?.to.slice(8)}.${rows.at(-1)?.to.slice(5, 7)} · ${first?.interval === "day" ? "дні" : "тижні"}` : `${first?.year} · Т${first?.week}–Т${active?.week}`}${compare ? " · ┄ торік" : ""}</span>` : "" : `<div class="bo-week-legend"><span><i style="background:${color}"></i>${preset || range ? "Вибраний період" : "Останні 52 тижні"}</span>${compare ? `<span><i class="prior"></i>${comparisonMode === "wow" ? "Попередній тиждень" : comparisonMode === "mom" ? "Попередній місяць" : preset || range ? "Ті самі дати торік" : "Ті самі ISO-тижні торік"}</span>` : ""}</div>`}</div>`;
 }
 export function bindWeeklyCharts(root = document) {
   root.querySelectorAll("[data-weekly-chart]").forEach((chart) => {
@@ -285,7 +301,8 @@ export function bindWeeklyCharts(root = document) {
       tooltip = chart.querySelector("[role=tooltip]"),
       metric = chart.dataset.metric,
       mini = chart.dataset.mini === "true",
-      compare = chart.dataset.compare === "true";
+      compare = chart.dataset.compare === "true",
+      baselineLabel = chart.dataset.comparisonMode === "wow" ? "до попереднього тижня" : chart.dataset.comparisonMode === "mom" ? "до попереднього місяця" : "до торік";
     const show = (index) => {
       const row = rows[Math.min(rows.length - 1, Math.max(0, index))];
       const delta =
@@ -307,7 +324,7 @@ export function bindWeeklyCharts(root = document) {
         circle.setAttribute("cx", row.x);
         circle.setAttribute("cy", y ?? 0);
       }
-      tooltip.innerHTML = `<strong>${row.label} · ${row.year}</strong><small>${dateLabel(row.from)} — ${dateLabel(row.to)}</small>${row.coverageThrough && row.coverageThrough < row.to ? `<small>BigQuery: дані до ${dateLabel(row.coverageThrough)}; тиждень неповний</small>` : ""}<div><i></i><span>${row.year}</span><b>${fmt(row.value, metric)}</b></div>${compare ? `<div class="previous"><i></i><span>${row.year - 1}</span><b>${fmt(row.previous, metric)}</b></div><small>Торік: ${dateLabel(row.previousFrom)} — ${dateLabel(row.previousTo)}</small><p class="${delta == null ? "" : (metric === "canceled" ? delta <= 0 : delta >= 0) ? "positive" : "negative"}">${delta == null ? "Зміна не визначена" : `${delta >= 0 ? "↗ +" : "↘ "}${new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 1 }).format(delta)}% до торік`}</p>` : ""}`;
+      tooltip.innerHTML = `<strong>${row.label} · ${row.year}</strong><small>${dateLabel(row.from)} — ${dateLabel(row.to)}</small>${row.coverageThrough && row.coverageThrough < row.to ? `<small>BigQuery: дані до ${dateLabel(row.coverageThrough)}; тиждень неповний</small>` : ""}<div><i></i><span>Поточний</span><b>${fmt(row.value, metric)}</b></div>${compare ? `<div class="previous"><i></i><span>Порівняння</span><b>${fmt(row.previous, metric)}</b></div><small>Порівняння: ${dateLabel(row.previousFrom)} — ${dateLabel(row.previousTo)}</small><p class="${delta == null ? "" : (metric === "canceled" ? delta <= 0 : delta >= 0) ? "positive" : "negative"}">${delta == null ? "Зміна не визначена" : `${delta >= 0 ? "↗ +" : "↘ "}${new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 1 }).format(delta)}% ${baselineLabel}`}</p>` : ""}`;
       tooltip.hidden = false;
       const rect = svg.getBoundingClientRect(),
         chartRect = chart.getBoundingClientRect(),
