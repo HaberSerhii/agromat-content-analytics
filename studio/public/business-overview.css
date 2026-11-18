@@ -1710,3 +1710,21 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-catalog-delta{display:block;font-size:10px;color:var(--muted);text-decoration:underline dotted;text-underline-offset:2px}
 .bo-catalog-delta.up{color:var(--green,#087243)}
 .bo-catalog-delta.down{color:var(--red,#af312a)}
+
+.bo-ready-to-ship {
+  display: flex;
+  gap: 2px 6px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.bo-ready-to-ship b { color: var(--text); font-weight: 600; white-space: nowrap; }
+.bo-kpis:has(.bo-ready-to-ship) .bo-kpi {
+  display: flex;
+  flex-direction: column;
+}
+.bo-kpis:has(.bo-ready-to-ship) .bo-kpi-label { width: 100%; }
+.bo-kpis:has(.bo-ready-to-ship) .bo-kpi > .bo-weekly-chart,
+.bo-kpis:has(.bo-ready-to-ship) .bo-kpi > .bo-mini-empty { margin-top: auto; padding-top: 10px; width: 100%; }

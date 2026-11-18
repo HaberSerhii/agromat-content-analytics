@@ -506,6 +506,17 @@ function catalogPanel(data) {
   ${!source ? '<p class="bo-catalog-period" role="status">Завантажуємо показники…</p>' : !source.available ? '<p class="bo-catalog-period">Дані сегментів тимчасово недоступні.</p>' : ''}`;
   return card('catalog','Здоров’я каталогу','',body,'','bo-catalog');
 }
+function readyToShipMarkup(snapshot) {
+  if (!Number.isFinite(snapshot?.revenue)) return '';
+  const time = new Date(snapshot.updatedAt);
+  const formatted = Number.isFinite(time.getTime()) ? new Intl.DateTimeFormat('uk-UA', {
+    timeZone:'Europe/Kyiv', dateStyle:'short', timeStyle:'short',
+  }).format(time) : '';
+  const tooltip = ['Усі канали · ERP', formatted && 'Станом на ' + formatted,
+    number(snapshot.docs) + ' замовлень'].filter(Boolean).join(' · ');
+  const sign = snapshot.revenue > 0 ? '+' : '';
+  return `<span class="bo-ready-to-ship" title="${esc(tooltip)}"><span>Транзит</span><b>${sign}${money(snapshot.revenue)}</b></span>`;
+}
 export function renderBusinessOverview(data, state, chartHTML) {
   const model = overviewModel(data, state),
     revenue = model.metrics[0];
@@ -525,7 +536,7 @@ export function renderBusinessOverview(data, state, chartHTML) {
   };
   const chartTotal = metric.value,
     chartPrior = metric.prior;
-  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${state.chartMetric === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${state.chartMetric === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}${state.acquisition&&state.acquisition!=="all"?" · "+esc(state.acquisition):""}${state.device&&state.device!=="all"?" · "+esc(state.device):""}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
+  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${state.chartMetric === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${state.chartMetric === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${m.key === "revenue" ? readyToShipMarkup(data.readyToShip) : ""}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}${state.acquisition&&state.acquisition!=="all"?" · "+esc(state.acquisition):""}${state.device&&state.device!=="all"?" · "+esc(state.device):""}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
     ["day", "Дні"],
     ["week", "Тижні"],
   ]

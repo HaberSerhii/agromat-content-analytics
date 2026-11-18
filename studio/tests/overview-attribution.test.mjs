@@ -38,6 +38,21 @@ test('one shipment scope drives totals, channel chart, categories, brands and re
   assert.doesNotMatch(JSON.stringify(filtered),/"(?:transactionId|webshopId|docsRef|user_pseudo_id|seller|number)"\s*:/);
 });
 
+test('ready-to-ship amount is a current ERP snapshot outside the chart series',()=>{
+  const source=fixture();
+  source.rows.push(
+    order(701,2500,{state:'Відвантаження дозволено',shippedDate:null,createdDate:'2026-10-10',returnSum:200}),
+    order(702,500,{state:'Відвантаження дозволено',shippedDate:null,cartNumber:'cart-702'}),
+    order(703,5000,{state:'Відвантаження дозволено',shippedDate:null,cancelReason:'дубль замовлення'}),
+  );
+  const result=buildOverviewAttribution(source,selection);
+  assert.deepEqual(result.readyToShip,{revenue:2800,docs:2,updatedAt:source.updatedAt});
+  assert.equal(result.sales.metrics.shippedRevenue,1500);
+  const markup=renderBusinessOverview(result,selection);
+  assert.equal((markup.match(/Транзит/g)||[]).length,1);
+  assert.match(markup,/data-bo-metric="revenue"[^]*?Транзит<\/span><b>\+2,8\sтис\.[^]*?<\/button>/);
+});
+
 test('MoM daily comparison does not count the last day of February four times',()=>{
  const days=(month,length)=>Array.from({length},(_,index)=>({date:`2026-${month}-${String(index+1).padStart(2,'0')}`,revenue:1,docs:1}));
  const range={from:'2026-03-01',to:'2026-03-31'};

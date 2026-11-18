@@ -63,6 +63,13 @@ export function buildOverviewAttribution({rows,transactions,webRows,rozetkaIds,u
     const channel=erpChannel(row,rozetka),match=channel==='site'&&row.webshopId?index.get(String(row.webshopId)):null;
     records.push({row,channel,match});
   }
+  // An ERP snapshot of open orders, independent of the sales history range.
+  const readyToShip = {revenue:0, docs:0, updatedAt};
+  for (const {row} of records) {
+    if (String(row.state).trim().toLocaleLowerCase('uk') !== 'відвантаження дозволено' || excluded(row)) continue;
+    readyToShip.revenue += row.docsSum - row.returnSum;
+    readyToShip.docs++;
+  }
   const matches=record=>(state.acquisition==='all'||record.match?.acquisition===state.acquisition)&&(state.device==='all'||record.match?.device===state.device);
   const filtered=records.filter(matches);
   const aggregate=selection=>({...salesAggregate(selection,range),updatedAt,previous:{...salesAggregate(selection,baseline),updatedAt}});
@@ -91,5 +98,5 @@ export function buildOverviewAttribution({rows,transactions,webRows,rozetkaIds,u
   const trafficGroups=[{id:'direct',name:'Direct',color:'#533afd'},{id:'organic',name:'Organic',color:'#8d7afb'},{id:'cpc',name:'CPC',color:'#baaefa'},{id:'other',name:'Інше',color:'#d6d7df'}].filter(group=>state.acquisition==='all'||group.id===state.acquisition);
   const trafficBins=calendarBins(range,rangeDays(range)>90?'month':rangeDays(range)>31?'week':'day');
   const quarterTraffic={available:currentWeb.available,range,groups:trafficGroups,weeks:trafficBins.filter(bin=>get(bin.from+':'+bin.to,'all')?.data_through).map(bin=>{const key=bin.from+':'+bin.to,counts=Object.fromEntries(trafficGroups.map(group=>[group.id,Number(get(key,group.id)?.sessions||0)]));return {...bin,counts,total:trafficGroups.reduce((sum,group)=>sum+counts[group.id],0)};})};
-  return {available:true,range,comparisonRange:baseline,sales,salesChannels,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
+  return {available:true,range,comparisonRange:baseline,readyToShip,sales,salesChannels,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
 }
