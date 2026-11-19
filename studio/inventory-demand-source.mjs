@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import {gunzip} from 'node:zlib';
 import {promisify} from 'node:util';
 import {createRequire} from 'node:module';
+import {readSnapshotProducts} from './inventory-snapshot-stream.mjs';
 import {catalogSegment} from './catalog-health.mjs';
 import {goodsOnlySalesRow,netSalesItems} from './erp-items.mjs';
 import {addDays,rangeDays} from './public/overview-filters.mjs';
@@ -20,6 +21,12 @@ const datePattern = /^\d{4}-\d\d-\d\d$/;
 const kyivDate = new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Kyiv'});
 let sourceCache, analysisCache, viewCache;
 let ga4Queries = [];
+
+export function releaseInventoryDemandCache() {
+  if (sourceCache) clearTimeout(sourceCache.eviction);
+  sourceCache = null;
+  analysisCache = null;
+}
 
 async function snapshot(file) {
   return JSON.parse(await unzip(await fs.readFile(file)));
@@ -144,7 +151,17 @@ function stockWatch(data,sales,traffic,from,to) {
       days.size<stockRule.viewDays?`Покриття GA4 · ${days.size} з ${stockRule.viewDays} днів.`:null};
 }
 
-export async function loadInventoryData(selection,readERP,readOrigins,{dir, catalogue, readViews = recentViews} = {}) {
+async function aggregateInventorySales(data,readERP,rozetka,to,releaseERP) {
+  try {
+    const erp = await readERP().catch(()=>null);
+    data.updatedAt = erp?.updatedAt ?? null;
+    return readInventorySales(data,erp,rozetka,to);
+  } finally {
+    releaseERP();
+  }
+}
+
+export async function loadInventoryData(selection,readERP,readOrigins,{dir, catalogue, readViews = recentViews, releaseERP = () => {}} = {}) {
   const {from,to} = selection, previous = inventoryPrevious(selection), first = addDays(previous.from,-baselineDays);
   const fromViews = addDays(to,1-stockRule.viewDays);
   const dates = Array.from({length:rangeDays({from:first,to})},(_,index)=>addDays(first,index));
@@ -153,10 +170,9 @@ export async function loadInventoryData(selection,readERP,readOrigins,{dir, cata
   dir ??= process.env.PRODUCT_SNAPSHOTS_DIR || '/var/lib/agromat-analytics/product-snapshots';
   catalogue ??= process.env.STUDIO_CATALOG_CACHE || '/var/cache/agromat-analytics/products-lite.json.gz';
   const compactDir = dir+'/availability-daily';
-  const salesTask = Promise.all([readERP().catch(()=>null),readOrigins().catch(()=>null)]);
+  const originTask = readOrigins().catch(()=>null);
   const viewsTask = readViews(fromViews,to).catch(()=>null);
-  const [catalog,compact,full] = await Promise.all([snapshot(catalogue),files(compactDir),files(dir)]);
-  if (!Array.isArray(catalog.products)) throw Error('inventory_catalog_unavailable');
+  const [compact,full] = await Promise.all([files(compactDir),files(dir)]);
   const fullIndex = new Int16Array(dates.length).fill(-1);
   let fullCount = 0;
   for (const [i,date] of dates.entries()) if (full.has(date)) fullIndex[i]=fullCount++;
@@ -180,32 +196,46 @@ export async function loadInventoryData(selection,readERP,readOrigins,{dir, cata
     byId.set(p.id,item);
     return item;
   }
-  for (const p of catalog.products) include(p);
+  await readSnapshotProducts(catalogue,include);
   const data = {dates,index,weeks,items,fullIndex,statusCoverage:new Uint8Array(dates.length),
     salesCoverage:new Uint8Array(dates.length)};
   for (const [i,date] of dates.entries()) {
-    // Some old periods survive only in the compact archive. Full snapshots add prices and stock.
-    const fullDay = full.has(date) ? await snapshot(dir+'/'+date+'.json.gz').catch(()=>null) : null;
-    const compactDay = compact.has(date) && !Array.isArray(fullDay?.products)
-      ? await snapshot(compactDir+'/'+date+'.json.gz').catch(()=>null) : null;
     const endpoint = date===to || date===previous.to;
-    if (Array.isArray(fullDay?.products)) {
-      data.statusCoverage[i]=1;
-      for (const p of fullDay.products) {
-        const item = byId.get(p.id) || include(p);
-        if (!item) continue;
-        item.states[i] = observation(p.statusId,p.deleted,p.isOnSale);
-        if (Number.isFinite(p.price) && p.price>0 && (!p.currency || /^(uah|грн\.?|₴)$/i.test(p.currency))) {
-          item.prices ??= new Float64Array(fullCount);
-          item.prices[fullIndex[i]]=p.price;
-        }
-        if (endpoint) {
-          item.dimensions ??= new Map();
-          item.dimensions.set(i,dimensions(p));
-        }
-        if (date===to && !p.deleted && Number.isFinite(p.stockQty)) item.endStock=p.stockQty;
+    let fullRows = [];
+    if (full.has(date)) {
+      try {
+        await readSnapshotProducts(dir+'/'+date+'.json.gz',p=>{
+          const price = Number.isFinite(p.price) && p.price>0 && (!p.currency || /^(uah|грн\.?|₴)$/i.test(p.currency)) ? p.price : null;
+          fullRows.push({id:p.id,state:observation(p.statusId,p.deleted,p.isOnSale),price,
+            metadata:byId.has(p.id) ? null : p,
+            dimensions:endpoint ? dimensions(p) : null,
+            stock:date===to && !p.deleted && Number.isFinite(p.stockQty) ? p.stockQty : null});
+        });
+      } catch {
+        fullRows=null;
       }
-    } else if (compactDay?.version===1 && Array.isArray(compactDay.products)) {
+    }
+    if (full.has(date) && fullRows) {
+      data.statusCoverage[i]=1;
+      for (const row of fullRows) {
+        const item = byId.get(row.id) || include(row.metadata);
+        if (!item) continue;
+        item.states[i] = row.state;
+        if (row.price!==null) {
+          item.prices ??= new Float64Array(fullCount);
+          item.prices[fullIndex[i]]=row.price;
+        }
+        if (row.dimensions) {
+          item.dimensions ??= new Map();
+          item.dimensions.set(i,row.dimensions);
+        }
+        if (row.stock!==null) item.endStock=row.stock;
+      }
+      continue;
+    }
+    // Older observations survive in the compact status archive.
+    const compactDay = compact.has(date) ? await snapshot(compactDir+'/'+date+'.json.gz').catch(()=>null) : null;
+    if (compactDay?.version===1 && Array.isArray(compactDay.products)) {
       data.statusCoverage[i]=1;
       for (const [id,category,brand,status,flags] of compactDay.products) {
         const item = byId.get(id);
@@ -224,9 +254,8 @@ export async function loadInventoryData(selection,readERP,readOrigins,{dir, cata
   for (const item of items.values()) {
     item.archivedBeforeRange = item.archived && !item.states.some(value=>(value&3)===1);
   }
-  const [erp,rozetka] = await salesTask;
-  data.updatedAt = erp?.updatedAt ?? null;
-  const sales = readInventorySales(data,erp,rozetka,to);
+  // Finish reading the large JSON snapshots before deserializing the ERP cache.
+  const sales = await aggregateInventorySales(data,readERP,await originTask,to,releaseERP);
   data.stockWatch = stockWatch(data,sales,await viewsTask,fromViews,to);
   return data;
 }
@@ -256,15 +285,17 @@ function download(report,rows,selection) {
     file:XLSX.write(book,{bookType:'xlsx',type:'base64',compression:true})};
 }
 
-export async function readInventoryDemand(selection,readERP,readOrigins) {
+export async function readInventoryDemand(selection,readERP,readOrigins,releaseERP) {
   const {from,to,sku,sort,direction,page,priorityDate,export:exportFile,...filters} = selection;
   const key = from+':'+to;
   if (sourceCache?.key!==key || sourceCache.expires<=Date.now()) {
-    analysisCache = null;
-    sourceCache = null;
-    const value = await loadInventoryData(selection,readERP,readOrigins);
+    releaseInventoryDemandCache();
+    releaseERP?.();
+    const value = await loadInventoryData(selection,readERP,readOrigins,{releaseERP});
     const hasCoverage = value.salesCoverage.some(Boolean) && value.statusCoverage.some(Boolean);
-    sourceCache = {key,value,expires:Date.now()+(hasCoverage ? 600_000 : 60_000)};
+    const ttl = hasCoverage ? 600_000 : 60_000;
+    const eviction = setTimeout(releaseInventoryDemandCache,ttl).unref();
+    sourceCache = {key,value,expires:Date.now()+ttl,eviction};
   }
   const data = sourceCache.value;
   if (sku) {

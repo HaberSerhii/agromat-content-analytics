@@ -166,11 +166,12 @@ async function readPeriodShipments(scope, readShipments) {
   return value;
 }
 
-export async function readContentConversion(selection, {readShipments,releaseERP}) {
+export async function readContentConversion(selection, {readShipments,releaseERP,releaseOtherReport}) {
   const {table,sort,direction,page,bucket,export:download,...scope} = selection;
   const key = JSON.stringify(scope);
   if (reportCache?.key !== key || reportCache.expires <= Date.now()) {
     reportCache = null;
+    releaseOtherReport?.();
     const shipments = await readPeriodShipments(scope,readShipments);
     // The deserialized ERP rows are much larger than the per-SKU totals.
     releaseERP();
@@ -184,7 +185,10 @@ export async function readContentConversion(selection, {readShipments,releaseERP
     reportCache = {key,report,expires};
   }
   const {tables,...summary} = reportCache.report;
-  if (download === '1') releaseERP();
+  if (download === '1') {
+    releaseERP();
+    releaseOtherReport?.();
+  }
   const detail = contentTable({tables},selection);
   return download === '1'
     ? {available:true,filename:`content-conversion-${scope.from}-${scope.to}.xlsx`,file:exportContent(summary,selection,detail.rows)}

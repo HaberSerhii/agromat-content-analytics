@@ -8,6 +8,7 @@ import {addDays} from '../public/overview-filters.mjs';
 import {inventoryPrevious,inventorySelection} from '../public/inventory-demand-filters.mjs';
 import {compareInventory,inventoryAnalysis,inventoryDetail,observation,periodItem} from '../inventory-demand.mjs';
 import {loadInventoryData,readInventorySales} from '../inventory-demand-source.mjs';
+import {readSnapshotProducts} from '../inventory-snapshot-stream.mjs';
 
 const today = '2026-11-19';
 const select = filters=>inventorySelection({from:'2026-11-12',to:'2026-11-18',...filters},today);
@@ -209,4 +210,21 @@ test('source reads compact status history, full snapshots add prices, and absent
   assert.equal(noStatus.out,null);
   assert.equal(noStatus.loss,null);
   assert.deepEqual(noStatus.rows,[]);
+});
+
+test('streams full snapshots across chunks and rejects truncated snapshots',async t=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'studio-snapshot-stream-'));
+  t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const filename=path.join(dir,'big.json.gz');
+  const products=[
+    {id:7,name:'Товар ]{ \\"'.repeat(12000),stock:{statusId:5},tags:['{','}']},
+    {id:8,name:'Наступний товар',statusId:1},
+  ];
+  const bytes=gzipSync(JSON.stringify({syncedAt:'2026-11-18T12:00:00Z',products}));
+  await fs.writeFile(filename,bytes);
+  const rows=[];
+  await readSnapshotProducts(filename,product=>rows.push(product));
+  assert.deepEqual(rows,products);
+  await fs.writeFile(filename,bytes.subarray(0,-8));
+  await assert.rejects(readSnapshotProducts(filename,()=>{}));
 });

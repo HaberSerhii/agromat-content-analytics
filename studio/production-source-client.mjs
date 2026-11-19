@@ -1,10 +1,10 @@
 import http from 'node:http';
 
-export function readProductionSource(route, params = new URLSearchParams()) {
+export function readProductionSource(route, params = new URLSearchParams(), signal) {
   const socketPath = process.env.STUDIO_SOURCE_SOCKET;
   if (!socketPath) return Promise.reject(Error('studio_source_not_configured'));
   return new Promise((resolve, reject) => {
-    const request = http.get({socketPath, path:'/' + route + '?' + params}, response => {
+    const request = http.get({socketPath, path:'/' + route + '?' + params, signal}, response => {
       if (response.statusCode !== 200) {
         response.resume();
         reject(Error('studio_source_unavailable'));

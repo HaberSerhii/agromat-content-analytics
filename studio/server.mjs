@@ -220,8 +220,15 @@ export const server = http.createServer(async (req, res) => {
         let selection;
         try { selection = inventorySelection(url.searchParams); }
         catch { return json(400,{available:false,notice:'Перевірте період і фільтри. Максимум 90 завершених днів.'}); }
-        try { return json(200, await readProductionSource(kind,new URLSearchParams(selection))); }
-        catch { return json(503, {available:false, notice:'Дані звіту «Наявність × попит» тимчасово недоступні.'}); }
+        const controller = new AbortController();
+        res.once('close',()=>controller.abort());
+        try {
+          const report = await readProductionSource(kind,new URLSearchParams(selection),controller.signal);
+          if (!res.destroyed) return json(200,report);
+        } catch {
+          if (!res.destroyed) return json(503,{available:false,notice:'Дані звіту «Наявність × попит» тимчасово недоступні.'});
+        }
+        return;
       }
       if (kind === 'catalog-health') {
         try { catalogSelection(url.searchParams); }

@@ -5,23 +5,32 @@ import {createInterface} from 'node:readline';
 import {buildOverviewAttribution,validateSelection,erpChannel} from './overview-attribution.mjs';
 import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './overview-query.mjs';
 import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
-import {readInventoryDemand} from './inventory-demand-source.mjs';
+import {readInventoryDemand,releaseInventoryDemandCache} from './inventory-demand-source.mjs';
 import {inventorySelection} from './public/inventory-demand-filters.mjs';
 import {readContentConversion} from './content-conversion-source.mjs';
 import {contentShipments} from './content-conversion.mjs';
 import {contentSelection} from './public/content-conversion-filters.mjs';
 import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
-let erp,origins;
+let erp,erpEviction,origins;
 const reports=new Map();
 let sourceQueue=Promise.resolve(),queued=0,started=[];
+function releaseERP() {
+  clearTimeout(erpEviction);
+  erp=undefined;
+}
 async function readERP() {
+  clearTimeout(erpEviction);
   const filename=process.env.STUDIO_ERP_ROWS_CACHE||'/var/cache/agromat-analytics/sales-rows-v3.bin';
   const stat=await fs.stat(filename);
-  if(erp?.mtime===stat.mtimeMs&&Date.now()-Date.parse(erp.updatedAt)<24*3600000)return erp;
-  const entry=deserialize(await fs.readFile(filename));
-  if(!Array.isArray(entry.value?.rows)||Date.now()-entry.createdAt>24*3600000)throw Error('erp_cache_unavailable');
-  return erp={rows:entry.value.rows,mtime:stat.mtimeMs,updatedAt:new Date(entry.createdAt).toISOString()};
+  if (erp?.mtime!==stat.mtimeMs || Date.now()-Date.parse(erp.updatedAt)>=24*3600000) {
+    releaseERP();
+    const entry=deserialize(await fs.readFile(filename));
+    if(!Array.isArray(entry.value?.rows)||Date.now()-entry.createdAt>24*3600000)throw Error('erp_cache_unavailable');
+    erp={rows:entry.value.rows,mtime:stat.mtimeMs,updatedAt:new Date(entry.createdAt).toISOString()};
+  }
+  erpEviction=setTimeout(releaseERP,30_000).unref();
+  return erp;
 }
 async function readOrigins() {
   if(origins&&Date.now()-origins.time<6*3600000)return origins.ids;
@@ -96,18 +105,17 @@ async function readOverviewSelection(input, options) {
 
 export function loadOverviewSelection(input, options) {
   const selection=validateSelection(input);
-  if(queued>=12)return Promise.reject(Error('overview_busy'));
-  queued++;
-  const task=sourceQueue.then(()=>readOverviewSelection(selection, options));
-  sourceQueue=task.catch(()=>{});
-  return task.finally(()=>queued--);
+  return queueSource(()=>readOverviewSelection(selection, options));
 }
 
-function queueSource(load) {
+function queueSource(load, signal) {
   if (queued >= 12) return Promise.reject(Error('overview_busy'));
   queued++;
-  const task = sourceQueue.then(load);
-  sourceQueue = task.catch(()=>{});
+  const task = sourceQueue.then(()=>{
+    signal?.throwIfAborted();
+    return load();
+  });
+  sourceQueue = task.then(()=>{},()=>{});
   return task.finally(()=>queued--);
 }
 
@@ -119,13 +127,9 @@ export function readOverviewCatalog(params = new URLSearchParams()) {
   });
 }
 
-export function loadInventoryDemand(input) {
+export function loadInventoryDemand(input, signal) {
   const selection = inventorySelection(input);
-  if (queued >= 12) return Promise.reject(Error('overview_busy'));
-  queued++;
-  const task = sourceQueue.then(()=>readInventoryDemand(selection,readERP,readOrigins));
-  sourceQueue = task.catch(()=>{});
-  return task.finally(()=>queued--);
+  return queueSource(()=>readInventoryDemand(selection,readERP,readOrigins,releaseERP),signal);
 }
 
 export function loadContentConversion(input) {
@@ -135,7 +139,8 @@ export function loadContentConversion(input) {
       const source = await readERP();
       return {byCode:contentShipments(source,range),updatedAt:source.updatedAt};
     },
-    releaseERP:()=>{erp=undefined;},
+    releaseERP,
+    releaseOtherReport:releaseInventoryDemandCache,
   }));
 }
 

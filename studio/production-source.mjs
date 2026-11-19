@@ -25,7 +25,9 @@ const server = http.createServer(async (req, res) => {
     read = () => loadContentConversion(url.searchParams);
   } else if (url.pathname === '/inventory-demand') {
     try { inventorySelection(url.searchParams); } catch { return json(400, {available:false}); }
-    read = () => loadInventoryDemand(url.searchParams);
+    const controller = new AbortController();
+    res.once('close',()=>controller.abort());
+    read = () => loadInventoryDemand(url.searchParams,controller.signal);
   } else if (url.pathname === '/overview') {
     let selection;
     try { selection = validateSelection(Object.fromEntries(url.searchParams)); }
@@ -34,10 +36,18 @@ const server = http.createServer(async (req, res) => {
   } else {
     return json(404, {available:false});
   }
-  try { return json(200, await read()); }
+  const started = Date.now();
+  try {
+    const value = await read();
+    if (!res.destroyed) return json(200,value);
+  }
   catch (error) {
+    if (res.destroyed) return;
     console.error(JSON.stringify({event:'studio_source_unavailable', route:url.pathname, type:error.name, code:error.code}));
     return json(503, {available:false});
+  } finally {
+    const elapsedMs = Date.now()-started;
+    if (elapsedMs>=15_000) console.warn(JSON.stringify({event:'studio_source_slow',route:url.pathname,elapsedMs}));
   }
 });
 
