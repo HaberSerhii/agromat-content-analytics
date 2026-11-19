@@ -1,3 +1,4 @@
+import {contentSelection} from './public/content-conversion-filters.mjs';
 import {catalogSelection} from './catalog-health.mjs';
 import {readSiteFunnel} from "./site-funnel.mjs";
 import {loadRevenueWaterfall} from "./revenue-waterfall.mjs";
@@ -129,6 +130,9 @@ const statics = new Map([
   ["/category-treemap.mjs", "category-treemap.mjs"],
   ["/site-funnel.mjs", "site-funnel.mjs"],
   ["/inventory-demand.mjs", "inventory-demand.mjs"],
+  ["/content-conversion.mjs", "content-conversion.mjs"],
+  ["/content-conversion-filters.mjs", "content-conversion-filters.mjs"],
+  ["/content-conversion.css", "content-conversion.css"],
   ["/weekly-charts.mjs", "weekly-charts.mjs"],
   ["/chart-periods.mjs", "chart-periods.mjs"],
   ["/business-overview.css", "business-overview.css"],
@@ -202,6 +206,13 @@ export const server = http.createServer(async (req, res) => {
       }
       if (waiters.length >= 24) return json(503, { error: "busy" });
       const kind = url.pathname.slice(5);
+      if (kind === 'content-conversion') {
+        let selection;
+        try { selection = contentSelection(url.searchParams); }
+        catch { return json(400,{available:false,notice:'Оберіть коректний період до 90 завершених днів і перевірте фільтри.'}); }
+        try { return json(200,await readProductionSource(kind,new URLSearchParams(selection))); }
+        catch { return json(503,{available:false,notice:'Дані звіту «Контент × Конверсія» тимчасово недоступні.'}); }
+      }
       if (kind === 'inventory-demand') {
         if (url.searchParams.size) return json(400, {available:false});
         try { return json(200, await readProductionSource(kind)); }

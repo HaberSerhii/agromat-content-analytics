@@ -6,6 +6,8 @@ import {buildOverviewAttribution,validateSelection,erpChannel} from './overview-
 import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './overview-query.mjs';
 import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
 import {readInventoryDemand} from './inventory-demand.mjs';
+import {readContentConversion} from './content-conversion-source.mjs';
+import {contentSelection} from './public/content-conversion-filters.mjs';
 import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
 let erp,origins;
@@ -124,6 +126,15 @@ export function loadInventoryDemand() {
   return inventoryPending;
 }
 
+export function loadContentConversion(input) {
+  const selection = contentSelection(input);
+  if (queued >= 12) return Promise.reject(Error('overview_busy'));
+  queued++;
+  const task = sourceQueue.then(()=>readContentConversion(selection,readERP));
+  sourceQueue = task.catch(()=>{});
+  return task.finally(()=>queued--);
+}
+
 if(process.argv.includes('--stdio')) {
   for(const filename of ['/opt/agromat-content-analytics/.env','/opt/agromat-content-analytics/.env.local','/opt/agromat-studio/runtime.env'])try{process.loadEnvFile(filename);}catch{}
   const lines=createInterface({input:process.stdin});
@@ -134,9 +145,10 @@ if(process.argv.includes('--stdio')) {
       let value;
       if (request.kind === 'catalog-health') value = await readOverviewCatalog(new URLSearchParams(request.selection));
       else if (request.kind === 'inventory-demand') value = await loadInventoryDemand();
+      else if (request.kind === 'content-conversion') value = await loadContentConversion(request.selection);
       else value = await loadOverviewSelection(request.selection,{includeMargin:true});
       process.stdout.write(JSON.stringify({id:request.id,value})+'\n');
     }
-    catch(error){process.stderr.write(JSON.stringify({event:'overview_source_error',query:error.queryKind,code:error.code,name:error.name,reason:error.errors?.[0]?.reason,message:(error.errors?.[0]?.message||(['TypeError','ReferenceError'].includes(error.name)?error.message:undefined))?.slice(0,300)})+'\n');process.stdout.write(JSON.stringify({id:request?.id,value:{available:false,notice:'Не вдалося отримати повний зв’язок відвантажень ERP з GA4.',error:['invalid_range','invalid_filter','comparison_unavailable','marketplace_web_filter','duplicate_erp_document'].includes(error.message)?error.message:'source_unavailable'}})+'\n');}
+    catch(error){process.stderr.write(JSON.stringify({event:'overview_source_error',query:error.queryKind,code:error.code,name:error.name,reason:error.errors?.[0]?.reason,message:(error.errors?.[0]?.message||(['TypeError','ReferenceError'].includes(error.name)?error.message:undefined))?.slice(0,300)})+'\n');process.stdout.write(JSON.stringify({id:request?.id,value:{available:false,notice:request?.kind==='content-conversion' ? 'Дані звіту «Контент × Конверсія» тимчасово недоступні.' : 'Не вдалося отримати повний зв’язок відвантажень ERP з GA4.',error:['invalid_range','invalid_filter','comparison_unavailable','marketplace_web_filter','duplicate_erp_document'].includes(error.message)?error.message:'source_unavailable'}})+'\n');}
   }
 }

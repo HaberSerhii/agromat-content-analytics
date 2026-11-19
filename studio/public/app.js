@@ -135,7 +135,7 @@ function parseLocation() {
   }
   section = defs[s] ? s : "home";
   view = defs[section].tabs.some((t) => t[0] === v) ? v : "overview";
-  if (section === 'home' && v === 'inventory-demand') view = v;
+  if (section === 'home' && ['inventory-demand','content-conversion'].includes(v)) view = v;
   let params = new URLSearchParams(q);
   if (section === 'home') Object.assign(state, overviewDefaults(today));
   for (let k of [
@@ -303,10 +303,13 @@ function syncOverviewHeader() {
   if (controls) controls.innerHTML = overviewControls(state);
 }
 function businessShell() {
-  const inventoryDemand = view === 'inventory-demand';
-  const reportNav = `<section class="bo-nav-group" aria-labelledby="mix-analysis-label"><div class="side-label" id="mix-analysis-label">Мікс-аналіз</div><button class="nav ${inventoryDemand?'active':''}" data-view="inventory-demand" ${inventoryDemand?'aria-current="page"':''}>${icon('products')}<span>Наявність × попит</span></button></section>`;
+  const reportNames = {'overview':'Огляд бізнесу','inventory-demand':'Наявність × попит','content-conversion':'Контент × Конверсія'};
+  const reportNav = `<section class="bo-nav-group" aria-labelledby="mix-analysis-label"><div class="side-label" id="mix-analysis-label">Мікс-аналіз</div>${Object.entries(reportNames).slice(1).map(([key,label])=>
+    `<button class="nav ${view===key?'active':''}" data-view="${key}" ${view===key?'aria-current="page"':''}>${icon(key==='content-conversion'?'channels':'products')}<span>${label}</span></button>`).join('')}</section>`;
+  const mobileNav = `<nav class="bo-report-mobile" aria-label="Звіти">${Object.entries(reportNames).map(([key,label])=>
+    `<button data-view="${key}" aria-pressed="${view===key}">${label}</button>`).join('')}</nav>`;
   document.body.classList.add('business-page');
-  $('#app').innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav ${inventoryDemand?'':'active'}" data-go="home" ${inventoryDemand?'':'aria-current="page"'}>${icon('overview')}<span>Огляд бізнесу</span></button>${reportNav}<div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main"><header class="bo-sticky-header"><section class="bo-heading"><h1>${inventoryDemand?'Наявність × попит':'Огляд бізнесу'}<span>.</span></h1>${['localhost','127.0.0.1','::1'].includes(location.hostname)?'<span class="bo-local-label">Локальний перегляд</span>':''}</section>${`<nav class="bo-report-mobile" aria-label="Звіти"><button data-view="overview" aria-pressed="${!inventoryDemand}">Огляд бізнесу</button><button data-view="inventory-demand" aria-pressed="${inventoryDemand}">Наявність × попит</button></nav>`}${inventoryDemand?'':'<div class="bo-filterbar">'+overviewControls(state)+'</div>'}<div id="bo-overview-notice" class="bo-overview-notice" aria-live="polite"></div></header><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
+  $('#app').innerHTML = `<aside class="bo-sidebar"><a class="logo" href="#home/overview" id="logo-home"><img class="brand-logo" src="/agromat-logo.svg?v=blue" alt="АГРОМАТ" width="175" height="21"><small>ANALYTICS STUDIO</small></a><div class="side-label">РОБОЧИЙ ПРОСТІР</div><button class="nav ${view==='overview'?'active':''}" data-go="home" ${view==='overview'?'aria-current="page"':''}>${icon('overview')}<span>Огляд бізнесу</span></button>${reportNav}<div class="bo-side-bottom"><span class="bo-status-dot"></span> Реальні джерела даних<small>ERP / S3 · GA4 · API · ціни</small><button id="info">Про дані та визначення ↗</button></div></aside><div class="workspace"><main class="bo-main${view==='content-conversion'?' cv-main':''}"><header class="bo-sticky-header"><section class="bo-heading"><h1>${reportNames[view]}<span>.</span></h1>${['localhost','127.0.0.1','::1'].includes(location.hostname)?'<span class="bo-local-label">Локальний перегляд</span>':''}</section>${mobileNav}${view==='overview'?'<div class="bo-filterbar">'+overviewControls(state)+'</div>':''}<div id="bo-overview-notice" class="bo-overview-notice" aria-live="polite"></div></header><div id="filters"></div><div id="content"><div class="loading">Збираємо огляд із реальних джерел…</div></div><footer class="studio-footer"><span>АГРОМАТ · ANALYTICS STUDIO</span><span id="revision">Окремий сервіс · доступ для перегляду</span></footer></main></div>`;
   overviewHeaderObserver?.disconnect();
   overviewHeaderObserver = new ResizeObserver(entries => document.documentElement.style.setProperty('--bo-header-height', Math.ceil(entries[0].target.getBoundingClientRect().height) + 'px'));
   overviewHeaderObserver.observe($('.bo-sticky-header'));
@@ -358,7 +361,7 @@ function bindBusinessOverview() {
 }
 
 function skeleton() {
-  if (section === "home" && (view === "overview" || view === "inventory-demand")) return businessShell();
+  if (section === "home" && ["overview","inventory-demand","content-conversion"].includes(view)) return businessShell();
   document.body.classList.remove("business-page");
   const def = defs[section];
   $("#app").innerHTML =
@@ -441,6 +444,11 @@ async function load({keepView=false}={}) {
   if(!preserve)skeleton();
   else { syncOverviewHeader(); bindShell(); }
   try {
+    if (section === 'home' && view === 'content-conversion') {
+      const module = await import('/content-conversion.mjs?v=improvements');
+      if (id === requestId) module.mountContentConversion($('#content'), today);
+      return;
+    }
     if (section === 'home' && view === 'inventory-demand') {
       const [module, report] = await Promise.all([
         import('/inventory-demand.mjs?v=stock-signals2'),

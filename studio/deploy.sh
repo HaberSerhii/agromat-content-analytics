@@ -123,15 +123,21 @@ QUERY=$(cd "$ROOT/releases/$REVISION/studio" && "$NODE_BIN" --input-type=module 
 runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock "http://localhost/overview?$QUERY" > "$BACKUP/overview.json"
 runuser -u www-data -- curl -fsS --max-time 80 --unix-socket /run/agromat-studio-source.sock http://localhost/catalog-health > "$BACKUP/catalog.json"
 runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock http://localhost/inventory-demand > "$BACKUP/inventory-demand.json"
+runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock 'http://localhost/content-conversion?table=improved' > "$BACKUP/content-conversion.json"
 python3 - "$BACKUP" <<'PY_CHECK'
 import json, pathlib, sys
 directory = pathlib.Path(sys.argv[1])
 overview = json.loads((directory / 'overview.json').read_text())
 catalog = json.loads((directory / 'catalog.json').read_text())
 inventory = json.loads((directory / 'inventory-demand.json').read_text())
+content = json.loads((directory / 'content-conversion.json').read_text())
 assert overview['available'] and not overview.get('partial'), 'Overview source incomplete'
 assert overview['sales']['available'] and overview['siteFunnel']['available'], 'ERP or funnel unavailable'
 assert catalog['available'] and len(catalog['segments']) == 4 and not catalog.get('partial'), 'Catalog source incomplete'
+assert content['available'] and content['coveredCurrent'] > 0 and content['current']['sessions'] > 0, 'Content conversion source incomplete'
+assert content['detail']['total'] == content['improvements']['results'], 'Improved SKU total differs'
+for row in content['detail']['rows']:
+    assert row['score'] > row['scoreBefore'] and (row['change'] != 0 or row['atcChange'] != 0), 'Ineligible SKU in improved results'
 assert inventory['available'] and inventory['trafficAvailable'] and inventory['sourceDays'] > 0 and len(inventory['sections']) == 6, 'Inventory demand source incomplete'
 watch = inventory['stockWatch']
 assert watch['available'] and watch['salesFrom'].endswith('-01-01'), 'Stock watch source incomplete'
@@ -185,6 +191,7 @@ assert json.load(open(sys.argv[1]))['revision']==sys.argv[2]
 PY
 curl -fsS --max-time 125 "http://127.0.0.1:3107/api/overview?$QUERY" > /dev/null
 curl -fsS --max-time 80 http://127.0.0.1:3107/api/catalog-health > /dev/null
+curl -fsS --max-time 125 'http://127.0.0.1:3107/api/content-conversion?table=improved' > /dev/null
 if [[ ! -f /etc/letsencrypt/live/agromat-studio/fullchain.pem ]]; then
 cat > /etc/nginx/sites-available/agromat-studio <<'NGINX'
 server {

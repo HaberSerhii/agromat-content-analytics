@@ -1,11 +1,11 @@
 import {calendarBins,addDays} from './public/chart-periods.mjs';
 
-const trafficFields = `LOWER(COALESCE(session_traffic_source_last_click.cross_channel_campaign.source, IF(session_traffic_source_last_click.google_ads_campaign.campaign_id IS NOT NULL,'google',NULL),session_traffic_source_last_click.manual_campaign.source,'')) AS traffic_source,
+export const trafficFields = `LOWER(COALESCE(session_traffic_source_last_click.cross_channel_campaign.source, IF(session_traffic_source_last_click.google_ads_campaign.campaign_id IS NOT NULL,'google',NULL),session_traffic_source_last_click.manual_campaign.source,'')) AS traffic_source,
 LOWER(COALESCE(session_traffic_source_last_click.cross_channel_campaign.medium,IF(session_traffic_source_last_click.google_ads_campaign.campaign_id IS NOT NULL,'cpc',NULL),session_traffic_source_last_click.manual_campaign.medium,'')) AS traffic_medium`;
-const acquisition = `CASE WHEN traffic_medium='cpc' THEN 'cpc' WHEN traffic_medium='organic' THEN 'organic' WHEN traffic_source='(direct)' AND traffic_medium='(none)' THEN 'direct' ELSE 'other' END`;
+export const acquisition = `CASE WHEN traffic_medium='cpc' THEN 'cpc' WHEN traffic_medium='organic' THEN 'organic' WHEN traffic_source='(direct)' AND traffic_medium='(none)' THEN 'direct' ELSE 'other' END`;
 const device = `CASE WHEN device_category IN ('mobile','desktop') THEN device_category ELSE 'other' END`;
-const transaction = `COALESCE(NULLIF(NULLIF(TRIM(ecommerce.transaction_id),''),'(not set)'),(SELECT NULLIF(NULLIF(TRIM(COALESCE(value.string_value,CAST(value.int_value AS STRING))),''),'(not set)') FROM UNNEST(event_params) WHERE key='transaction_id'))`;
-const table = (project,dataset) => {
+export const transaction = `COALESCE(NULLIF(NULLIF(TRIM(ecommerce.transaction_id),''),'(not set)'),(SELECT NULLIF(NULLIF(TRIM(COALESCE(value.string_value,CAST(value.int_value AS STRING))),''),'(not set)') FROM UNNEST(event_params) WHERE key='transaction_id'))`;
+export const ga4Table = (project,dataset) => {
   if(!/^[\w-]+$/.test(project||'')||!/^\w+$/.test(dataset||''))throw Error('invalid_dataset');
   return `\`${project}.${dataset}.events_*\``;
 };
@@ -19,7 +19,7 @@ export function overviewWebQuery(project,dataset,range,baseline) {
         ${transaction} AS transaction_id,
         CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING) AS session_id,
         ${trafficFields}, LOWER(device.category) AS device_category
-      FROM ${table(project,dataset)}
+      FROM ${ga4Table(project,dataset)}
       WHERE ((_TABLE_SUFFIX BETWEEN @currentFrom AND @currentTo) OR (_TABLE_SUFFIX BETWEEN @previousFrom AND @previousTo))
         AND (geo.country = @country OR event_name IN ('purchase', 'payment_unpaid'))
     ), events AS (
@@ -50,7 +50,7 @@ export function overviewTransactionsQuery(project,dataset,periods,ids) {
   if(!ids.length||ids.length>50000)throw Error('invalid_transaction_ids');
   const ranges=periods.map((period,index)=>`(_TABLE_SUFFIX BETWEEN @from${index} AND @to${index})`).join(' OR ');
   return {
-    query:`WITH base AS (SELECT ${transaction} AS transactionId,${trafficFields},LOWER(device.category) AS device_category FROM ${table(project,dataset)} WHERE (${ranges}) AND event_name IN ('purchase','payment_unpaid')) SELECT DISTINCT transactionId,${acquisition} AS acquisition,${device} AS device FROM base WHERE transactionId IN UNNEST(@ids)`,
+    query:`WITH base AS (SELECT ${transaction} AS transactionId,${trafficFields},LOWER(device.category) AS device_category FROM ${ga4Table(project,dataset)} WHERE (${ranges}) AND event_name IN ('purchase','payment_unpaid')) SELECT DISTINCT transactionId,${acquisition} AS acquisition,${device} AS device FROM base WHERE transactionId IN UNNEST(@ids)`,
     params:{ids,...Object.fromEntries(periods.flatMap((period,index)=>[[`from${index}`,period.from.replaceAll('-','')],[`to${index}`,period.to.replaceAll('-','')]]))},
     maximumBytesBilled:'20000000000',useQueryCache:true,jobTimeoutMs:60000,
   };
