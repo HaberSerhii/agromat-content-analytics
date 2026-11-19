@@ -142,23 +142,25 @@ assert content['available'] and content['coveredCurrent'] > 0 and content['curre
 assert content['detail']['total'] == content['improvements']['results'], 'Improved SKU total differs'
 for row in content['detail']['rows']:
     assert row['score'] > row['scoreBefore'] and (row['change'] != 0 or row['atcChange'] != 0), 'Ineligible SKU in improved results'
-assert inventory['available'] and inventory['trafficAvailable'] and inventory['sourceDays'] > 0 and len(inventory['sections']) == 6, 'Inventory demand source incomplete'
+coverage = inventory['coverage']
+assert inventory['available'] and coverage['current'] > 0 and coverage['sales'] > 0, 'Inventory forecast source incomplete'
+report = inventory['current']
+assert 0 <= report['marginSku'] <= report['modeled'] <= report['impacted'], 'Invalid forecast coverage'
+assert report['out'] is None or 0 <= report['confirmed'] <= report['out'], 'Invalid confirmed-demand SKU count'
+assert report['loss'] is None or report['loss'] >= 0, 'Negative forecast losses'
+priority = inventory['priority']
+assert priority['date'] == inventory['range']['to'], 'Priority date differs from report end'
+assert priority['loss'] == inventory['chart'][-1]['loss'], 'Priority loss differs from chart'
+assert 0 <= priority['marginSku'] <= priority['modeled'], 'Invalid replenishment forecast coverage'
+assert priority['out'] is None or priority['modeled'] + priority['evidenceCount'] <= priority['out'], 'Unconfirmed SKU in replenishment list'
+assert len(priority['rows']) <= 10 and len(priority['evidence']) <= 10, 'Unbounded replenishment list'
+table = inventory['table']
+assert len(table['rows']) <= 50 and table['total'] >= len(table['rows']), 'Invalid inventory pagination'
+assert len({row['code'] for row in table['rows']}) == len(table['rows']), 'Duplicate SKU'
 watch = inventory['stockWatch']
-assert watch['available'] and watch['salesFrom'].endswith('-01-01'), 'Stock watch source incomplete'
 assert (watch['minRevenue'], watch['minViews'], watch['viewDays']) == (5000, 100, 7), 'Stock watch thresholds differ'
-assert watch['alerts'] == sum(row['status'] == 'low' for row in watch['rows']), 'Stock signal count differs'
-products = {row['code']: row for row in inventory['products']}
-for row in watch['rows']:
-    product = products[row['code']]
-    assert row['revenue'] >= watch['minRevenue'] and row['views'] >= watch['minViews'], 'Stock watch includes ineligible product'
-    assert row['views'] == sum(day['views'] or 0 for day in product['days'][-7:]), 'Weekly views differ'
-    stock = row['stock']
-    threshold = watch['stockThresholds'][product['segment']]
-    assert row['threshold'] == threshold and row['status'] == ('unknown' if stock is None else 'low' if stock <= threshold else 'ok'), 'Stock status differs'
-for section in inventory['sections']:
-    for category in section['categorySlices']:
-        assert all(products[code]['category'] == category['name'] for code in category['rows']), 'Category filter includes other products'
-print(f"Studio ERP, GA4, catalog and stock watch verified ({len(watch['rows'])} monitored, {watch['alerts']} alerts)")
+assert 0 <= watch['alerts'] <= watch['monitored'], 'Invalid stock signal count'
+print(f"Studio ERP, GA4, catalog and inventory forecast verified ({report['modeled']} modeled; {watch['alerts']} stock signals)")
 PY_CHECK
 WEB_SWITCHED=1
 ln -sfn "$ROOT/releases/$REVISION/studio" "$ROOT/current"

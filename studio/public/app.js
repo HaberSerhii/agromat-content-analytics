@@ -450,12 +450,8 @@ async function load({keepView=false}={}) {
       return;
     }
     if (section === 'home' && view === 'inventory-demand') {
-      const [module, report] = await Promise.all([
-        import('/inventory-demand.mjs?v=stock-signals2'),
-        sessionApiCache.get('/api/inventory-demand'),
-      ]);
-      if (id !== requestId) return;
-      module.mountInventoryDemand($('#content'), report);
+      const module = await import('/inventory-demand.mjs?v=replenishment1');
+      if (id === requestId) module.mountInventoryDemand($('#content'), today);
       return;
     }
     if (section === "home" && view === "overview") {

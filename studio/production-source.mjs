@@ -1,6 +1,7 @@
 import http from 'node:http';
 import {loadOverviewSelection, readOverviewCatalog, loadInventoryDemand, loadContentConversion} from './overview-source-worker.mjs';
 import {contentSelection} from './public/content-conversion-filters.mjs';
+import {inventorySelection} from './public/inventory-demand-filters.mjs';
 import {validateSelection} from './overview-attribution.mjs';
 
 for (const file of ['/opt/agromat-content-analytics/.env', '/opt/agromat-content-analytics/.env.local']) {
@@ -23,8 +24,8 @@ const server = http.createServer(async (req, res) => {
     try { contentSelection(url.searchParams); } catch { return json(400, {available:false}); }
     read = () => loadContentConversion(url.searchParams);
   } else if (url.pathname === '/inventory-demand') {
-    if (url.searchParams.size) return json(400, {available:false});
-    read = loadInventoryDemand;
+    try { inventorySelection(url.searchParams); } catch { return json(400, {available:false}); }
+    read = () => loadInventoryDemand(url.searchParams);
   } else if (url.pathname === '/overview') {
     let selection;
     try { selection = validateSelection(Object.fromEntries(url.searchParams)); }

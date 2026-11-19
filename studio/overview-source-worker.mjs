@@ -5,14 +5,14 @@ import {createInterface} from 'node:readline';
 import {buildOverviewAttribution,validateSelection,erpChannel} from './overview-attribution.mjs';
 import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './overview-query.mjs';
 import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
-import {readInventoryDemand} from './inventory-demand.mjs';
+import {readInventoryDemand} from './inventory-demand-source.mjs';
+import {inventorySelection} from './public/inventory-demand-filters.mjs';
 import {readContentConversion} from './content-conversion-source.mjs';
 import {contentShipments} from './content-conversion.mjs';
 import {contentSelection} from './public/content-conversion-filters.mjs';
 import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
 let erp,origins;
-let inventoryReport, inventoryPending;
 const reports=new Map();
 let sourceQueue=Promise.resolve(),queued=0,started=[];
 async function readERP() {
@@ -119,22 +119,13 @@ export function readOverviewCatalog(params = new URLSearchParams()) {
   });
 }
 
-export function loadInventoryDemand() {
-  if (inventoryPending) return inventoryPending;
-  const today = new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Kyiv'});
-  if (inventoryReport?.today === today && inventoryReport.expires > Date.now()) {
-    return Promise.resolve(inventoryReport.value);
-  }
+export function loadInventoryDemand(input) {
+  const selection = inventorySelection(input);
   if (queued >= 12) return Promise.reject(Error('overview_busy'));
   queued++;
-  inventoryPending = sourceQueue.then(async () => {
-    const [source, origins] = await Promise.all([readERP(), readOrigins().catch(() => null)]);
-    const value = await readInventoryDemand(source, origins);
-    inventoryReport = {today, value, expires:Date.now() + (value.partial ? 60_000 : 600_000)};
-    return value;
-  }).finally(() => {queued--;inventoryPending=null;});
-  sourceQueue = inventoryPending.catch(() => {});
-  return inventoryPending;
+  const task = sourceQueue.then(()=>readInventoryDemand(selection,readERP,readOrigins));
+  sourceQueue = task.catch(()=>{});
+  return task.finally(()=>queued--);
 }
 
 export function loadContentConversion(input) {
@@ -157,7 +148,7 @@ if(process.argv.includes('--stdio')) {
       request=JSON.parse(line);
       let value;
       if (request.kind === 'catalog-health') value = await readOverviewCatalog(new URLSearchParams(request.selection));
-      else if (request.kind === 'inventory-demand') value = await loadInventoryDemand();
+      else if (request.kind === 'inventory-demand') value = await loadInventoryDemand(request.selection);
       else if (request.kind === 'content-conversion') value = await loadContentConversion(request.selection);
       else value = await loadOverviewSelection(request.selection,{includeMargin:true});
       process.stdout.write(JSON.stringify({id:request.id,value})+'\n');

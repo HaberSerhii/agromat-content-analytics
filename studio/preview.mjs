@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {contentSelection} from './public/content-conversion-filters.mjs';
+import {inventorySelection} from './public/inventory-demand-filters.mjs';
 import {createRemoteOverview} from './overview-remote.mjs';
 
 // Local UI with the same sanitized, public data used by published Studio.
@@ -57,6 +58,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/content-conversion') {
       try { contentSelection(url.searchParams); }
       catch { return json(400,{available:false,notice:'Оберіть коректний період до 90 завершених днів і перевірте фільтри.'}); }
+    }
+    if (url.pathname === '/api/inventory-demand') {
+      try { inventorySelection(url.searchParams); }
+      catch { return json(400,{available:false,notice:'Перевірте період і фільтри. Максимум 90 завершених днів.'}); }
     }
     if(!overviewSource)return json(503,{available:false,notice:'Для зв’язку ERP та GA4 не налаштовано джерело локального перегляду.'});
     try {const value=await overviewSource.read(Object.fromEntries(url.searchParams), url.pathname.slice(5));return json(value.available?200:503,value);}

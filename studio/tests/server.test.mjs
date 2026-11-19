@@ -28,12 +28,22 @@ test("public server exposes only static assets, health and read-only bounded API
     assert.equal(r.status, 200);
     assert.match(r.headers.get("content-type"), /javascript/);
     assert.match(await r.text(), /createApiCache/);
-    for (const asset of ["business-overview.mjs", "business-overview.css", "revenue-drivers.mjs", "overview-filters.mjs", "inventory-demand.mjs", "content-conversion.mjs", "content-conversion.css", "content-conversion-filters.mjs"]) {
+    for (const asset of ["business-overview.mjs", "business-overview.css", "revenue-drivers.mjs", "overview-filters.mjs", "inventory-demand.mjs", "inventory-demand-filters.mjs", "inventory-demand.css", "content-conversion.mjs", "content-conversion.css", "content-conversion-filters.mjs"]) {
       r = await fetch(base + "/" + asset);
       assert.equal(r.status, 200);
     }
     r = await fetch(base + "/api/inventory-demand?days=365");
-    assert.equal(r.status,400,"inventory demand uses the fixed 30-day window");
+    assert.equal(r.status,400,"unsupported report parameters are rejected");
+    r = await fetch(base + "/api/inventory-demand?from=2026-08-01&to=2026-11-18");
+    assert.equal(r.status,400,"inventory date ranges are bounded");
+    r = await fetch(base + "/api/inventory-demand?status=out&status=in");
+    assert.equal(r.status,400,"duplicate inventory filters are rejected");
+    r = await fetch(base + "/api/inventory-demand?from=2026-11-01&to=2026-11-15&priorityDate=2026-11-16");
+    assert.equal(r.status,400,"replenishment dates must be within the report period");
+    r = await fetch(base + "/api/inventory-demand?from=2026-11-01&to=2026-11-15&priorityDate=2026-11-12&sku=123");
+    assert.equal(r.status,400,"replenishment and SKU detail are distinct views");
+    r = await fetch(base + "/inventory-demand-source.mjs");
+    assert.equal(r.status,404,"inventory sources are never browser assets");
     r=await fetch(base+'/api/overview?from=2026-11-01&to=2026-11-17&compareMode=wow&salesScope=all&acquisition=all&device=all');
     assert.equal(r.status,400,'invalid comparison is rejected before loading sources');
     r=await fetch(base+'/api/overview?from=2026-11-11&to=2026-11-17&compareMode=wow&salesScope=marketplaces&acquisition=all&device=mobile');
