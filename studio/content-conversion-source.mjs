@@ -13,7 +13,7 @@ const day = date => new Date(date).toLocaleDateString('sv-SE',{timeZone:'Europe/
 const readGzip = async file => JSON.parse(await unzip(await fs.readFile(file)));
 const readJson = async file => JSON.parse(await fs.readFile(file,'utf8'));
 
-let trafficCache, reportCache;
+let trafficCache, reportCache, shipmentCache;
 let queried = [];
 
 async function readAttributes(syncedAt) {
@@ -32,10 +32,16 @@ async function readAttributes(syncedAt) {
     const required = JSON.parse(requiredRaw);
     const index = JSON.parse(indexRaw);
     if (index.syncedAt !== syncedAt || !Array.isArray(index.entries)) return null;
+    const requiredIds = new Set(Object.values(required).flat());
     const present = new Map(), names = new Map();
     for (const [id,attrs] of index.entries) {
-      present.set(id,new Set(attrs.map(attr=>attr.id)));
-      for (const attr of attrs) names.set(attr.id,attr.name);
+      const selected = new Set();
+      for (const attr of attrs) {
+        if (!requiredIds.has(attr.id)) continue;
+        selected.add(attr.id);
+        names.set(attr.id,attr.name);
+      }
+      present.set(id,selected);
     }
     return {required,present,names};
   } finally {
@@ -95,7 +101,7 @@ async function loadTraffic(selection) {
     if (queried.length >= 16) throw Error('content_query_budget');
     queried.push(Date.now());
     const [job] = await client.createQueryJob(options);
-    let page = {autoPaginate:false,maxResults:15000};
+    let page = {autoPaginate:false,maxResults:6000};
     while (page) {
       const [rows,next] = await job.getQueryResults(page);
       value.add(rows);
@@ -150,23 +156,35 @@ function exportContent(report, selection, rows) {
   return XLSX.write(book,{bookType:'xlsx',type:'base64',compression:true});
 }
 
-export async function readContentConversion(selection, readERP) {
+async function readPeriodShipments(scope, readShipments) {
+  if (scope.device !== 'all' || scope.source !== 'all') return null;
+  const {from,to} = scope;
+  const key = from+':'+to;
+  if (shipmentCache?.key === key && shipmentCache.expires > Date.now()) return shipmentCache.value;
+  const value = await readShipments({from,to}).catch(()=>null);
+  shipmentCache = {key,value,expires:Date.now()+(value ? 5*60_000 : 45_000)};
+  return value;
+}
+
+export async function readContentConversion(selection, {readShipments,releaseERP}) {
   const {table,sort,direction,page,bucket,export:download,...scope} = selection;
   const key = JSON.stringify(scope);
   if (reportCache?.key !== key || reportCache.expires <= Date.now()) {
     reportCache = null;
-    const trafficTask = loadTraffic(scope).catch(error=>{
+    const shipments = await readPeriodShipments(scope,readShipments);
+    // The deserialized ERP rows are much larger than the per-SKU totals.
+    releaseERP();
+    const catalogue = await readCatalogue();
+    const traffic = await loadTraffic(scope).catch(error=>{
       console.error(JSON.stringify({event:'content_conversion_ga4',name:error.name,code:error.code,reason:error.errors?.[0]?.reason}));
       return null;
     });
-    const [catalogue,traffic,erp] = await Promise.all([
-      readCatalogue(),trafficTask,scope.device === 'all' && scope.source === 'all' ? readERP().catch(()=>null) : null,
-    ]);
-    const report = await buildContentReport({...catalogue,traffic,erp},scope);
+    const report = await buildContentReport({...catalogue,traffic,shipments},scope);
     const expires = Date.now() + (traffic ? 5*60_000 : 45_000);
     reportCache = {key,report,expires};
   }
   const {tables,...summary} = reportCache.report;
+  if (download === '1') releaseERP();
   const detail = contentTable({tables},selection);
   return download === '1'
     ? {available:true,filename:`content-conversion-${scope.from}-${scope.to}.xlsx`,file:exportContent(summary,selection,detail.rows)}

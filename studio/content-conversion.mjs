@@ -186,7 +186,7 @@ export function contentShipments(source, range, fromCatalogue) {
     const counted = new Set();
     for (const line of netSalesItems(row)) {
       const code = String(line.code);
-      if (!fromCatalogue.has(code)) continue;
+      if (fromCatalogue && !fromCatalogue.has(code)) continue;
       const item = byCode.get(code) || {revenue:0,orders:0};
       item.revenue += line.revenue;
       if (!counted.has(code)) item.orders++;
@@ -205,12 +205,15 @@ function compareRows(a,b,key,direction,secondary) {
 
 export function contentTable(report, selection) {
   const group = selection.table;
+  const component = ['photos','attributes','reviews'].includes(group);
+  const bucketOf = row => component ? contentBucket(group,row[group]) : row.bucket;
   let rows = report.tables[group] || report.tables.score;
-  if (selection.bucket !== '') rows = rows.filter(row => row.bucket === Number(selection.bucket));
+  if (selection.bucket !== '') rows = rows.filter(row => bucketOf(row) === Number(selection.bucket));
   const secondary = group === 'improved' && selection.sort === 'change' ? 'atcChange' : null;
   rows = [...rows].sort((a,b) => compareRows(a,b,selection.sort,selection.direction === 'asc' ? 1 : -1,secondary));
   const size = 25, total = rows.length, page = Math.min(selection.page,Math.max(1,Math.ceil(total/size)));
-  return {rows:selection.export === '1' ? rows : rows.slice((page-1)*size,page*size),total,size,page};
+  const selected = selection.export === '1' ? rows : rows.slice((page-1)*size,page*size);
+  return {rows:component ? selected.map(row=>({...row,bucket:bucketOf(row)})) : selected,total,size,page};
 }
 
 function historyRows(changes, meta, windows, scorePresence, fullScoreDates, traffic, range) {
@@ -302,7 +305,7 @@ function historyRows(changes, meta, windows, scorePresence, fullScoreDates, traf
   return {history,improved,improvements:{increases,comparable,results:improved.length}};
 }
 
-export async function buildContentReport({catalog, traffic, readScore, scoreDates, catalogDate, promoDate, erp}, selection) {
+export async function buildContentReport({catalog, traffic, readScore, scoreDates, catalogDate, promoDate, shipments}, selection) {
   const range = {from:selection.from,to:selection.to}, previous = contentBaseline(selection);
   async function close(period) {
     for (const date of scoreDates.filter(date=>within(date,period)).toReversed()) {
@@ -369,7 +372,7 @@ export async function buildContentReport({catalog, traffic, readScore, scoreDate
   traffic?.visit('previous','',(ref,block,offset)=>{
     if (meta.has(refs.get(ref))) addBlock(priorTotals,block,offset);
   });
-  const shipped = selection.source === 'all' && selection.device === 'all' ? contentShipments(erp,range,meta) : null;
+  const shipped = shipments?.byCode;
   const catalogRows = products.map(p=>({...p, score:asScore(currentScore?.scores[p.code]),
     ...present(byCode.get(p.code) || empty(),coveredCurrent > 0 && matchedCodes.has(p.code)),
     shipmentRevenue:shipped ? shipped.get(p.code)?.revenue ?? 0 : null,
@@ -388,7 +391,7 @@ export async function buildContentReport({catalog, traffic, readScore, scoreDate
       const group = grouped[key][bucket];
       group.codes.add(row.code);
       if (byCode.has(row.code)) addMetrics(group.metrics,byCode.get(row.code));
-      tables[key].push({...row,bucket});
+      tables[key].push(row);
     }
   }
   function windowMetrics(before,after) {
@@ -415,8 +418,8 @@ export async function buildContentReport({catalog, traffic, readScore, scoreDate
     current, baseline, complete, coveredCurrent, coveredPrevious, scoreDays:scoreDays.size, daily, tables,
     products:products.length, unmatched:unmapped, unscored, ambiguous:catalog.ambiguous,
     lastWebDate:[...(traffic?.coverage || [])].filter(date=>within(date,range)).sort().at(-1) ?? null,
-    erpDate:shipped ? erp.updatedAt : null,
-    erpRevenue:shipped ? [...shipped.values()].reduce((sum,item)=>sum+item.revenue,0) : null,
+    erpDate:shipped ? shipments.updatedAt : null,
+    erpRevenue:shipped ? catalogRows.reduce((sum,item)=>sum+item.shipmentRevenue,0) : null,
     historyExposures:tables.history.filter(row=>row.before && row.after).length,
     improvements:comparisons.improvements,
     groups:Object.fromEntries(Object.entries(grouped).map(([key,rows])=>[key,rows.map(row=>({

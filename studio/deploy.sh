@@ -120,9 +120,13 @@ QUERY=$(cd "$ROOT/releases/$REVISION/studio" && "$NODE_BIN" --input-type=module 
   const today = new Date().toLocaleDateString("sv-SE", {timeZone:"Europe/Kyiv"});
   console.log(new URLSearchParams(overviewDefaults(today)).toString());
 ')
+echo 'Checking Studio overview source'
 runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock "http://localhost/overview?$QUERY" > "$BACKUP/overview.json"
+echo 'Checking Studio catalog source'
 runuser -u www-data -- curl -fsS --max-time 80 --unix-socket /run/agromat-studio-source.sock http://localhost/catalog-health > "$BACKUP/catalog.json"
+echo 'Checking Studio inventory source'
 runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock http://localhost/inventory-demand > "$BACKUP/inventory-demand.json"
+echo 'Checking Studio content conversion source'
 runuser -u www-data -- curl -fsS --max-time 125 --unix-socket /run/agromat-studio-source.sock 'http://localhost/content-conversion?table=improved' > "$BACKUP/content-conversion.json"
 python3 - "$BACKUP" <<'PY_CHECK'
 import json, pathlib, sys

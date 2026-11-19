@@ -7,6 +7,7 @@ import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './over
 import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
 import {readInventoryDemand} from './inventory-demand.mjs';
 import {readContentConversion} from './content-conversion-source.mjs';
+import {contentShipments} from './content-conversion.mjs';
 import {contentSelection} from './public/content-conversion-filters.mjs';
 import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
@@ -102,10 +103,20 @@ export function loadOverviewSelection(input, options) {
   return task.finally(()=>queued--);
 }
 
-export async function readOverviewCatalog(params = new URLSearchParams()) {
+function queueSource(load) {
+  if (queued >= 12) return Promise.reject(Error('overview_busy'));
+  queued++;
+  const task = sourceQueue.then(load);
+  sourceQueue = task.catch(()=>{});
+  return task.finally(()=>queued--);
+}
+
+export function readOverviewCatalog(params = new URLSearchParams()) {
   const selection = catalogSelection(params);
-  const source = await readERP();
-  return loadCatalogHealth(source.rows, selection);
+  return queueSource(async()=>{
+    const source = await readERP();
+    return loadCatalogHealth(source.rows,selection);
+  });
 }
 
 export function loadInventoryDemand() {
@@ -128,11 +139,13 @@ export function loadInventoryDemand() {
 
 export function loadContentConversion(input) {
   const selection = contentSelection(input);
-  if (queued >= 12) return Promise.reject(Error('overview_busy'));
-  queued++;
-  const task = sourceQueue.then(()=>readContentConversion(selection,readERP));
-  sourceQueue = task.catch(()=>{});
-  return task.finally(()=>queued--);
+  return queueSource(()=>readContentConversion(selection,{
+    readShipments:async range=>{
+      const source = await readERP();
+      return {byCode:contentShipments(source,range),updatedAt:source.updatedAt};
+    },
+    releaseERP:()=>{erp=undefined;},
+  }));
 }
 
 if(process.argv.includes('--stdio')) {

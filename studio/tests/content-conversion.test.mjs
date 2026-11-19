@@ -157,6 +157,21 @@ test('ERP repeats of the same document and SKU line do not duplicate SKU orders'
   assert.deepEqual(data.get('1'),{revenue:370,orders:1});
 });
 
+test('pre-aggregated shipments stay scoped to selected SKU and component buckets', async () => {
+  const shipments = {updatedAt:'2026-11-19T08:00:00Z',byCode:new Map([
+    ['1',{revenue:370,orders:1}],['2',{revenue:1200,orders:2}],
+  ])};
+  const selection=select({table:'photos',bucket:'3',search:'Товар 1'});
+  const report=await buildContentReport({catalog:sampleCatalogue([product(1),product(2)]),
+    shipments,readScore:async()=>null,scoreDates:[]},selection);
+  assert.equal(report.erpRevenue,370);
+  assert.equal(report.erpDate,shipments.updatedAt);
+  const {rows}=contentTable(report,selection);
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].bucket,3);
+  assert.equal(rows[0].shipmentOrders,1);
+});
+
 test('query checks event order and exports only aggregates for bounded date partitions', () => {
   const query=contentFunnelQuery('agromat-test','analytics_test',[{key:'current',from:'2026-11-16',to:'2026-11-18'}],
     {device:'tablet',source:'organic'});
