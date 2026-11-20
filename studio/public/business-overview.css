@@ -1392,16 +1392,30 @@ body.business-page .bo-heading h1 {
 @media(max-width:720px){.bo-price-index {gap:10px;} .bo-price-bin strong {font-size:11px;} .bo-price-bin span {font-size:9px;}}
 .bo-waterfall {grid-column:1/-1;}
 .bo-waterfall .panelhead,.bo-waterfall > header {align-items:center;}
-.bo-waterfall-plot {--bo-waterfall-height:clamp(112px,16vw,140px);container-type:inline-size;}
+.bo-waterfall-plot {--bo-waterfall-height:clamp(128px,17vw,156px);container-type:inline-size;}
 .bo-waterfall-chart {position:relative;}
 .bo-waterfall-chart .bo-waterfall-bars {position:absolute;top:0;left:0;width:100%;min-width:0;height:var(--bo-waterfall-height);pointer-events:none;}
 .bo-waterfall-unit {display:block;color:var(--muted);font-size:10px;line-height:1.3;}
 .bo-waterfall-columns {display:grid;grid-template-columns:var(--bo-waterfall-columns);}
 .bo-waterfall-column {position:relative;display:grid;grid-template-columns:minmax(0,1fr);align-content:start;min-width:0;margin:0;padding:calc(var(--bo-waterfall-height) + 6px) 1px 0;border:0;border-radius:5px;background:transparent;text-align:center;color:var(--muted);font:inherit;}
-.bo-waterfall-column[data-waterfall-detail] {cursor:pointer;}
-.bo-waterfall-column[data-waterfall-detail]:focus-visible {outline-offset:-2px;}
+.bo-waterfall-column {cursor:pointer;}
+.bo-waterfall-column:focus-visible {outline-offset:-2px;}
 .bo-waterfall-value {position:absolute;top:calc(var(--bo-waterfall-height) * var(--bo-waterfall-y) - 4px);left:50%;transform:translate(-50%,-100%);color:var(--text);font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.2;}
 .bo-waterfall-label {display:block;font-size:11px;line-height:1.22;overflow-wrap:anywhere;}
+.bo-waterfall-popup {inset:auto;margin:0;border:0;width:min(320px,calc(100vw - 16px));min-width:0;max-height:calc(100dvh - 16px);overflow:auto;padding:15px 16px;pointer-events:auto;color-scheme:dark;}
+.bo-waterfall-popup > strong {display:block;padding-right:32px;font-size:14px;}
+.bo-waterfall-popup-metric {margin:2px 0 10px;color:#bdbdc9;font-size:11px;}
+.bo-waterfall-popup dl {margin:0;}
+.bo-waterfall-popup dl > div {display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:3px 0;}
+.bo-waterfall-popup dt {font-size:11px;color:#d3d3dc;}
+.bo-waterfall-popup dd {margin:0;font-size:12px;font-weight:600;text-align:right;font-variant-numeric:tabular-nums;}
+.bo-waterfall-popup dl > .bo-waterfall-popup-impact {border-top:1px solid #ffffff25;margin-top:5px;padding-top:8px;}
+.bo-waterfall-popup-impact dd.positive {color:#8de4aa;}
+.bo-waterfall-popup-impact dd.negative {color:#ffa59e;}
+.bo-waterfall-popup-explanation {margin:9px 0 0;color:#e1e1e8;font-size:12px;line-height:1.45;}
+.bo-waterfall-popup :is(.bo-waterfall-popup-close,.bo-waterfall-popup-more) {border:0;background:transparent;color:inherit;cursor:pointer;font:inherit;}
+.bo-waterfall-popup .bo-waterfall-popup-close {position:absolute;right:4px;top:4px;width:36px;height:36px;font-size:19px;}
+.bo-waterfall-popup .bo-waterfall-popup-more {margin-top:7px;padding:7px 0;color:#c6bcff;text-decoration:underline;text-underline-offset:3px;}
 
 @container (max-width: 410px) {
   .bo-waterfall-label {justify-self:center;width:max-content;max-width:calc(100% + 24px);overflow-wrap:normal;}
@@ -1633,6 +1647,11 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-overview-summary .bo-quarter-stacked{min-height:205px;gap:5px}
 .bo-overview-summary .bo-quarter-stacked .bo-stack{height:155px}
 .bo-overview-summary .bo-waterfall-plot{margin:12px auto 0;overflow:visible;max-width:none}
+@media (width > 1250px) {
+  .bo-overview-summary .bo-waterfall-plot {--bo-waterfall-height:198px;}
+  .bo-overview-summary .bo-quarter-stacked {--bo-quarter-bar-height:160px;min-height:215px;}
+  .bo-overview-summary .bo-quarter-stacked .bo-stack {height:165px;}
+}
 .bo-overview-mosaics .bo-category-mosaic{height:clamp(320px,25vw,380px);min-height:0;aspect-ratio:auto}
 .bo-overview-mosaics .bo-category-legend{gap:7px 10px;font-size:8px}
 .bo-overview-mosaics .bo-heatmap-scale{width:150px;min-width:80px;flex:1}

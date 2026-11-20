@@ -2,7 +2,7 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, sc
 import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=tap-tooltips";
 import {bindCategoryTooltips, categoryComparisonRows} from "/category-treemap.mjs?v=tap-tooltips";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=tap-tooltips";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, renderOrderLoss, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=waterfall-acov";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, renderOrderLoss, overviewModel, bindQuarterTooltips, bindRevenueWaterfall, channelMetrics } from "/business-overview.mjs?v=waterfall-popup";
 import {bindTitleTooltips, dismissTooltip} from '/tap-tooltip.mjs';
 import { apiParams, createApiCache } from "/api-cache.mjs?v=waterfall-factors";
 import {
@@ -366,9 +366,12 @@ function bindBusinessOverview() {
   bindOverviewFunnel();
   bindComparisonTooltips('catalog');
   bindTitleTooltips(document, '.bo-channel-row[title], .bo-margin-delta[title], .bo-ready-to-ship[title], .bo-kpi-subvalue > span[title]');
-  bindTitleTooltips(document, '.bo-waterfall-column[title]:not([data-waterfall-detail])');
+  bindRevenueWaterfall($('#bo-waterfall'));
   const cancellations = $('[data-waterfall-detail="order-loss"]');
-  if (cancellations) cancellations.onclick = () => modal('Втрачені замовлення', renderOrderLoss(data.orderLoss,state.compareMode));
+  if (cancellations) cancellations.onclick = () => {
+    cancellations.closest('[popover]').hidePopover();
+    modal('Втрачені замовлення', renderOrderLoss(data.orderLoss,state.compareMode));
+  };
   $$('[data-catalog-score-history]').forEach(button => button.onclick = () => {
     const catalog = data.catalogHealth;
     const segment = catalog.segments.find(({label}) => label === button.dataset.catalogScoreHistory);

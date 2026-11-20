@@ -1,4 +1,4 @@
-import { orderLossImpact, overviewRevenueWaterfall } from "./revenue-drivers.mjs?v=waterfall-acov";
+import { orderLossImpact, overviewRevenueWaterfall } from "./revenue-drivers.mjs?v=waterfall-popup";
 import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=tap-tooltips';
 import {renderOverviewFunnel} from "./site-funnel.mjs?v=tap-tooltips";
 import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=tap-tooltips";
@@ -328,7 +328,7 @@ function weeklyPanel(data, state) {
                 .reverse()
                 .map(
                   (channel) =>
-                    `<div style="height:${(channel.values[index] / max) * 150}px;background:${channel.color}"></div>`,
+                    `<div style="height:calc(${channel.values[index] / max} * var(--bo-quarter-bar-height,150px));background:${channel.color}"></div>`,
                 )
                 .join("")
         }</div><small>${row.label}</small></div>`;
@@ -565,6 +565,50 @@ export function renderOrderLoss(source, mode) {
   </section>`;
 }
 
+const waterfallDecimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
+const waterfallSigned = value => signedPoints.format(value).replace(/^-/u,'−');
+
+function renderWaterfallPopup(id, step, source) {
+  const {metric,unit,previous,current,explanation,estimated = []} = step.comparison;
+  const suffix = unit === '%' ? '%' : unit === '₴' ? ' ₴' : '';
+  const formatValue = (value,index) => Number.isFinite(value)
+    ? `${estimated[index] ? '≈' : ''}${waterfallDecimal.format(value)}${suffix}` : '—';
+  const delta = Number.isFinite(previous) && Number.isFinite(current) ? current-previous : null;
+  const relative = change(current,previous);
+  const deltaLabel = delta === null ? '—' : unit === '%' ? `${waterfallSigned(delta)} п. п.`
+    : `${waterfallSigned(delta)}${suffix}${relative === null ? '' : ` (${waterfallSigned(relative)}%)`}`;
+  const impact = step.total ? delta : step.value;
+  const impactLabel = impact === null ? '—' : `${waterfallSigned(impact)} ₴`;
+  return `<div id="${id}" popover="auto" role="group" aria-labelledby="${id}-title" class="bo-quarter-tooltip bo-waterfall-popup">
+    <strong id="${id}-title">${esc(step.total ? 'Відвантажений виторг' : step.label)}</strong>
+    <button type="button" class="bo-waterfall-popup-close" popovertarget="${id}" popovertargetaction="hide" aria-label="Закрити">×</button>
+    <p class="bo-waterfall-popup-metric">${esc(metric)}</p>
+    <dl>
+      <div><dt>${esc(rangeLabel(source.comparisonRange))}</dt><dd>${esc(formatValue(previous,0))}</dd></div>
+      <div><dt>${esc(rangeLabel(source.range))}</dt><dd>${esc(formatValue(current,1))}</dd></div>
+      <div><dt>Зміна</dt><dd>${esc(deltaLabel)}</dd></div>
+      ${step.total ? '' : `<div class="bo-waterfall-popup-impact"><dt>Внесок у виторг</dt><dd class="${deltaTone(impact)}">${esc(impactLabel)}</dd></div>`}
+    </dl>
+    <p class="bo-waterfall-popup-explanation">${esc(explanation)}</p>
+    ${step.key === 'order-loss' ? '<button type="button" class="bo-waterfall-popup-more" data-waterfall-detail="order-loss">Причини скасувань →</button>' : ''}
+  </div>`;
+}
+
+export function bindRevenueWaterfall(root) {
+  for (const button of root.querySelectorAll('.bo-waterfall-column')) {
+    const popup = button.popoverTargetElement;
+    if (!popup) continue;
+    popup.addEventListener('toggle', event => {
+      if (event.newState !== 'open') return;
+      const anchor = button.querySelector('.bo-waterfall-value').getBoundingClientRect();
+      const viewport = popup.ownerDocument.defaultView;
+      const top = anchor.bottom + 12 + popup.offsetHeight <= viewport.innerHeight - 8
+        ? anchor.bottom + 12 : anchor.top - popup.offsetHeight - 12;
+      placeFixedTooltip(popup,anchor.left + anchor.width/2 - popup.offsetWidth/2,top);
+    });
+  }
+}
+
 export function renderRevenueWaterfall(source, state) {
   const mode = state.compareMode || 'yoy';
   const magnitude=Math.max(Math.abs(source?.start||0),Math.abs(source?.end||0));
@@ -572,7 +616,13 @@ export function renderRevenueWaterfall(source, state) {
   if (!source?.available) return card('waterfall','Звідки приріст виручки','',empty(source?.notice || 'Завантажуємо порівнювані відвантаження…'),'','bo-waterfall');
   const label = period => mode === 'yoy' ? period.from.slice(0,4) : `${period.from.slice(8)}.${period.from.slice(5,7)}–${period.to.slice(8)}.${period.to.slice(5,7)}`;
   const unit = `${scale===1000000?'млн ':scale===1000?'тис. ':''}₴`;
-  const steps = [{label:label(source.comparisonRange),from:0,to:source.start,value:source.start,total:true},...source.steps,{label:label(source.range),from:0,to:source.end,value:source.end,total:true}];
+  const totals = {metric:'Виторг за вибраними каналами',unit:'₴',previous:source.start,current:source.end,
+    explanation:'Загальна зміна дорівнює сумі внесків у графіку.'};
+  const steps = [
+    {label:label(source.comparisonRange),from:0,to:source.start,value:source.start,total:true,comparison:totals},
+    ...source.steps,
+    {label:label(source.range),from:0,to:source.end,value:source.end,total:true,comparison:totals},
+  ];
   const weights = steps.map(step=>step.key === 'marketplaces' ? 1.16
     : step.key === 'order-loss' ? 1.08 : 1);
   const totalWeight = weights.reduce((sum,weight)=>sum+weight,0);
@@ -598,28 +648,27 @@ export function renderRevenueWaterfall(source, state) {
     const barY = Math.min(y(step.from),y(step.to));
     const height = Math.max(2,Math.abs(y(step.to)-y(step.from)));
     const color = step.total?'var(--text)':step.value===null?'var(--line)':step.value>=0?'var(--blue)':'var(--red)';
-    const detail = step.key === 'order-loss';
     const sign = step.value>0&&!step.total?'+':'';
     const valueLabel = step.value===null ? 'Немає даних' : sign+number(step.value)+' ₴';
-    const title = esc([step.label,valueLabel,step.description].filter(Boolean).join(' · '));
+    const title = esc(`${step.label} · ${valueLabel}`);
     const connector = next ? `<path d="M${x+width} ${y(step.to)}H${next.x}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>` : '';
     const graphic = `${connector}<rect x="${x}" y="${barY}" width="${width}" height="${height}" rx="4" fill="${color}"/>`;
     const dateParts = step.total ? step.label.split('–') : [];
     const axisLabel = dateParts.length === 2
       ? `${esc(dateParts[0])}–<wbr><span class="bo-waterfall-period-end">${esc(dateParts[1])}</span>`
       : esc(step.label.replace('Маркетплейси','Маркет­плейси').replace('Скасування','Скасу­вання'));
-    const tag = detail ? 'button' : 'div';
-    const control = detail ? ` type="button" data-waterfall-detail="order-loss" aria-haspopup="dialog" aria-label="${title}"` : '';
-    const content = `<${tag} class="bo-waterfall-column" title="${title}"${control}>` +
+    const popupId = `bo-waterfall-popup-${index}`;
+    const content = `<button type="button" class="bo-waterfall-column" popovertarget="${popupId}" aria-label="${title}">` +
       `<span class="bo-waterfall-value" style="--bo-waterfall-y:${barY/plotHeight}">${sign}${esc(amount(step.value))}</span>` +
-      `<span class="bo-waterfall-label">${axisLabel}</span></${tag}>`;
-    return {graphic,content};
+      `<span class="bo-waterfall-label">${axisLabel}</span></button>`;
+    return {graphic,content,popup:renderWaterfallPopup(popupId,step,source)};
   });
   const tracks = weights.map(weight=>`minmax(0,${weight}fr)`).join(' ');
   const body = `<div class="bo-waterfall-plot" role="group" aria-label="Фактори зміни відвантаженого виторгу">
     <span class="bo-waterfall-unit">${unit}</span><div class="bo-waterfall-chart">
     <svg class="bo-waterfall-bars" viewBox="0 0 ${plotWidth} ${plotHeight}" preserveAspectRatio="none" aria-hidden="true">${columns.map(column=>column.graphic).join('')}</svg>
-    <div class="bo-waterfall-columns" style="--bo-waterfall-columns:${tracks}">${columns.map(column=>column.content).join('')}</div></div></div>`;
+    <div class="bo-waterfall-columns" style="--bo-waterfall-columns:${tracks}">${columns.map(column=>column.content).join('')}</div>
+    </div></div>${columns.map(column=>column.popup).join('')}`;
   return card('waterfall','Звідки приріст виручки','',body,'','bo-waterfall');
 }
 

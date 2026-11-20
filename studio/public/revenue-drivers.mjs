@@ -4,12 +4,12 @@ export const waterfallComparison = (range, mode = 'yoy') => comparisonRange(rang
 const metric = (source, key) => source?.available && Number.isFinite(source.metrics?.[key]) ? source.metrics[key] : null;
 const receivedCheck = period => period?.available && period.received > 0 && Number.isFinite(period.receivedAmount)
   ? period.receivedAmount / period.received : null;
-const checkFormat = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:0});
-
-function checkComparison(before, after, previousEstimated = false, currentEstimated = false) {
-  const formatCheck = (value, estimated) => value === null ? '—' : `${estimated ? '≈' : ''}${checkFormat.format(value)} ₴`;
-  return `${formatCheck(before, previousEstimated)} → ${formatCheck(after, currentEstimated)}`;
-}
+const decimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
+const signed = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2,signDisplay:'exceptZero'});
+const uah = value => `${decimal.format(value)} ₴`;
+const signedUah = value => `${signed.format(value)} ₴`;
+const compare = (metric, unit, previous, current, explanation, estimated) =>
+  ({metric,unit,previous,current,explanation,estimated});
 
 function sessions(source, period) {
   if (!source?.available || source.complete === false || source.incomplete || source.thresholded) return null;
@@ -37,12 +37,12 @@ export function revenueWaterfall(current, previous, range, baseline, mode = 'yoy
   const factors = [];
   let method = '';
   if (scope !== 'marketplaces') {
-    const cancellation = orderLossImpact(current.orderLoss, previous.orderLoss) ?? (mode === 'yoy' ? 0 : null);
+    const cancellationEffect = orderLossImpact(current.orderLoss, previous.orderLoss);
+    const cancellation = cancellationEffect ?? (mode === 'yoy' ? 0 : null);
+    const estimated = [previous.orderLoss?.estimated, current.orderLoss?.estimated];
     const t0 = sessions(previous.traffic, baseline), t1 = sessions(current.traffic, range);
     const aov0 = receivedCheck(previous.orderLoss), aov1 = receivedCheck(current.orderLoss);
     const acov0 = d0 > 0 ? s0 / d0 : null, acov1 = d1 > 0 ? s1 / d1 : null;
-    const aovComparison = checkComparison(aov0,aov1,previous.orderLoss?.estimated,current.orderLoss?.estimated);
-    const acovComparison = checkComparison(acov0,acov1);
     let aovImpact = null, acovImpact = null;
     if (d0 > 0 && d1 > 0) {
       const afterOrders = d1 * acov0;
@@ -53,34 +53,55 @@ export function revenueWaterfall(current, previous, range, baseline, mode = 'yoy
       if (t0 && t1) {
         const afterTraffic = s0 * t1 / t0;
         factors.push(
-          {key:'traffic',label:'Трафік',value:afterTraffic - s0},
+          {key:'traffic',label:'Трафік',value:afterTraffic - s0,
+            comparison:compare('Сеанси GA4', 'count', t0, t1,
+              `Виторг сайту за базовий період (${uah(s0)}) × зміна кількості сеансів (${signed.format((t1/t0-1)*100)}%). Конверсія і чек зафіксовані на базовому рівні.`)},
           {key:'conversion',label:'CR',value:afterOrders - afterTraffic - (cancellation ?? 0),
-            description:'Внесок зміни відвантажених замовлень на сеанс GA4 після виділення ефекту скасувань.'},
+            comparison:compare('Виконані замовлення на сеанс', '%', d0/t0*100, d1/t1*100,
+              `Зміна CR × ${decimal.format(t1)} поточних сеансів × базовий ACOV (${uah(acov0)}).${cancellation
+                ? ` З отриманих ${signedUah(afterOrders-afterTraffic)} віднято окремий внесок скасувань (${signedUah(cancellation)}).` : ''}`)},
         );
         method = 'CR базується на відвантажених замовленнях на сеанс GA4. Ефект скасувань виділено окремо.';
       } else {
         factors.push({key:'orders',label:'Замовлення',value:afterOrders - s0 - (cancellation ?? 0),
-          description:'Трафік і CR об’єднані через брак порівнюваних сеансів GA4.'});
+          comparison:compare('Виконані замовлення', 'count', d0, d1,
+            `Зміна кількості виконаних замовлень × базовий ACOV (${uah(acov0)}).${cancellation
+              ? ` Віднято окремий внесок скасувань (${signedUah(cancellation)}).` : ''} Спільний внесок трафіку й CR через брак порівнюваних сеансів GA4.`)});
         method = 'Трафік і CR об’єднані через брак порівнюваних сеансів GA4.';
       }
     } else {
-      factors.push({key:'site',label:'Виторг',value:s1-s0-(cancellation ?? 0)});
+      factors.push({key:'site',label:'Виторг',value:s1-s0-(cancellation ?? 0),
+        comparison:compare('Виторг сайту', '₴', s0, s1,
+          `Зміна відвантаженого виторгу.${cancellation ? ` Віднято окремий внесок скасувань (${signedUah(cancellation)}).` : ''} Для розподілу за трафіком, CR і чеком потрібні виконані замовлення за обидва періоди.`)});
     }
+    const c0 = previous.orderLoss?.available ? previous.orderLoss.canceledAmountShare : null;
+    const c1 = current.orderLoss?.available ? current.orderLoss.canceledAmountShare : null;
     factors.push(
       {key:'aov',label:'AOV',value:aovImpact,
-        description:`Середній чек отриманих замовлень сайту: ${aovComparison}. Внесок зміни чека зважено на кількість виконаних замовлень за вибраний період.`},
+        comparison:compare('Середній чек отриманих замовлень сайту', '₴', aov0, aov1, aovImpact === null
+          ? 'Для розрахунку потрібен отриманий чек за обидва періоди та виконані замовлення за обидва періоди.'
+          : `Зміна отриманого чека (${signedUah(aov1-aov0)}) × ${decimal.format(d1)} виконаних замовлень за вибраний період.`, estimated)},
       {key:'acov',label:'ACOV',value:acovImpact,
-        description:`Середній чек виконаних замовлень після повернень: ${acovComparison}. ${acovImpact === null
+        comparison:compare('Середній чек виконаних замовлень після повернень', '₴', acov0, acov1, acovImpact === null
           ? 'Для порівняння потрібні виконані замовлення за обидва періоди.'
           : aovImpact === null
-          ? 'Показано внесок зміни виконаного чека. Для окремого внеску AOV потрібні дані про отримані замовлення за обидва періоди.'
-          : 'Внесок зміни розриву між виконаним і отриманим чеком.'}`},
-      {key:'order-loss',label:'Скасування',value:cancellation},
+          ? `Зміна виконаного чека (${signedUah(acov1-acov0)}) × ${decimal.format(d1)} виконаних замовлень. Отриманий чек недоступний за один або обидва періоди.`
+          : `Зміна виконаного чека (${signedUah(acov1-acov0)}) мінус зміна отриманого чека (${signedUah(aov1-aov0)}). Різницю помножено на ${decimal.format(d1)} виконаних замовлень.`)},
+      {key:'order-loss',label:'Скасування',value:cancellation,
+        comparison:compare('Частка вартості скасованих замовлень', '%', Number.isFinite(c0) ? c0*100 : null, Number.isFinite(c1) ? c1*100 : null,
+          cancellationEffect === null ? (mode === 'yoy'
+            ? 'Для одного або обох періодів бракує даних. У річному порівнянні внесок показано як 0 ₴.'
+            : 'Для розрахунку потрібна порівнювана вартість замовлень і скасувань за обидва періоди.')
+            : `Базова частка мінус поточна (${signed.format((c0-c1)*100)} п. п.) × ${estimated[1] ? '≈' : ''}${uah(current.orderLoss.receivedAmount)} отриманих замовлень. Збільшення частки зменшує внесок.`, estimated)},
     );
   }
-  if (scope !== 'site') factors.push({key:'marketplaces',label:'Маркетплейси',value:r1+m1-r0-m0});
-  const other = end-s1-r1-m1-(start-s0-r0-m0);
-  if (Math.abs(other) > .005) factors.push({key:'other',label:'Інші канали',value:other});
+  if (scope !== 'site') factors.push({key:'marketplaces',label:'Маркетплейси',value:r1+m1-r0-m0,
+    comparison:compare('Відвантажений виторг маркетплейсів', '₴', r0+m0, r1+m1,
+      `Зміна виторгу Rozetka (${signedUah(r1-r0)}) і Monomarket (${signedUah(m1-m0)}).`)});
+  const other0 = start-s0-r0-m0, other1 = end-s1-r1-m1;
+  if (Math.abs(other1-other0) > .005) factors.push({key:'other',label:'Інші канали',value:other1-other0,
+    comparison:compare('Відвантажений виторг інших каналів', '₴', other0, other1,
+      'Різниця між виторгом інших каналів за два періоди.')});
 
   let running = start;
   const steps = factors.map(factor => {

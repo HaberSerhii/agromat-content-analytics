@@ -116,7 +116,11 @@ test('received and fulfilled checks split the check contribution and cancellatio
  ]);
  assert.ok(Math.abs(report.residual)<.01);
  const chart = renderRevenueWaterfall(report,{compareMode:'yoy'});
- assert.match(chart,/4\s000 ₴ → ≈4\s200 ₴/);
+ assert.match(chart,/4\s000 ₴<\/dd>[\s\S]*?≈4\s200 ₴/);
+ assert.equal((chart.match(/class="bo-waterfall-column" popovertarget=/g) || []).length,8);
+ assert.equal((chart.match(/popover="auto"/g) || []).length,8);
+ assert.match(chart,/20\s000<\/dd>[\s\S]*?21\s000<\/dd>[\s\S]*?\+1\s000 \(\+5%\)[\s\S]*?\+140\s000 ₴/);
+ assert.match(chart,/віднято окремий внесок скасувань \(\+252\s000 ₴\)/);
  assert.match(chart,/Середній чек виконаних замовлень після повернень/);
  assert.match(chart,/data-waterfall-detail="order-loss"/);
  assert.doesNotMatch(chart,/Нові товари|assortment|<table|bo-waterfall-actions/);
