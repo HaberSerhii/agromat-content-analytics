@@ -57,7 +57,7 @@ test("calendar drives both graph sizes; daily-weekly switch keeps calendar and m
     "utf8",
   );
   assert.doesNotMatch(source, /data-bo-preset/);
-  assert.match(source, /state.chartMetric=key;saveLocation\(\);render\(\)/);
+  assert.match(source, /state\.chartMetric\s*=\s*key;[\s\S]*?saveLocation\(\);[\s\S]*?redrawOverviewChart\(\)/);
 });
 test("revenue charts use round ceilings and show start, middle and end dates", () => {
   const range = {from:"2026-11-01", to:"2026-11-17"};

@@ -34,14 +34,28 @@ export function comparisonRange(range, mode = 'wow') {
 }
 
 export const rangeLabel = range => `${range.from.split('-').reverse().join('.')} — ${range.to.split('-').reverse().join('.')}`;
-export const scopeKey = state => JSON.stringify([state.from, state.to, state.compareMode, state.salesScope, state.acquisition, state.device]);
+export const scopeKey = state => JSON.stringify([state.from, state.to, state.compareMode, state.salesScope]);
 export const hasWebSlice = state => state.acquisition !== 'all' || state.device !== 'all';
+export const funnelAcquisitions = [['all','Усі'],['direct','Direct'],['organic','Organic'],['cpc','CPC']];
+export const funnelDevices = [['all','Усі'],['mobile','Mobile'],['desktop','Desktop']];
+export const funnelSliceKey = (acquisition = 'all', device = 'all') => `${acquisition}:${device}`;
 
 const esc = value => String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+function filterGroup({key,label,values,selected,attribute,disabled=false}) {
+  return `<fieldset class="bo-filter-group"${disabled?' disabled':''}><legend>${label}</legend><div class="bo-segments">${values.map(([value,name]) =>
+    `<button type="button" ${attribute}="${key}" data-value="${value}" aria-pressed="${selected===value}">${name}</button>`
+  ).join('')}</div></fieldset>`;
+}
+
+export function funnelControls(state) {
+  const shared = {attribute:'data-funnel-filter',disabled:state.salesScope==='marketplaces'};
+  return `<div class="bo-filter-groups bo-funnel-filters">${filterGroup({...shared,key:'acquisition',label:'Канали залучення',values:funnelAcquisitions,selected:state.acquisition ?? 'all'})}
+    ${filterGroup({...shared,key:'device',label:'Пристрої',values:funnelDevices,selected:state.device ?? 'all'})}</div>`;
+}
+
 export function overviewControls(state) {
   const availability = comparisonAvailability(state);
   const mode = validComparison(state, state.compareMode);
-  const group = (key, label, values) => `<fieldset class="bo-filter-group"><legend>${label}</legend><div class="bo-segments">${values.map(([value,name]) => `<button type="button" data-overview-filter="${key}" data-value="${value}" aria-pressed="${state[key] === value}" ${key!=='salesScope'&&state.salesScope==='marketplaces'&&value!=='all'?'disabled title="GA4 сайту не вимірює трафік маркетплейсів"':''}>${name}</button>`).join('')}</div></fieldset>`;
   const comparisons = [
     ['wow', 'WoW', 'Інтервал до 7 днів'],
     ['mom', 'MoM', 'Інтервал не довший за місяць'],
@@ -59,9 +73,7 @@ export function overviewControls(state) {
         `<button type="button" data-comparison="${key}" aria-pressed="${mode===key}" ${availability[key]?'':'disabled'} title="${reason}">${label}</button>`
       ).join('')}</div>
     </fieldset>
-    ${group('salesScope','Канали продажу',[['all','Усі'],['site','Сайт'],['marketplaces','Маркетплейси']])}
-    ${group('acquisition','Канали залучення',[['all','Усі'],['direct','Direct'],['organic','Organic'],['cpc','CPC']])}
-    ${group('device','Пристрої',[['all','Усі'],['mobile','Mobile'],['desktop','Desktop']])}
+    ${filterGroup({key:'salesScope',label:'Канали продажу',values:[['all','Усі'],['site','Сайт'],['marketplaces','Маркетплейси']],selected:state.salesScope,attribute:'data-overview-filter'})}
   </div>`;
 }
 

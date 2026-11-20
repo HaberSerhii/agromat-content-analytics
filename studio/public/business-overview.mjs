@@ -1,6 +1,6 @@
 import { overviewRevenueWaterfall } from "./revenue-drivers.mjs";
 import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=margin-tooltip';
-import {renderSiteFunnel} from "./site-funnel.mjs?v=overview-copy";
+import {renderOverviewFunnel} from "./site-funnel.mjs?v=funnel-filters";
 import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=category-comparison";
 import {
   graphRange,
@@ -43,6 +43,8 @@ const ratio = (a, b, factor = 1) =>
 const change = (now, prior) =>
   ratio(now, prior, 100) == null ? null : (now / prior) * 100 - 100;
 const colors = ["#533afd", "#8d7afb", "#baaefa", "#ddd6fc"];
+const channelFields = {revenue:'shippedRevenue',margin:'amount',docs:'shippedDocs',canceled:'canceledDocs'};
+export const channelMetrics = Object.keys(channelFields);
 export const presetRange = graphRange;
 export function overviewModel(data, state) {
   const sales = 'comparisonRange' in data ? (available(data.chartSales) ? data.chartSales : null) : available(data.chartSales)
@@ -102,12 +104,13 @@ export function overviewModel(data, state) {
       "Відвантажені замовлення · ERP",
     ),
     metric(
-      "aov",
-      "Середній чек",
-      ratio(m.shippedRevenue, m.shippedDocs),
-      ratio(p.shippedRevenue, p.shippedDocs),
-      money,
-      "Виторг / відвантажені замовлення",
+      "canceled",
+      "Скасування",
+      m.canceledDocs ?? null,
+      p.canceledDocs,
+      number,
+      "Скасовані документи · ERP",
+      true,
     ),
     metric(
       "users",
@@ -121,6 +124,14 @@ export function overviewModel(data, state) {
         : null,
       short,
       "Унікальні за період · BigQuery · UA",
+    ),
+    metric(
+      "aov",
+      "Середній чек",
+      ratio(m.shippedRevenue, m.shippedDocs),
+      ratio(p.shippedRevenue, p.shippedDocs),
+      money,
+      "Виторг / відвантажені замовлення",
     ),
     metric(
       "conversion",
@@ -142,37 +153,29 @@ export function overviewModel(data, state) {
       percent,
       "Покупки / сеанси · GA4",
     ),
-    metric(
-      "canceled",
-      "Скасування",
-      m.canceledDocs ?? null,
-      p.canceledDocs,
-      number,
-      "Скасовані документи · ERP",
-      true,
-    ),
   ];
+  const key = channelMetrics.includes(state.chartMetric) ? state.chartMetric : state.channelMetric;
+  const channelMetric = metrics.find(metric => metric.key === key && channelMetrics.includes(key)) ?? metrics[0];
+  const field = channelFields[channelMetric.key];
   const channels = ["site", "rozetka", "monomarket"].map((id, i) => {
     const source = data.salesChannels?.[id];
+    const margin = data.margin?.byChannel?.[id], priorMargin = data.margin?.previous?.byChannel?.[id];
+    const current = channelMetric.key === 'margin' ? margin?.amount : available(source) ? source.metrics?.[field] : null;
+    const prior = channelMetric.key === 'margin' ? priorMargin?.amount
+      : available(source?.previous) && source.previous.hasData ? source.previous.metrics?.[field] : null;
     return {
       id,
       name: ["Сайт", "Rozetka", "Monomarket"][i],
       color: colors[i],
-      source,
-      value: available(source)
-        ? (source.metrics?.shippedRevenue ?? null)
-        : null,
-      prior:
-        state.yoy && available(source?.previous) && source.previous.hasData
-          ? source.previous.metrics?.shippedRevenue
-          : null,
+      value: Number.isFinite(current) ? current : null,
+      prior: state.yoy && Number.isFinite(prior) ? prior : null,
     };
   });
   return {
     sales,
     metrics,
+    channelMetric,
     channels: channels.filter(channel => state.salesScope === 'site' ? channel.id === 'site' : state.salesScope === 'marketplaces' ? channel.id !== 'site' : true),
-    total: m.shippedRevenue ?? null,
   };
 }
 function badge(delta, lower = false) {
@@ -202,39 +205,43 @@ function channelMarginTable(channels, margin, compare) {
   return `<div class="bo-channel-margin"><table><caption>Валова маржа за каналами</caption><thead><tr><th scope="col">Канал</th><th scope="col">Маржа, грн</th><th scope="col">Маржа, %</th>${compare ? '<th scope="col">Зміна</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function channelPanel(model, state, margin) {
-  const valid = model.channels.filter((c) => c.value != null),
-    known = sum(valid, "value");
-  const total = model.total;
-  const residual = total != null ? total - known : 0;
-  const expected = state.salesScope === 'site' ? 1 : state.salesScope === 'marketplaces' ? 2 : 3;
-  const complete = valid.length === expected && total > 0 && residual >= -0.01;
-  const rows =
-    complete && residual > 0.01
-      ? [
-          ...valid,
-          {
-            name: "Інші / не визначено",
-            value: residual,
-            prior: null,
-            color: colors[3],
-          },
-        ]
-      : valid;
-  if (state.salesScope !== 'site') rows.splice(2, 0, {id:"prom",name:"Prom",value:null,prior:null,color:colors[3]});
+  const {key, label, value:total, format, lower} = model.channelMetric;
+  const exact = format === money ? value => `${marginMoney.format(value)} ₴` : format;
+  const valid = model.channels.filter(channel => channel.value != null);
+  const residual = total == null ? 0 : total - sum(valid,'value');
+  const complete = total != null && valid.length === model.channels.length && residual >= -0.01;
+  const canShare = complete && total > 0 && valid.every(channel => channel.value >= 0);
+  const rows = [...model.channels];
+  if (state.salesScope !== 'site') rows.splice(rows.findIndex(channel => channel.id === 'monomarket'), 0,
+    {id:'prom',name:'Prom',value:null,prior:null,color:colors[3]});
+  if (complete && residual > 0.01) rows.push({id:'other',name:'Інші / не визначено',value:residual,prior:null,color:colors[3]});
   let offset = 0;
   const circumference = 2 * Math.PI * 60;
-  const segments = complete ? rows.filter(channel => channel.value > 0).map(channel => {
-    const length = channel.value / total * circumference;
-    const svg = `<circle cx="80" cy="80" r="60" fill="none" stroke="${channel.color}" stroke-width="20" stroke-dasharray="${Math.max(0,length-2)} ${circumference}" stroke-dashoffset="${-offset-1}" transform="rotate(-90 80 80)"><title>${esc(channel.name)}: ${esc(money(channel.value))} · ${esc(percent(channel.value/total*100))}</title></circle>`;
+  const positive = rows.filter(channel => channel.value > 0);
+  const segments = canShare ? positive.map(channel => {
+    const share = channel.value / total;
+    const length = share * circumference;
+    const svg = `<circle cx="80" cy="80" r="60" fill="none" stroke="${channel.color}" stroke-width="20" stroke-dasharray="${Math.max(0,length-2)} ${circumference}" stroke-dashoffset="${-offset-1}" transform="rotate(-90 80 80)"><title>${esc(channel.name)}: ${esc(exact(channel.value))} · ${esc(percent(share*100))}</title></circle>`;
     offset += length;
     return svg;
   }).join('') : '';
-  const count = rows.filter(channel => channel.value > 0).length;
+  const count = positive.length;
+  const ringLabel = !complete ? 'неповна розбивка' : canShare || !count && total === 0
+    ? `${count} ${count===1?'канал':count>1&&count<5?'канали':'каналів'}` : 'підсумок';
+  const channelRows = rows.map(channel => {
+    const {id,name,color,value,prior} = channel;
+    const amount = format(value);
+    const ratio = canShare && value != null ? `<small>${number(value/total*100)}%</small>` : '';
+    const comparison = state.yoy ? badge(change(value,prior),lower) : '';
+    const info = value == null ? (id==='prom' ? 'Джерело не підключено' : 'Дані недоступні')
+      : exact(value) + (prior == null ? '' : ` · Було ${exact(prior)}`);
+    return `<div class="bo-channel-row" data-channel="${id}" title="${esc(name)}: ${esc(info)}"><span class="bo-dot" style="background:${color}"></span><span>${esc(name)}</span><span class="bo-channel-values"><b>${esc(amount)}</b>${ratio || comparison ? `<span class="bo-channel-comparison">${ratio}${comparison}</span>` : ''}</span></div>`;
+  }).join('');
   return card(
     "channels",
     "Канали продажу",
-    "",
-    `<div class="bo-channel-layout"><svg class="bo-channel-donut" viewBox="0 0 160 160" role="img" aria-label="Частки виторгу за каналами продажу"><circle cx="80" cy="80" r="60" fill="none" stroke="var(--line)" stroke-width="20"/>${segments}<text x="80" y="78" text-anchor="middle" class="bo-donut-total">${esc(money(total))}</text><text x="80" y="98" text-anchor="middle" class="bo-donut-label">${complete ? `${count} ${count===1?'канал':count<5?'канали':'каналів'}` : 'неповна розбивка'}</text></svg><div class="bo-channel-list">${rows.map(c => `<div class="bo-channel-row" title="${esc(c.name)}: ${esc(c.value == null ? 'Джерело не підключено' : money(c.value))}"><span class="bo-dot" style="background:${c.color}"></span><span>${esc(c.name)}</span><b>${complete && c.value != null ? number(c.value / total * 100)+'%' : '—'}</b>${state.yoy ? badge(change(c.value,c.prior)) : ''}</div>`).join('')}</div></div>${channelMarginTable(model.channels, margin, state.yoy)}`,
+    label,
+    `<div class="bo-channel-layout" data-channel-metric="${key}"><svg class="bo-channel-donut" viewBox="0 0 160 160" role="img" aria-label="${esc(label)} за каналами продажу"><circle cx="80" cy="80" r="60" fill="none" stroke="var(--line)" stroke-width="20"/>${segments}<text x="80" y="78" text-anchor="middle" class="bo-donut-total">${esc(format(total))}</text><text x="80" y="98" text-anchor="middle" class="bo-donut-label">${ringLabel}</text></svg><div class="bo-channel-list">${channelRows}</div></div>${channelMarginTable(model.channels, margin, state.yoy)}`,
   );
 }
 export function quarterChannelRows(data, today) {
@@ -622,9 +629,10 @@ function readyToShipMarkup(snapshot) {
   const sign = snapshot.revenue > 0 ? '+' : '';
   return `<span class="bo-kpi-subvalue bo-ready-to-ship" title="${esc(tooltip)}"><span>Транзит</span><b>${sign}${money(snapshot.revenue)}</b></span>`;
 }
-export function renderBusinessOverview(data, state, chartHTML) {
-  const model = overviewModel(data, state),
-    revenue = model.metrics[0];
+export function renderBusinessOverview(data, state, {panel} = {}) {
+  const model = overviewModel(data, state);
+  if (panel === 'channels') return channelPanel(model, state, data.margin);
+  const revenue = model.metrics[0];
   const metric =
     model.metrics.find((metric) => metric.key === state.chartMetric) || revenue;
   const graphPeriod = { from: state.from, to: state.to };
@@ -641,15 +649,7 @@ export function renderBusinessOverview(data, state, chartHTML) {
   };
   const chartTotal = metric.value,
     chartPrior = metric.prior;
-  const subvalue = key => {
-    if (key === 'revenue') return readyToShipMarkup(data.readyToShip);
-    if (key !== 'margin') return '';
-    const {coveredLines, lines, percent: marginPercent, previous} = data.margin;
-    const hint = Number.isFinite(coveredLines)
-      ? `Маржа ERP після повернень · ${number(coveredLines)} з ${number(lines)} позицій зі значенням` : '';
-    return `<span class="bo-kpi-subvalue"><span title="${esc(hint)}">Прибуток, %</span><b>${percent(marginPercent)}</b>${state.yoy ? marginDelta(marginPercent, previous?.percent) : ''}</span>`;
-  };
-  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${metric.key === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${metric.key === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${subvalue(m.key)}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}${state.acquisition&&state.acquisition!=="all"?" · "+esc(state.acquisition):""}${state.device&&state.device!=="all"?" · "+esc(state.device):""}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
+  const chart = `<section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
     ["day", "Дні"],
     ["week", "Тижні"],
   ]
@@ -659,7 +659,17 @@ export function renderBusinessOverview(data, state, chartHTML) {
     )
     .join(
       "",
-    )}</div></div><div id="overview-sales-chart">${weeklyChart(history, metric.key, { id: "revenue-period", compare: state.yoy, ...chartOptions })}</div></section>${channelPanel(model, state, data.margin)}<div class="bo-overview-summary">${weeklyPanel(data, state)}${catalogPanel(data)}${renderRevenueWaterfall(overviewRevenueWaterfall(data, state, state.compareMode || "yoy"), state)}</div><div class="bo-overview-trio">${renderSiteFunnel(data.siteFunnel,state.compareMode,{selection:true,notice:data.scopeNotice})}${trafficPanel(data)}${marketPanel(data)}</div><div class="bo-overview-mosaics">${categoryPanel(model, state, data)}${categoryPanel(model, state, data, "brands")}</div></div></div>`;
+    )}</div></div><div id="overview-sales-chart">${weeklyChart(history, metric.key, { id: "revenue-period", compare: state.yoy, ...chartOptions })}</div></section>`;
+  if (panel === 'chart') return chart;
+  const subvalue = key => {
+    if (key === 'revenue') return readyToShipMarkup(data.readyToShip);
+    if (key !== 'margin') return '';
+    const {coveredLines, lines, percent: marginPercent, previous} = data.margin;
+    const hint = Number.isFinite(coveredLines)
+      ? `Маржа ERP після повернень · ${number(coveredLines)} з ${number(lines)} позицій зі значенням` : '';
+    return `<span class="bo-kpi-subvalue"><span title="${esc(hint)}">Прибуток, %</span><b>${percent(marginPercent)}</b>${state.yoy ? marginDelta(marginPercent, previous?.percent) : ''}</span>`;
+  };
+  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${metric.key === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${metric.key === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${subvalue(m.key)}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid">${chart}${channelPanel(model, state, data.margin)}<div class="bo-overview-summary">${weeklyPanel(data, state)}${catalogPanel(data)}${renderRevenueWaterfall(overviewRevenueWaterfall(data, state, state.compareMode || "yoy"), state)}</div><div class="bo-overview-trio">${renderOverviewFunnel(data.siteFunnel,state,data.scopeNotice)}${trafficPanel(data)}${marketPanel(data)}</div><div class="bo-overview-mosaics">${categoryPanel(model, state, data)}${categoryPanel(model, state, data, "brands")}</div></div></div>`;
 }
 
 export function bindQuarterTooltips(root = document) {

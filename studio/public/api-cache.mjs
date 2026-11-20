@@ -7,7 +7,8 @@ const MAX_BYTES = 8 * 1024 * 1024;
 export function apiParams(kind, state, extra = {}) {
   const values = { ...state, yoy: state.yoy ? "1" : "0", ...extra };
   if (kind === 'catalog-health') return new URLSearchParams({schema:'catalog6',from:values.from,to:values.to,compareMode:values.compareMode});
-  if(kind==='overview')return new URLSearchParams({schema:'linked7',...Object.fromEntries(['from','to','compareMode','salesScope','acquisition','device'].map(key=>[key,values[key]]))});
+  if(kind==='overview')return new URLSearchParams({schema:'linked8',from:values.from,to:values.to,compareMode:values.compareMode,
+    salesScope:values.salesScope,acquisition:'all',device:'all'});
   if(kind==='site-funnel')return new URLSearchParams({mode:values.mode||'week'});
   if(kind==='capabilities')return new URLSearchParams();
   if(kind==='price-index')return new URLSearchParams({schema:'price1'});

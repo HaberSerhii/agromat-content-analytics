@@ -1,5 +1,5 @@
 import {goodsOnlySalesRow,netSalesItems} from './erp-items.mjs';
-import {comparisonRange,rangeDays} from './public/overview-filters.mjs';
+import {comparisonRange,rangeDays,funnelAcquisitions,funnelDevices,funnelSliceKey} from './public/overview-filters.mjs';
 import {calendarBins} from './public/chart-periods.mjs';
 
 export function validateSelection(input) {
@@ -176,15 +176,19 @@ export function buildOverviewAttribution({rows,quantities,margins,transactions,p
     return {docs:selected.length,matchedDocs:count(record=>record.match&&!record.match.ambiguous),sourceDocs:count(record=>!!record.match?.acquisition),deviceDocs:count(record=>!!record.match?.device),missingIdDocs:count(record=>!record.row.webshopId),ambiguousDocs:count(record=>!!record.match?.ambiguous),unmatchedDocs:count(record=>!record.match)};
   };
   const webMap=new Map(webRows.map(row=>[JSON.stringify([row.key,row.acquisition,row.device]),row]));
-  const get=(key,acquisition=state.acquisition)=>webMap.get(JSON.stringify([key,acquisition,state.device]));
-  const webSource=(key,period)=>{
+  const get=(key,acquisition=state.acquisition,device=state.device)=>webMap.get(JSON.stringify([key,acquisition,device]));
+  const webSource=(key,period,acquisition=state.acquisition,device=state.device)=>{
     if(state.salesScope==='marketplaces')return {available:false,range:period,notice:'GA4 сайту не вимірює трафік маркетплейсів.'};
-    const coverage=get(key,'all'),row=get(key);
+    const coverage=get(key,'all',device),row=get(key,acquisition,device);
     if(!coverage?.data_through)return {available:false,range:period};
     const through=String(coverage.data_through),from=String(coverage.data_from),complete=from<=period.from&&through>=period.to;
     return {available:true,hasData:true,users:Number(row?.users||0),sessions:Number(row?.sessions||0),purchases:Number(row?.purchases||0),dataFrom:from,dataThrough:through,complete,range:period,stages:['landing','view_item','cart','begin_checkout','purchase'].map(stage=>({key:stage,value:Number(row?.[stage]||0)}))};
   };
   const currentWeb=webSource('current',range),previousWeb=webSource('previous',baseline);
+  const funnelSlices=Object.fromEntries(funnelAcquisitions.flatMap(([acquisition])=>funnelDevices.map(([device])=>{
+    const current=webSource('current',range,acquisition,device),previous=webSource('previous',baseline,acquisition,device);
+    return [funnelSliceKey(acquisition,device),{available:current.available,current,previous}];
+  })));
   const users={...currentWeb,previous:previousWeb,definition:'Унікальні користувачі України · GA4 BigQuery'};
   const trafficRows=key=>['direct','organic','cpc','other'].filter(channel=>state.acquisition==='all'||channel===state.acquisition).map(channel=>({channel,sessions:Number(get(key,channel)?.sessions||0),purchases:Number(get(key,channel)?.purchases||0)}));
   const channels={...currentWeb,rows:trafficRows('current'),previous:{...previousWeb,rows:trafficRows('previous')}};
@@ -194,5 +198,5 @@ export function buildOverviewAttribution({rows,quantities,margins,transactions,p
   const trafficGroups=[{id:'direct',name:'Direct',color:'#533afd'},{id:'organic',name:'Organic',color:'#8d7afb'},{id:'cpc',name:'CPC',color:'#baaefa'},{id:'other',name:'Інше',color:'#d6d7df'}].filter(group=>state.acquisition==='all'||group.id===state.acquisition);
   const trafficBins=calendarBins(range,rangeDays(range)>90?'month':rangeDays(range)>31?'week':'day');
   const quarterTraffic={available:currentWeb.available,range,groups:trafficGroups,weeks:trafficBins.filter(bin=>get(bin.from+':'+bin.to,'all')?.data_through).map(bin=>{const key=bin.from+':'+bin.to,counts=Object.fromEntries(trafficGroups.map(group=>[group.id,Number(get(key,group.id)?.sessions||0)]));return {...bin,counts,total:trafficGroups.reduce((sum,group)=>sum+counts[group.id],0)};})};
-  return {available:true,range,comparisonRange:baseline,readyToShip,sales,salesChannels,breakdown,...preview,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
+  return {available:true,range,comparisonRange:baseline,readyToShip,sales,salesChannels,breakdown,...preview,users,channels,quarterTraffic,history:{available:true,range,users:{available:currentWeb.available||previousWeb.available,periods},web:{available:currentWeb.available||previousWeb.available,days,periods:webPeriods}},siteFunnel:{available:currentWeb.available,current:currentWeb,previous:previousWeb,comparisonMode:state.compareMode,selection:true,slices:funnelSlices},attribution:{current:coverage(range),previous:coverage(baseline),updatedAt,definition:'ERP webshopId = GA4 transaction_id; джерело й пристрій лише з однозначного збігу'},updatedAt};
 }

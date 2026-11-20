@@ -1,9 +1,9 @@
-import {overviewDefaults, overviewControls, validComparison, comparisonRange, scopedSales, scopeKey} from '/overview-filters.mjs?v=sales-quantities';
-import {bindComparisonTooltips} from "/site-funnel.mjs?v=overview-copy";
+import {overviewDefaults, overviewControls, validComparison, comparisonRange, scopedSales, scopeKey} from '/overview-filters.mjs?v=funnel-filters';
+import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=funnel-filters";
 import {bindCategoryTooltips} from "/category-treemap.mjs?v=category-comparison";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=shipment-margin";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=sales-quantities";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=channel-metrics";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=funnel-filters";
 import {
   defaultRange,
   chartSeries,
@@ -119,6 +119,7 @@ let section = "home",
     chartChannel: "all",
     ranking: "category",
     chartMetric: "revenue",
+    channelMetric: "revenue",
     chartSegment: "Усі",
     chartInterval: "day",
   },
@@ -147,6 +148,7 @@ function parseLocation() {
     "competitor",
     "chartChannel",
     "chartMetric",
+    "channelMetric",
     "chartSegment",
     "chartInterval",
     "ranking",
@@ -160,6 +162,7 @@ function parseLocation() {
     if (params.has(k)) state[k] = params.get(k);
   for (const [key, allowed, fallback] of [
     ["chartMetric", ["revenue", "margin", "docs", "aov", "users", "conversion", "canceled"], "revenue"],
+    ["channelMetric", channelMetrics, "revenue"],
     ["chartInterval", ["day", "week", "month"], "day"],
     ["chartSegment", ["Усі", "Плитка", "Сантехніка", "Підлогові покриття", "Джерела живлення", "Будівельна хімія", "Інше"], "Усі"],
     ['salesScope', ['all','site','marketplaces'], 'all'],
@@ -169,6 +172,7 @@ function parseLocation() {
   state.page = Math.max(1, Number(params.get("page")) || 1);
   state.yoy = params.get("yoy") !== "0";
   if (section === 'home') {
+    if (channelMetrics.includes(state.chartMetric)) state.channelMetric = state.chartMetric;
     try { state.compareMode = validComparison(state, state.compareMode);comparisonRange(state,state.compareMode); } catch { Object.assign(state,overviewDefaults(today)); }
     state.yoy = true;
     state.chartChannel = state.salesScope === 'site' ? 'site' : 'all';
@@ -316,20 +320,49 @@ function businessShell() {
   bindShell();
 }
 
-function renderBusiness() {
-  return renderBusinessOverview(data,{...state,graphToday:today});
+function renderBusiness(options) {
+  return renderBusinessOverview(data,{...state,graphToday:today},options);
 }
 function updateOverviewNotice() {
   const notice = $('#bo-overview-notice');
   if (notice) notice.textContent = data?.scopeNotice ||
     (data?.attribution?.available === false ? data.sourceNotice ?? '' : '');
 }
+function bindOverviewFunnel() {
+  const funnel = $('#bo-funnel');
+  if (!funnel) return;
+  bindComparisonTooltips('funnel',funnel);
+  funnel.querySelectorAll('[data-funnel-filter]').forEach(button => button.onclick = () => {
+    const {funnelFilter:key,value} = button.dataset;
+    if (state[key] === value || state.salesScope === 'marketplaces') return;
+    state[key] = value;
+    saveLocation();
+    funnel.outerHTML = renderOverviewFunnel(data.siteFunnel,state,data.scopeNotice);
+    bindOverviewFunnel();
+    $(`#bo-funnel [data-funnel-filter="${key}"][data-value="${value}"]`)?.focus({preventScroll:true});
+  });
+}
+function bindOverviewChart() {
+  const chart = $('#bo-revenue');
+  bindWeeklyCharts(chart);
+  chart.querySelectorAll('[data-bo-interval]').forEach(button => button.onclick = () => {
+    state.chartInterval = button.dataset.boInterval;
+    saveLocation();
+    redrawOverviewChart();
+    $(`#bo-revenue [data-bo-interval="${state.chartInterval}"]`)?.focus({preventScroll:true});
+  });
+}
+function redrawOverviewChart() {
+  $('#bo-revenue').outerHTML = renderBusiness({panel:'chart'});
+  bindOverviewChart();
+}
 function bindBusinessOverview() {
   if (section !== 'home' || !$(".business-overview")) return;
-  bindWeeklyCharts();
+  bindWeeklyCharts($('.bo-kpis'));
+  bindOverviewChart();
   bindQuarterTooltips();
   bindCategoryTooltips();
-  bindComparisonTooltips('funnel');
+  bindOverviewFunnel();
   bindComparisonTooltips('catalog');
   $$('[data-catalog-score-history]').forEach(button => button.onclick = () => {
     const catalog = data.catalogHealth;
@@ -347,10 +380,19 @@ function bindBusinessOverview() {
   });
   $$("[data-bo-metric]").forEach(button=>button.onclick=()=>{
     const key=button.dataset.boMetric;
-    state.chartMetric=key;saveLocation();render();$("#bo-revenue").scrollIntoView({behavior:'smooth',block:'nearest'});
-  });
-  $$("[data-bo-interval]").forEach(button=>button.onclick=()=>{
-    state.chartInterval=button.dataset.boInterval;saveLocation();render();
+    state.chartMetric=key;
+    if (channelMetrics.includes(key)) {
+      state.channelMetric=key;
+      $('#bo-channels').outerHTML=renderBusiness({panel:'channels'});
+    }
+    saveLocation();
+    $$("[data-bo-metric]").forEach(card=>{
+      const selected=card.dataset.boMetric===key;
+      card.classList.toggle('selected',selected);
+      card.setAttribute('aria-pressed',String(selected));
+    });
+    redrawOverviewChart();
+    $("#bo-revenue").scrollIntoView({behavior:'smooth',block:'nearest'});
   });
   $$("[data-bo-channel]").forEach(button=>button.onclick=()=>{state.chartChannel=button.dataset.boChannel;saveLocation();load({keepView:true});});
   $$("[data-category-meta]").forEach(button=>button.onclick=()=>{
@@ -416,11 +458,9 @@ function bindShell() {
     saveLocation();
     load({keepView:true});
   });
-  $$('[data-overview-filter]').forEach(button => button.onclick = () => {
-    if (state[button.dataset.overviewFilter] === button.dataset.value) return;
-    state[button.dataset.overviewFilter] = button.dataset.value;
-    if (button.dataset.overviewFilter === 'salesScope' && state.salesScope === 'marketplaces') {state.acquisition='all';state.device='all';}
-    if (button.dataset.overviewFilter !== 'salesScope' && button.dataset.value !== 'all') state.salesScope = 'site';
+  $$('[data-overview-filter="salesScope"]').forEach(button => button.onclick = () => {
+    if (state.salesScope === button.dataset.value) return;
+    state.salesScope = button.dataset.value;
     state.chartChannel = state.salesScope === 'site' ? 'site' : 'all';
     state.page = 1;
     saveLocation();

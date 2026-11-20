@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildOverviewAttribution,transactionIndex,validateSelection} from '../overview-attribution.mjs';
-import {comparisonRange,comparisonAvailability,validComparison,scopedSales,overviewDefaults,selectedHistory} from '../public/overview-filters.mjs';
+import {comparisonRange,comparisonAvailability,validComparison,scopedSales,overviewControls,overviewDefaults,selectedHistory} from '../public/overview-filters.mjs';
 import {overviewRevenueWaterfall} from '../public/revenue-drivers.mjs';
 import {periodChannelRows,overviewModel,renderBusinessOverview,renderSalesBreakdown} from '../public/business-overview.mjs';
 import {overviewWebQuery,overviewTransactionsQuery,readBoundedTransactions,readBoundedWeb} from '../overview-query.mjs';
@@ -235,10 +235,14 @@ test('comparison constraints use seven days, calendar month length and exact pri
   assert.deepEqual(comparisonRange({from:'2024-02-29',to:'2024-03-03'},'yoy'),{from:'2023-02-28',to:'2023-03-03'});
 });
 
-test('scope participates in cache keys and BigQuery only receives validated parameters',()=>{
+test('the overview cache follows the global dates and sales scope',()=>{
   const first=apiParams('overview',selection),second=apiParams('overview',{...selection,device:'mobile'});
-  assert.notEqual(first.toString(),second.toString());
-  assert.equal(second.get('device'),'mobile');
+  assert.equal(first.toString(),second.toString());
+  assert.equal(second.get('device'),'all');
+  assert.notEqual(first.toString(),apiParams('overview',{...selection,salesScope:'site'}).toString());
+});
+
+test('BigQuery only receives validated parameters',()=>{
   const query=overviewWebQuery('project','dataset',selection,comparisonRange(selection,'wow'));
   assert.equal(query.params.country,'Ukraine');assert.ok(query.query.includes('COUNT(DISTINCT IF(is_ukraine, user_pseudo_id, NULL))'));
   const tx=overviewTransactionsQuery('project','dataset',[selection],['101']);
@@ -258,6 +262,32 @@ test('complete linked data renders the funnel, charts and both maps together',()
   assert.match(html,/11\.11\.2026 — 17\.11\.2026/);
   assert.match(html,/04\.11\.2026 — 10\.11\.2026/);
   assert.doesNotMatch(html,/Різниця в обліку|data-funnel-mode|data-category-period|data-waterfall-mode/);
+});
+
+test('combined acquisition and device selections change only the funnel in both periods',()=>{
+  const source=fixture();
+  const coverage={data_from:'2026-11-04',data_through:'2026-11-17'};
+  source.webRows=['current','previous'].flatMap((key,index)=>[
+    {key,acquisition:'all',device:'all',landing:90,purchase:9,users:100,sessions:120,purchases:4,...coverage},
+    {key,acquisition:'all',device:'mobile',landing:50,purchase:5,...coverage},
+    {key,acquisition:'direct',device:'mobile',landing:30-index*10,purchase:3-index,...coverage},
+  ]);
+  const filtered={...selection,acquisition:'direct',device:'mobile'};
+  const data=buildOverviewAttribution(source,selection);
+  data.chartSales=data.sales;
+  const initial=renderBusinessOverview(data,selection), changed=renderBusinessOverview(data,filtered);
+  assert.doesNotMatch(overviewControls(filtered),/Канали залучення|Пристрої|data-funnel-filter/);
+  const matchFunnel=/<section id="bo-funnel"[\s\S]*?<\/section>/;
+  assert.equal(initial.replace(matchFunnel,''),changed.replace(matchFunnel,''));
+  const funnel=changed.match(matchFunnel)[0];
+  assert.match(funnel,/data-funnel-filter="acquisition" data-value="direct" aria-pressed="true"/);
+  assert.match(funnel,/data-funnel-filter="device" data-value="mobile" aria-pressed="true"/);
+  assert.match(funnel,/aria-label="Старт: 30"/);
+  assert.deepEqual(data.siteFunnel.slices['direct:mobile'].previous.stages.at(-1),{key:'purchase',value:2});
+  const markets=renderBusinessOverview(buildOverviewAttribution(source,{...selection,salesScope:'marketplaces'}),
+    {...filtered,salesScope:'marketplaces'}).match(matchFunnel)[0];
+  assert.match(markets,/<fieldset class="bo-filter-group" disabled><legend>Канали залучення/);
+  assert.match(markets,/GA4 сайту не вимірює трафік маркетплейсів/);
 });
 
 test('large transaction lookups partition dates while user counts retain whole-period distinctness',async()=>{

@@ -65,10 +65,45 @@ test("overview derives shipped AOV and session-weighted conversion using real ba
     },
     state,
   );
-  assert.equal(model.metrics[0].delta, 20);
-  assert.equal(model.metrics[2].value, 400);
-  assert.equal(model.metrics[2].prior, 250);
-  assert.equal(model.metrics[4].value, 1);
+  const byKey = Object.fromEntries(model.metrics.map(metric=>[metric.key,metric]));
+  assert.equal(byKey.revenue.delta, 20);
+  assert.equal(byKey.aov.value, 400);
+  assert.equal(byKey.aov.prior, 250);
+  assert.equal(byKey.conversion.value, 1);
+});
+
+test('overview KPI order and sales channels follow the chosen ERP metric', () => {
+  const channel = (revenue,docs,canceled) => source({shippedRevenue:revenue,shippedDocs:docs,canceledDocs:canceled});
+  const sales = channel(600,13,5);
+  const site = {...channel(100,4,1),previous:channel(50,2,2)};
+  const margin = {amount:60,byChannel:{site:{amount:10},rozetka:{amount:20},monomarket:{amount:30}},
+    previous:{byChannel:{site:{amount:5}}}};
+  const data = {sales,chartSales:sales,margin,salesChannels:{site,rozetka:channel(200,3,4),monomarket:channel(300,6,0)}};
+  const html = renderBusinessOverview(data,state);
+  assert.deepEqual([...html.matchAll(/data-bo-metric="(\w+)"/g)].map(([,key])=>key),
+    ['revenue','margin','docs','canceled','users','aov','conversion']);
+  for (const [key,total,siteValue] of [['revenue','600 ₴','100 ₴'],['margin','60 ₴','10 ₴'],['docs','13','4'],['canceled','5','1']]) {
+    const selected = {...state,chartMetric:key};
+    const panel = renderBusinessOverview(data,selected,{panel:'channels'});
+    assert.ok(panel.includes('data-channel-metric="'+key+'"'));
+    assert.ok(panel.includes('class="bo-donut-total">'+total+'<'));
+    assert.match(panel,/Валова маржа за каналами/);
+    const siteRow = panel.match(/data-channel="site"[^]*?<\/div>/)[0];
+    assert.ok(siteRow.includes('<b>'+siteValue+'</b>'));
+    if (key==='canceled') assert.match(siteRow,/bo-delta positive[^]*?50%/);
+  }
+  const cancellations = renderBusinessOverview(data,{...state,chartMetric:'canceled'},{panel:'channels'});
+  for (const chartMetric of ['users','aov','conversion']) {
+    const selected = {...state,chartMetric,channelMetric:'canceled'};
+    assert.equal(renderBusinessOverview(data,selected,{panel:'channels'}),cancellations);
+    assert.doesNotMatch(renderBusinessOverview(data,selected,{panel:'chart'}),/bo-channels/);
+  }
+
+  const loss = {...data,margin:{...margin,amount:40,byChannel:{...margin.byChannel,site:{amount:-10}}}};
+  const panel = renderBusinessOverview(loss,{...state,chartMetric:'margin'},{panel:'channels'});
+  assert.match(panel,/<b>-10 ₴<\/b>/);
+  assert.match(panel,/bo-donut-label">підсумок/);
+  assert.doesNotMatch(panel,/stroke-dasharray/);
 });
 test("missing selected channel never falls back to all-channel sales or zero values", () => {
   const data = {
@@ -131,10 +166,11 @@ test('conversion falls back only to complete unthresholded daily GA4 data',()=>{
  const days=[{date:'2026-11-01',sessions:100,purchases:2},{date:'2025-11-01',sessions:100,purchases:1}];
  const query={...state,from:'2026-11-01',to:'2026-11-01'};
  const data={channels:{available:false},history:{web:{available:true,days}}};
- const metric=overviewModel(data,query).metrics[4];
+ const conversion=(data,query)=>overviewModel(data,query).metrics.find(metric=>metric.key==='conversion');
+ const metric=conversion(data,query);
  assert.equal(metric.value,2);assert.equal(metric.prior,1);assert.equal(metric.delta,100);
- assert.equal(overviewModel({...data,history:{web:{available:true,days,thresholded:true}}},query).metrics[4].value,null);
- assert.equal(overviewModel(data,{...query,to:'2026-11-02'}).metrics[4].value,null);
+ assert.equal(conversion({...data,history:{web:{available:true,days,thresholded:true}}},query).value,null);
+ assert.equal(conversion(data,{...query,to:'2026-11-02'}).value,null);
 });
 
 test('catalog changes expose both dated values in comparison tooltips', () => {

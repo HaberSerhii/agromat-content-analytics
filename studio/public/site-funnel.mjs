@@ -1,3 +1,5 @@
+import {funnelControls,funnelSliceKey} from './overview-filters.mjs?v=funnel-filters';
+
 const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
 const n=v=>v==null?'—':new Intl.NumberFormat('uk-UA',{maximumFractionDigits:0}).format(v);
 const pct=v=>v==null?'—':new Intl.NumberFormat('uk-UA',{maximumFractionDigits:2}).format(v)+'%';
@@ -15,7 +17,7 @@ const stageRate = (period,index) => {
 export function renderSiteFunnel(source,mode='week',options={}){
  const controls=source?.selection||options.selection?'':`<div class="bo-segments" role="group" aria-label="Період воронки">${[['week','Тиждень'],['month','Місяць']].map(([key,label])=>`<button data-funnel-mode="${key}" aria-pressed="${mode===key}">${label}</button>`).join('')}</div>`;
  const title='Воронка сайту agromat.ua';
- const heading=`<header><div><h2>${title}</h2><p>Трафік → замовлення</p></div>${controls}</header>`;
+ const heading=`<header><div><h2>${title}</h2><p>Трафік → замовлення</p></div>${controls}</header>${options.filters ?? ''}`;
  if(!source?.available)return `<section id="bo-funnel" class="bo-card bo-funnel">${heading}<div class="bo-empty">${esc(options.notice||source?.current?.notice||(source==null?'Завантажуємо воронку…':'Дані воронки тимчасово недоступні.'))}</div></section>`;
  const current=source.current,previous=source.previous;
  const keys=stages, labels=stageNames;
@@ -31,6 +33,13 @@ export function renderSiteFunnel(source,mode='week',options={}){
  const signed=v=>v==null?'Немає бази':(v>=0?'+':'')+pct(v);
  return `<section id="bo-funnel" class="bo-card bo-funnel">${heading}<div class="bo-funnel-layout"><div><p class="bo-funnel-date">${dates(current)}</p><svg viewBox="0 0 570 310" role="img" aria-label="${title}: переходи порівняно з попереднім періодом">${bands}</svg></div><div class="bo-funnel-quick">${[['CR',cr(current),cr(previous),crPct],['Замовлення',value(current,'purchase'),value(previous,'purchase'),n]].map(([label,a,b,format])=>{const d=delta(a,b),meta=funnelTooltipData(source,label==='CR'?'cr':'purchase',0,mode);return `<button class="bo-funnel-hover-metric" data-funnel-tip="${esc(JSON.stringify(meta))}" type="button"><small>${label}</small><strong>${format(a)}</strong><span class="${d==null?'':d>=0?'up':'down'}">${signed(d)}</span><em>${format(b)}</em></button>`}).join('')}</div></div><div id="funnel-hover-tooltip" class="bo-quarter-tooltip bo-funnel-tooltip" role="tooltip" hidden></div></section>`;
 }
+
+export function renderOverviewFunnel(source,state,notice) {
+ const slice=source?.slices?.[funnelSliceKey(state.acquisition,state.device)] ?? source;
+ const selected=slice && {...slice,selection:true,comparisonMode:state.compareMode};
+ return renderSiteFunnel(selected,state.compareMode,{selection:true,filters:funnelControls(state),notice});
+}
+
 export function funnelTooltipData(source,kind,index=0,mode='week'){
  const isCount = kind === 'stage' || kind === 'purchase';
  const isOrder = kind === 'purchase' || (kind === 'stage' && stages[index] === 'purchase');
