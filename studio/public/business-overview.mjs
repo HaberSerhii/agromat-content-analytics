@@ -1,7 +1,7 @@
 import { overviewRevenueWaterfall } from "./revenue-drivers.mjs";
-import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=margin-tooltip';
-import {renderOverviewFunnel} from "./site-funnel.mjs?v=funnel-filters";
-import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=category-comparison";
+import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=tap-tooltips';
+import {renderOverviewFunnel} from "./site-funnel.mjs?v=tap-tooltips";
+import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=tap-tooltips";
 import {
   graphRange,
   yearBefore,
@@ -9,8 +9,9 @@ import {
   lastQuarterWeeks,
   calendarBins,
 } from "./chart-periods.mjs?v=fastoverview2";
-import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=margin-tooltip";
+import { weeklyChart, historySeries } from "./weekly-charts.mjs?v=tap-tooltips";
 import { chartSeries, defaultRange } from "./chart-data.mjs?v=salesfilters1";
+import {bindTooltip, placeFixedTooltip} from './tap-tooltip.mjs';
 const esc = (value) =>
   String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -713,29 +714,13 @@ export function bindQuarterTooltips(root = document) {
       const rect = column.getBoundingClientRect(),
         x = event?.clientX ?? rect.right,
         y = event?.clientY ?? rect.bottom;
-      tooltip.style.left =
-        Math.max(
-          8,
-          Math.min(x + 16, window.innerWidth - tooltip.offsetWidth - 8),
-        ) + "px";
-      tooltip.style.top =
-        Math.max(
-          8,
-          Math.min(y + 14, window.innerHeight - tooltip.offsetHeight - 8),
-        ) + "px";
+      placeFixedTooltip(tooltip, x + 16, y + 14);
     };
     const hide = () => {
       tooltip.hidden = true;
       column.parentElement.classList.remove("is-hovered");
       column.removeAttribute("aria-describedby");
     };
-    column.addEventListener("pointerenter", show);
-    column.addEventListener("pointermove", show);
-    column.addEventListener("pointerleave", hide);
-    column.addEventListener("focus", () => show());
-    column.addEventListener("blur", hide);
-    column.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") hide();
-    });
+    bindTooltip(column, {show, hide});
   });
 }

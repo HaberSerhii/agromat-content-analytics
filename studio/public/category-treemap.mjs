@@ -1,3 +1,5 @@
+import {bindTooltip, placeFixedTooltip} from './tap-tooltip.mjs';
+
 export function categoryPeriod(today, mode = "month") {
   const to = new Date(Date.parse(today + "T00:00:00Z") - 86400000).toISOString().slice(0,10);
   const from = mode === "year" ? today.slice(0,4) + "-01-01" : today.slice(0,7) + "-01";
@@ -121,6 +123,12 @@ const esc = (value) =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 const tooltipRow = (label, value) => `<div class="bo-quarter-tip-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
+export function categoryComparisonRows(data) {
+  return tooltipRow(data.period, data.formattedValue) + (data.baselineLabel
+    ? tooltipRow(data.baselineLabel, data.formattedPrior) + tooltipRow('Зміна', data.formattedDelta)
+    : '');
+}
+
 export function bindCategoryTooltips(root = document) {
   root.querySelectorAll("[data-category-meta]").forEach((tile) => {
     const tooltip = tile.closest('.bo-card')?.querySelector('.bo-category-tooltip');
@@ -129,37 +137,18 @@ export function bindCategoryTooltips(root = document) {
     const show = (event) => {
       tile.classList.add("is-hovered");
       tile.setAttribute("aria-describedby", tooltip.id);
-      tooltip.innerHTML = `<div class="bo-category-tip-name">${esc(data.label)}</div><small>${esc(data.measureLabel)}</small>` +
-        tooltipRow(data.period, data.formattedValue) + (data.baselineLabel
-          ? tooltipRow(data.baselineLabel, data.formattedPrior) + tooltipRow('Зміна', data.formattedDelta)
-          : '');
+      tooltip.innerHTML = `<div class="bo-category-tip-name">${esc(data.label)}</div><small>${esc(data.measureLabel)}</small>` + categoryComparisonRows(data);
       tooltip.hidden = false;
       const box = tile.getBoundingClientRect(),
         x = event?.clientX ?? box.right,
         y = event?.clientY ?? box.bottom;
-      tooltip.style.left =
-        Math.max(
-          8,
-          Math.min(x + 14, window.innerWidth - tooltip.offsetWidth - 8),
-        ) + "px";
-      tooltip.style.top =
-        Math.max(
-          8,
-          Math.min(y + 14, window.innerHeight - tooltip.offsetHeight - 8),
-        ) + "px";
+      placeFixedTooltip(tooltip, x + 14, y + 14);
     };
     const hide = () => {
       tooltip.hidden = true;
       tile.classList.remove("is-hovered");
       tile.removeAttribute("aria-describedby");
     };
-    tile.addEventListener("pointerenter", show);
-    tile.addEventListener("pointermove", show);
-    tile.addEventListener("pointerleave", hide);
-    tile.addEventListener("focus", () => show());
-    tile.addEventListener("blur", hide);
-    tile.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") hide();
-    });
+    bindTooltip(tile, {show, hide, tap:!tile.hasAttribute('aria-haspopup')});
   });
 }

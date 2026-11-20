@@ -137,6 +137,7 @@ const statics = new Map([
   ["/content-conversion-filters.mjs", "content-conversion-filters.mjs"],
   ["/content-conversion.css", "content-conversion.css"],
   ["/weekly-charts.mjs", "weekly-charts.mjs"],
+  ["/tap-tooltip.mjs", "tap-tooltip.mjs"],
   ["/chart-periods.mjs", "chart-periods.mjs"],
   ["/business-overview.css", "business-overview.css"],
   ["/base.css", "base.css"],

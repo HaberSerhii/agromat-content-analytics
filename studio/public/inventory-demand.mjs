@@ -1,5 +1,6 @@
 import {addDays,rangeDays} from './overview-filters.mjs';
 import {smoothPath} from './weekly-charts.mjs';
+import {bindTitleTooltips} from './tap-tooltip.mjs';
 import {
   inventoryColumns,inventoryConfidence,inventoryDefaults,inventoryDemand,inventoryMatrix,
   inventoryPrice,inventorySelection,inventoryStatuses,inventoryWatchColumns,inventoryWatchStatuses,qualityLabels,
@@ -429,6 +430,7 @@ export function mountInventoryDemand(root,today) {
       ${ranking('Втрати за брендами',report.brands,'brand',applied.brand)}</div>
       ${matrix(report.matrix,applied.quadrant)}${table(report,applied)}${methodology}
       ${replenishment(report,priorityDate,priority,priorityPoints)}`;
+    bindTitleTooltips(main, '[data-inventory-table] td[title]');
     bindChart(main,visual.points,visual.format,interval);
     selectPriorityPoint=bindChart(main.querySelector('#replenishment-priority'),priorityPoints,money,'day',
       {initialDate:priorityDate,onSelect:loadPriority});
@@ -511,6 +513,11 @@ export function mountInventoryDemand(root,today) {
   }
 
   dialog.addEventListener('close',()=>detailRequest?.abort());
+  dialog.addEventListener('click', event => {
+    if (event.target !== dialog) return;
+    const {top,right,bottom,left} = dialog.getBoundingClientRect();
+    if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) dialog.close();
+  });
   host.addEventListener('toggle',event=>{
     if (event.target.matches('[data-inventory-advanced]')) expanded=event.target.open;
   },true);

@@ -63,7 +63,7 @@ export function overviewControls(state) {
   ];
   return `<div class="bo-period-control"><div class="dated">
     <label class="sr" for="date-from">Від</label><input id="date-from" type="date" value="${esc(state.from)}">
-    <span>—</span><label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}">
+    <label class="sr" for="date-to">До</label><input id="date-to" type="date" value="${esc(state.to)}">
     <button type="button" id="apply-dates">Застосувати</button>
   </div></div>
   <div class="bo-filter-groups">

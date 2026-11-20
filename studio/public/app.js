@@ -1,8 +1,9 @@
-import {overviewDefaults, overviewControls, validComparison, comparisonRange, scopedSales, scopeKey} from '/overview-filters.mjs?v=funnel-filters';
-import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=funnel-filters";
-import {bindCategoryTooltips} from "/category-treemap.mjs?v=category-comparison";
-import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=channel-profit";
+import {overviewDefaults, overviewControls, validComparison, comparisonRange, scopedSales, scopeKey} from '/overview-filters.mjs?v=tap-tooltips';
+import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=tap-tooltips";
+import {bindCategoryTooltips, categoryComparisonRows} from "/category-treemap.mjs?v=tap-tooltips";
+import { bindWeeklyCharts } from "/weekly-charts.mjs?v=tap-tooltips";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=tap-tooltips";
+import {bindTitleTooltips, dismissTooltip} from '/tap-tooltip.mjs';
 import { apiParams, createApiCache } from "/api-cache.mjs?v=funnel-filters";
 import {
   defaultRange,
@@ -364,6 +365,7 @@ function bindBusinessOverview() {
   bindCategoryTooltips();
   bindOverviewFunnel();
   bindComparisonTooltips('catalog');
+  bindTitleTooltips(document, '.bo-channel-row[title], .bo-margin-delta[title], .bo-ready-to-ship[title], .bo-kpi-subvalue > span[title]');
   $$('[data-catalog-score-history]').forEach(button => button.onclick = () => {
     const catalog = data.catalogHealth;
     const segment = catalog.segments.find(({label}) => label === button.dataset.catalogScoreHistory);
@@ -384,6 +386,7 @@ function bindBusinessOverview() {
     if (channelMetrics.includes(key)) {
       state.channelMetric=key;
       $('#bo-channels').outerHTML=renderBusiness({panel:'channels'});
+      bindTitleTooltips($('#bo-channels'), '[title]');
     }
     saveLocation();
     $$("[data-bo-metric]").forEach(card=>{
@@ -397,7 +400,7 @@ function bindBusinessOverview() {
   $$("[data-bo-channel]").forEach(button=>button.onclick=()=>{state.chartChannel=button.dataset.boChannel;saveLocation();load({keepView:true});});
   $$("[data-category-meta]").forEach(button=>button.onclick=()=>{
     const tile = JSON.parse(button.dataset.categoryMeta);
-    modal(tile.label, renderSalesBreakdown(data.breakdown, tile));
+    modal(tile.label, `<div class="bo-category-dialog-summary">${categoryComparisonRows(tile)}</div>${renderSalesBreakdown(data.breakdown, tile)}`);
   });
 
 }
@@ -480,17 +483,18 @@ function bindShell() {
 }
 async function load({keepView=false}={}) {
   let id = ++requestId;
+  dismissTooltip();
   const previous=data,preserve=keepView&&section==='home'&&view==='overview'&&previous;
   if(!preserve)skeleton();
   else { syncOverviewHeader(); bindShell(); }
   try {
     if (section === 'home' && view === 'content-conversion') {
-      const module = await import('/content-conversion.mjs?v=in-stock');
+      const module = await import('/content-conversion.mjs?v=tap-tooltips');
       if (id === requestId) module.mountContentConversion($('#content'), today);
       return;
     }
     if (section === 'home' && view === 'inventory-demand') {
-      const module = await import('/inventory-demand.mjs?v=replenishment1');
+      const module = await import('/inventory-demand.mjs?v=tap-tooltips');
       if (id === requestId) module.mountInventoryDemand($('#content'), today);
       return;
     }
@@ -512,6 +516,7 @@ async function load({keepView=false}={}) {
           paintQueued = false;
           if (id !== requestId || data !== dashboard) return;
           dashboard.chartSales = scopedSales(dashboard.sales,dashboard.salesChannels,selection.salesScope);
+          dismissTooltip();
           $('#content').innerHTML = renderBusiness(); updateSources(); bindContent();
         });
       };

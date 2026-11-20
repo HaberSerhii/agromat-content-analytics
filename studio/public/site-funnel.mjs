@@ -1,4 +1,5 @@
-import {funnelControls,funnelSliceKey} from './overview-filters.mjs?v=funnel-filters';
+import {funnelControls,funnelSliceKey} from './overview-filters.mjs?v=tap-tooltips';
+import {bindTooltip, placeFixedTooltip} from './tap-tooltip.mjs';
 
 const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
 const n=v=>v==null?'—':new Intl.NumberFormat('uk-UA',{maximumFractionDigits:0}).format(v);
@@ -94,10 +95,8 @@ export function bindComparisonTooltips(kind,root=document){
    tip.innerHTML=`<div class="bo-funnel-tip-title">${esc(meta.title)}</div>${meta.rows.map(row=>`<div class="bo-funnel-tip-row"><div>${esc(row.label)}<small>${esc(row.dates)}</small></div><div><b>${esc(row.value)}</b>${row.counts?`<small>${esc(row.counts)}</small>`:''}</div></div>`).join('')}<div class="bo-funnel-tip-comparisons">${meta.comparisons.map(row=>`<div><span>${esc(row.label)}</span><b>${esc(row.relative)}${row.difference?`<small>${esc(row.difference)}</small>`:''}</b></div>`).join('')}</div>${meta.note?`<p>${esc(meta.note)}</p>`:''}`;
    tip.hidden=false;target.setAttribute('aria-describedby',tip.id);
    const r=target.getBoundingClientRect(),x=event?.clientX??r.right,y=event?.clientY??r.top;
-   tip.style.left=Math.max(8,Math.min(x+12,innerWidth-tip.offsetWidth-8))+'px';
-   tip.style.top=Math.max(8,Math.min(y+12,innerHeight-tip.offsetHeight-8))+'px';
+   placeFixedTooltip(tip, x + 12, y + 12);
   };
-  target.addEventListener('pointerenter',show);target.addEventListener('pointermove',show);target.addEventListener('pointerleave',hide);target.addEventListener('focus',()=>show());target.addEventListener('blur',hide);target.addEventListener('keydown',event=>{if(event.key==='Escape')hide();});
-  if(kind==='catalog')target.addEventListener('click',()=>show());
+  bindTooltip(target, {show, hide, tap:!target.hasAttribute('aria-haspopup')});
  });
 }

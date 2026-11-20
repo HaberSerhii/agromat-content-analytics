@@ -2,6 +2,7 @@ import {
   contentDefaults, contentSelection, contentDevices, contentSources, contentPriceBands, contentSorts, minimumContentSample,
 } from './content-conversion-filters.mjs?v=in-stock';
 import {addDays, rangeDays, rangeLabel} from './overview-filters.mjs';
+import {bindTitleTooltips} from './tap-tooltip.mjs';
 
 const escape = value => String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;')
   .replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
@@ -289,6 +290,7 @@ export function mountContentConversion(root,today) {
         ${state.table==='history'?trend(report):''}
         ${notices(report,state)}` : ''}
     </div>`;
+    bindTitleTooltips(root, '.cv-help[title], #cv-detail td > span[title]');
     const form = root.querySelector('[data-cv-form]');
     const filterPanel = root.querySelector('[data-cv-filters]');
     form.addEventListener('input',({target})=>{draft[target.name]=target.value;});

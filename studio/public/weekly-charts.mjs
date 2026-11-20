@@ -1,5 +1,6 @@
 import { graphBins, calendarBins } from "./chart-periods.mjs?v=fastoverview2";
 import {comparisonRange,addDays,rangeDays} from './overview-filters.mjs';
+import {bindTooltip, placeFixedTooltip} from './tap-tooltip.mjs';
 const DAY = 86400000;
 const esc = (v) =>
   String(v ?? "")
@@ -363,7 +364,9 @@ export function bindWeeklyCharts(root = document) {
       mini = chart.dataset.mini === "true",
       compare = chart.dataset.compare === "true",
       baselineLabel = chart.dataset.comparisonMode === "wow" ? "до попереднього тижня" : chart.dataset.comparisonMode === "mom" ? "до попереднього місяця" : "до торік";
-    const show = (index) => {
+    if (svg.dataset.tooltipBound) return;
+    svg.dataset.tooltipBound = 'true';
+    const show = (index, event, mode) => {
       const row = rows[Math.min(rows.length - 1, Math.max(0, index))];
       const delta =
         row.value != null &&
@@ -389,6 +392,11 @@ export function bindWeeklyCharts(root = document) {
       const rect = svg.getBoundingClientRect(),
         chartRect = chart.getBoundingClientRect(),
         pixelX = (row.x / svg.viewBox.baseVal.width) * rect.width;
+      if (mode === 'tap') {
+        tooltip.style.position = 'fixed';
+        placeFixedTooltip(tooltip, rect.left + pixelX - tooltip.offsetWidth / 2, event.clientY + 14);
+        return;
+      }
       const tipWidth = tooltip.offsetWidth;
       tooltip.style.position = mini ? "fixed" : "absolute";
       tooltip.style.left =
@@ -412,26 +420,18 @@ export function bindWeeklyCharts(root = document) {
       cursor.setAttribute("visibility", "hidden");
       tooltip.hidden = true;
     };
-    svg.addEventListener("pointermove", (event) => {
-      const box = svg.getBoundingClientRect(),
-        x =
-          ((event.clientX - box.left) / box.width) * svg.viewBox.baseVal.width;
-      show(
-        rows.reduce(
-          (best, row, i) =>
-            Math.abs(row.x - x) < Math.abs(rows[best].x - x) ? i : best,
-          0,
-        ),
-      );
-    });
-    svg.addEventListener("pointerleave", hide);
-    svg.addEventListener("click", (event) => event.stopPropagation());
     svg.tabIndex = 0;
     let index = rows.length - 1;
-    svg.addEventListener("focus", () => show(index));
-    svg.addEventListener("blur", hide);
+    const reveal = bindTooltip(svg, {enter:false, toggle:false, hide, show(event, mode) {
+      if (event) {
+        const box = svg.getBoundingClientRect();
+        const x = ((event.clientX - box.left) / box.width) * svg.viewBox.baseVal.width;
+        index = rows.reduce((best, row, i) => Math.abs(row.x - x) < Math.abs(rows[best].x - x) ? i : best, 0);
+      }
+      show(index, event, mode);
+    }});
+    svg.addEventListener("click", (event) => event.stopPropagation());
     svg.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") hide();
       if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
         event.preventDefault();
         index = Math.max(
@@ -441,7 +441,7 @@ export function bindWeeklyCharts(root = document) {
             index + (event.key === "ArrowLeft" ? -1 : 1),
           ),
         );
-        show(index);
+        reveal();
       }
     });
   });

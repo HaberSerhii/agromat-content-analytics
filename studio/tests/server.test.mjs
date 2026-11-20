@@ -28,7 +28,7 @@ test("public server exposes only static assets, health and read-only bounded API
     assert.equal(r.status, 200);
     assert.match(r.headers.get("content-type"), /javascript/);
     assert.match(await r.text(), /createApiCache/);
-    for (const asset of ["business-overview.mjs", "business-overview.css", "revenue-drivers.mjs", "overview-filters.mjs", "inventory-demand.mjs", "inventory-demand-filters.mjs", "inventory-demand.css", "content-conversion.mjs", "content-conversion.css", "content-conversion-filters.mjs"]) {
+    for (const asset of ["business-overview.mjs", "business-overview.css", "tap-tooltip.mjs", "revenue-drivers.mjs", "overview-filters.mjs", "inventory-demand.mjs", "inventory-demand-filters.mjs", "inventory-demand.css", "content-conversion.mjs", "content-conversion.css", "content-conversion-filters.mjs"]) {
       r = await fetch(base + "/" + asset);
       assert.equal(r.status, 200);
     }

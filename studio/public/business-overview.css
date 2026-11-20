@@ -1664,7 +1664,7 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-period-control { width: min(100%, 354px); max-width: none; }
 .bo-period-control .dated {
   display: grid;
-  grid-template-columns: minmax(0,1fr) auto repeat(2,minmax(0,1fr));
+  grid-template-columns: repeat(2, minmax(0,1fr)) auto;
 }
 .bo-period-control .dated :is(input, button) {
   box-sizing: border-box;
@@ -1748,6 +1748,9 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-kpis:has(.bo-kpi-subvalue) .bo-kpi > .bo-mini-empty { margin-top: auto; padding-top: 10px; width: 100%; }
 
 .bo-breakdown-source { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+.bo-category-dialog-summary { margin-bottom: 14px; padding: 6px 12px 12px; background: var(--bg); border-radius: 8px; font-size: 12px; }
+.bo-category-dialog-summary .bo-quarter-tip-row { white-space: normal; }
+.bo-category-dialog-summary b { white-space: nowrap; }
 .bo-breakdown-table table { font-size: 13px; }
 .bo-breakdown-table th,
 .bo-breakdown-table td { padding: 9px clamp(5px, 1.3vw, 12px); }
@@ -1886,6 +1889,12 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
   .bo-main-chart .bo-segments button,
   .bo-map-units button { min-height: 36px; }
   .bo-kpi-label { column-gap: 5px; row-gap: 3px; }
+  .bo-filterbar { row-gap: 14px; }
+  .bo-period-control .dated { gap: 8px; }
+  .bo-period-control .dated :is(input, button) { min-height: 42px; }
+  .bo-filterbar .bo-filter-groups { gap: 10px 14px; }
+  .bo-filterbar .bo-filter-groups .bo-segments { gap: 4px; padding: 4px; }
+  .bo-filterbar .bo-filter-groups .bo-segments button { min-height: 40px; }
 }
 
 @media (max-width: 480px) {
@@ -1893,7 +1902,7 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 }
 
 @media (max-width: 360px) {
-  .bo-period-control .dated { grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); }
+  .bo-period-control .dated { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .bo-period-control .dated #apply-dates { grid-column: 1/-1; justify-self: end; width: auto; padding-inline: 12px; }
   #bo-catalog .bo-catalog-table { table-layout: fixed; white-space: normal; font-size: 9px; }
   #bo-catalog .bo-catalog-table :is(th,td) { padding-inline: 2px; }
@@ -1904,6 +1913,8 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
   #bo-catalog .bo-catalog-table :is(td,.bo-catalog-delta) { white-space: normal; overflow-wrap: anywhere; }
   .bo-catalog-delta { max-width: 100%; font-size: 9px; }
 }
+
+.studio-touch-tooltip { width: max-content; max-width: min(330px, calc(100vw - 16px)); min-width: 0; overflow-wrap: anywhere; }
 
 @media (max-width: 360px), (max-width: 1000px) and (max-height: 500px) {
   body.business-page { --bo-header-height: 0px; }
