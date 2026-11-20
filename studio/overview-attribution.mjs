@@ -94,28 +94,48 @@ function salesBreakdown(records, range, lastYear, matches, pastMatches, quantiti
   return {range, lastYear, previousAvailable: Boolean(pastMatches), pairs:[...pairs.values()]};
 }
 
-function orderMargin(records, range) {
+function shipmentMargin(records, range, margins) {
   const byDate = new Map();
-  let amount = 0, coveredRevenue = 0, coveredDocs = 0, docs = 0;
-  for (const {row} of records) {
+  const totals = () => ({amount:0, coveredRevenue:0, coveredDocs:0, docs:0, coveredLines:0, lines:0});
+  const overall = totals();
+  const byChannel = {site:totals(), rozetka:totals(), monomarket:totals()};
+  for (const {row, channel} of records) {
     if (!inRange(row.shippedDate, range) || !shipped(row) || excluded(row)) continue;
-    docs++;
     const day = byDate.get(row.shippedDate) || {date:row.shippedDate, amount:null, coveredRevenue:0};
     byDate.set(day.date, day);
-    if (!Number.isFinite(row.margin)) continue;
-    const net = row.docsSum - row.returnSum;
-    const profit = net * row.margin / 100;
-    day.amount = (day.amount ?? 0) + profit;
-    day.coveredRevenue += net;
-    amount += profit;
-    coveredRevenue += net;
-    coveredDocs++;
+    let amount = 0, coveredRevenue = 0, coveredLines = 0;
+    for (const [index, item] of netSalesItems(row).entries()) {
+      const rate = margins?.get(row.items[index]);
+      if (!Number.isFinite(rate)) continue;
+      amount += item.revenue * rate / 100;
+      coveredRevenue += item.revenue;
+      coveredLines++;
+    }
+    for (const total of [overall, byChannel[channel]]) {
+      total.docs++;
+      total.lines += row.items.length;
+      total.amount += amount;
+      total.coveredRevenue += coveredRevenue;
+      total.coveredLines += coveredLines;
+      if (coveredLines) total.coveredDocs++;
+    }
+    if (coveredLines) {
+      day.amount = (day.amount ?? 0) + amount;
+      day.coveredRevenue += coveredRevenue;
+    }
   }
-  return {amount:coveredDocs ? amount : null, percent:coveredRevenue > 0 ? amount / coveredRevenue * 100 : null,
-    coveredDocs, docs, byDate:[...byDate.values()]};
+  const summarize = total => ({
+    ...total,
+    amount:total.coveredLines ? total.amount : null,
+    percent:total.coveredRevenue > 0 ? total.amount / total.coveredRevenue * 100 : null,
+  });
+  return {
+    ...summarize(overall), byDate:[...byDate.values()],
+    byChannel:Object.fromEntries(Object.entries(byChannel).map(([key, total]) => [key, summarize(total)])),
+  };
 }
 
-export function buildOverviewAttribution({rows,quantities,transactions,previousYearTransactions,webRows,rozetkaIds,updatedAt},input,{includeMargin = false} = {}) {
+export function buildOverviewAttribution({rows,quantities,margins,transactions,previousYearTransactions,webRows,rozetkaIds,updatedAt},input,{includeMargin = false} = {}) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const rozetka=new Set(rozetkaIds),index=transactionIndex(transactions);
   const seen=new Set(),records=[];
@@ -145,7 +165,10 @@ export function buildOverviewAttribution({rows,quantities,transactions,previousY
   const preview = {};
   if (includeMargin) {
     const selected = scopedRecords.filter(record => matches(record.match));
-    preview.margin = {...orderMargin(selected, range), previous:orderMargin(selected, baseline)};
+    preview.margin = {
+      ...shipmentMargin(selected, range, margins),
+      previous:shipmentMargin(selected, baseline, margins),
+    };
   }
   const coverage=period=>{
     const selected=records.filter(record=>record.channel==='site'&&shipped(record.row)&&inRange(record.row.shippedDate,period)&&!excluded(record.row));

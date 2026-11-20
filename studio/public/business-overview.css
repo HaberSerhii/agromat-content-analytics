@@ -1855,3 +1855,15 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 @media (min-width:761px) {
   body.business-page .bo-sidebar .bo-nav-group .nav { padding-left:15px; }
 }
+
+.bo-margin-delta { font-size: 10px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bo-margin-delta.positive { color: var(--green, #087243); }
+.bo-margin-delta.negative { color: var(--red, #af312a); }
+.bo-margin-delta.neutral { color: var(--muted); }
+.bo-channel-margin { margin-top: 14px; overflow-x: auto; }
+.bo-channel-margin table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.bo-channel-margin caption { text-align: left; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+.bo-channel-margin th, .bo-channel-margin td { padding: 6px 4px; text-align: right; white-space: nowrap; }
+.bo-channel-margin th:first-child { text-align: left; }
+.bo-channel-margin thead th { color: var(--muted); font-size: 10px; font-weight: 600; }
+.bo-channel-margin tbody tr { border-top: 1px solid var(--line); }

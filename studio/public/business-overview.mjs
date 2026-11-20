@@ -185,7 +185,23 @@ function card(id, title, sub, body, extra = "", cls = "") {
 function empty(text) {
   return `<div class="bo-empty"><span>↗</span><p>${text}</p></div>`;
 }
-function channelPanel(model, state) {
+const signedPoints = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 2, signDisplay: "exceptZero" });
+const marginMoney = new Intl.NumberFormat("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function marginDelta(current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return '<span class="bo-margin-delta neutral" title="Немає бази для порівняння">—</span>';
+  const delta = current - previous;
+  const style = Math.abs(delta) < 0.005 ? "neutral" : delta > 0 ? "positive" : "negative";
+  return `<span class="bo-margin-delta ${style}" title="Маржа за період порівняння · ${percent(previous)}">${signedPoints.format(delta).replace(/^-/u, "−")} п. п.</span>`;
+}
+function channelMarginTable(channels, margin, compare) {
+  if (!margin?.byChannel) return "";
+  const rows = channels.map(({id, name}) => {
+    const current = margin.byChannel[id], prior = margin.previous?.byChannel?.[id];
+    return `<tr><th scope="row">${esc(name)}</th><td>${current?.amount == null ? "—" : marginMoney.format(current.amount)}</td><td>${percent(current?.percent)}</td>${compare ? `<td>${marginDelta(current?.percent, prior?.percent)}</td>` : ""}</tr>`;
+  }).join("");
+  return `<div class="bo-channel-margin"><table><caption>Валова маржа за каналами</caption><thead><tr><th scope="col">Канал</th><th scope="col">Маржа, грн</th><th scope="col">Маржа, %</th>${compare ? '<th scope="col">Зміна</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function channelPanel(model, state, margin) {
   const valid = model.channels.filter((c) => c.value != null),
     known = sum(valid, "value");
   const total = model.total;
@@ -218,7 +234,7 @@ function channelPanel(model, state) {
     "channels",
     "Канали продажу",
     "",
-    `<div class="bo-channel-layout"><svg class="bo-channel-donut" viewBox="0 0 160 160" role="img" aria-label="Частки виторгу за каналами продажу"><circle cx="80" cy="80" r="60" fill="none" stroke="var(--line)" stroke-width="20"/>${segments}<text x="80" y="78" text-anchor="middle" class="bo-donut-total">${esc(money(total))}</text><text x="80" y="98" text-anchor="middle" class="bo-donut-label">${complete ? `${count} ${count===1?'канал':count<5?'канали':'каналів'}` : 'неповна розбивка'}</text></svg><div class="bo-channel-list">${rows.map(c => `<div class="bo-channel-row" title="${esc(c.name)}: ${esc(c.value == null ? 'Джерело не підключено' : money(c.value))}"><span class="bo-dot" style="background:${c.color}"></span><span>${esc(c.name)}</span><b>${complete && c.value != null ? number(c.value / total * 100)+'%' : '—'}</b>${state.yoy ? badge(change(c.value,c.prior)) : ''}</div>`).join('')}</div></div>`,
+    `<div class="bo-channel-layout"><svg class="bo-channel-donut" viewBox="0 0 160 160" role="img" aria-label="Частки виторгу за каналами продажу"><circle cx="80" cy="80" r="60" fill="none" stroke="var(--line)" stroke-width="20"/>${segments}<text x="80" y="78" text-anchor="middle" class="bo-donut-total">${esc(money(total))}</text><text x="80" y="98" text-anchor="middle" class="bo-donut-label">${complete ? `${count} ${count===1?'канал':count<5?'канали':'каналів'}` : 'неповна розбивка'}</text></svg><div class="bo-channel-list">${rows.map(c => `<div class="bo-channel-row" title="${esc(c.name)}: ${esc(c.value == null ? 'Джерело не підключено' : money(c.value))}"><span class="bo-dot" style="background:${c.color}"></span><span>${esc(c.name)}</span><b>${complete && c.value != null ? number(c.value / total * 100)+'%' : '—'}</b>${state.yoy ? badge(change(c.value,c.prior)) : ''}</div>`).join('')}</div></div>${channelMarginTable(model.channels, margin, state.yoy)}`,
   );
 }
 export function quarterChannelRows(data, today) {
@@ -628,10 +644,10 @@ export function renderBusinessOverview(data, state, chartHTML) {
   const subvalue = key => {
     if (key === 'revenue') return readyToShipMarkup(data.readyToShip);
     if (key !== 'margin') return '';
-    const {coveredDocs, docs, percent: marginPercent} = data.margin;
-    const hint = Number.isFinite(coveredDocs)
-      ? `Оцінка ERP · ${number(coveredDocs)} з ${number(docs)} відвантажених замовлень мають маржу` : '';
-    return `<span class="bo-kpi-subvalue" title="${esc(hint)}"><span>Прибуток, %</span><b>${percent(marginPercent)}</b></span>`;
+    const {coveredLines, lines, percent: marginPercent, previous} = data.margin;
+    const hint = Number.isFinite(coveredLines)
+      ? `Маржа ERP після повернень · ${number(coveredLines)} з ${number(lines)} позицій зі значенням` : '';
+    return `<span class="bo-kpi-subvalue"><span title="${esc(hint)}">Прибуток, %</span><b>${percent(marginPercent)}</b>${state.yoy ? marginDelta(marginPercent, previous?.percent) : ''}</span>`;
   };
   return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${metric.key === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${metric.key === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${subvalue(m.key)}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid"><section class="bo-card bo-main-chart" id="bo-revenue" tabindex="-1"><div class="bo-chart-summary"><div><h2>${metric.label}</h2><p>${esc({all:"Усі канали",site:"Сайт",marketplaces:"Маркетплейси"}[state.salesScope || state.chartChannel] || state.chartChannel)}${state.acquisition&&state.acquisition!=="all"?" · "+esc(state.acquisition):""}${state.device&&state.device!=="all"?" · "+esc(state.device):""}</p><strong>${metric.format(chartTotal)}</strong>${state.yoy ? badge(change(chartTotal, chartPrior), metric.lower) : ""}</div><div class="bo-segments" aria-label="Деталізація графіка">${[
     ["day", "Дні"],
@@ -643,7 +659,7 @@ export function renderBusinessOverview(data, state, chartHTML) {
     )
     .join(
       "",
-    )}</div></div><div id="overview-sales-chart">${weeklyChart(history, metric.key, { id: "revenue-period", compare: state.yoy, ...chartOptions })}</div></section>${channelPanel(model, state)}<div class="bo-overview-summary">${weeklyPanel(data, state)}${catalogPanel(data)}${renderRevenueWaterfall(overviewRevenueWaterfall(data, state, state.compareMode || "yoy"), state)}</div><div class="bo-overview-trio">${renderSiteFunnel(data.siteFunnel,state.compareMode,{selection:true,notice:data.scopeNotice})}${trafficPanel(data)}${marketPanel(data)}</div><div class="bo-overview-mosaics">${categoryPanel(model, state, data)}${categoryPanel(model, state, data, "brands")}</div></div></div>`;
+    )}</div></div><div id="overview-sales-chart">${weeklyChart(history, metric.key, { id: "revenue-period", compare: state.yoy, ...chartOptions })}</div></section>${channelPanel(model, state, data.margin)}<div class="bo-overview-summary">${weeklyPanel(data, state)}${catalogPanel(data)}${renderRevenueWaterfall(overviewRevenueWaterfall(data, state, state.compareMode || "yoy"), state)}</div><div class="bo-overview-trio">${renderSiteFunnel(data.siteFunnel,state.compareMode,{selection:true,notice:data.scopeNotice})}${trafficPanel(data)}${marketPanel(data)}</div><div class="bo-overview-mosaics">${categoryPanel(model, state, data)}${categoryPanel(model, state, data, "brands")}</div></div></div>`;
 }
 
 export function bindQuarterTooltips(root = document) {

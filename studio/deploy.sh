@@ -137,6 +137,11 @@ inventory = json.loads((directory / 'inventory-demand.json').read_text())
 content = json.loads((directory / 'content-conversion.json').read_text())
 assert overview['available'] and not overview.get('partial'), 'Overview source incomplete'
 assert overview['sales']['available'] and overview['siteFunnel']['available'], 'ERP or funnel unavailable'
+margin = overview['margin']
+assert margin['coveredLines'] > 0 and margin['coveredRevenue'] > 0, 'Shipped margin unavailable'
+assert set(margin['byChannel']) == {'site', 'rozetka', 'monomarket'}, 'Margin channels incomplete'
+assert abs(margin['amount'] - sum(c['amount'] or 0 for c in margin['byChannel'].values())) < 0.01, 'Channel margin totals differ'
+assert abs(margin['percent'] - 100 * margin['amount'] / margin['coveredRevenue']) < 0.0001, 'Margin rate differs from covered sales'
 assert catalog['available'] and len(catalog['segments']) == 4 and not catalog.get('partial'), 'Catalog source incomplete'
 assert content['available'] and content['coveredCurrent'] > 0 and content['current']['sessions'] > 0, 'Content conversion source incomplete'
 assert content['detail']['total'] == content['improvements']['results'], 'Improved SKU total differs'

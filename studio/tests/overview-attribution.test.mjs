@@ -63,6 +63,7 @@ test('enabled margin uses scoped shipped net revenue and retains ERP zeros', () 
     order(600, 500, {margin:50, cartNumber:'marketplace'}),
     order(201, 80, {margin:10, shippedDate:'2026-11-05'}),
   ];
+  source.margins = new WeakMap(source.rows.flatMap(row => row.margin == null ? [] : [[row.items[0], row.margin]]));
   const state = {...selection, salesScope:'site', chartMetric:'margin'};
   const defaultResult = buildOverviewAttribution(source, {...state, includeMargin:true});
   assert.ok(!('margin' in defaultResult));
@@ -85,6 +86,34 @@ test('enabled margin uses scoped shipped net revenue and retains ERP zeros', () 
   assert.match(html, /<h2>Прибуток<\/h2>/);
   assert.match(html, /Прибуток, %<\/span><b>3,33%/);
   assert.match(html, /id="overview-sales-chart".*data-metric="margin"/);
+  assert.match(html, /−6,67 п\. п\./);
+});
+
+test('line rates drive channel margins, mixed orders and the weighted comparison', () => {
+  const source = fixture();
+  const tile = item(100, '11'), plumbing = item(300, '22'), service = item(30, '18385');
+  const site = order(101, 430, {items:[tile, plumbing, service], goodsCount:3, returnSum:50, returnGoodsCodes:['22'], returnRowSums:[50], margin:0});
+  const roz = order(500, 200);
+  const mono = order(600, 300, {cartNumber:'mono'});
+  const prior = order(201, 80, {shippedDate:'2026-11-05'});
+  source.rows = [site, roz, mono, prior, order(777, 400, {cancelReason:'Дубль замовлення'})];
+  source.margins = new WeakMap([[tile,15],[plumbing,40],[service,99],[roz.items[0],10],[mono.items[0],0],[prior.items[0],20]]);
+  const result = buildOverviewAttribution(source, selection, {includeMargin:true});
+  const {site:shop, rozetka, monomarket} = result.margin.byChannel;
+  assert.equal(shop.amount, 115);
+  assert.equal(shop.percent, 115 / 350 * 100);
+  assert.equal(rozetka.amount, 20);
+  assert.equal(monomarket.amount, 0);
+  assert.equal(result.margin.amount, 135);
+  assert.equal(result.margin.percent, 135 / 850 * 100);
+  assert.equal(result.margin.coveredLines, 4);
+  assert.equal(result.margin.previous.byChannel.site.percent, 20);
+  assert.equal(result.margin.previous.byChannel.rozetka.percent, null);
+  const html = renderBusinessOverview(result, selection);
+  assert.match(html, /Валова маржа за каналами/);
+  assert.match(html, /\+12,86 п\. п\./);
+  assert.match(html, /−4,12 п\. п\./);
+  assert.match(html, /Немає бази для порівняння/);
 });
 
 test('tile drill-down uses scoped net sales and the same dates last year even in WoW',()=>{

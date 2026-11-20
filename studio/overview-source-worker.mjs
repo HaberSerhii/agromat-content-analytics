@@ -9,7 +9,7 @@ import {readInventoryDemand,releaseInventoryDemandCache} from './inventory-deman
 import {inventorySelection} from './public/inventory-demand-filters.mjs';
 import {readContentConversion} from './content-conversion-source.mjs';
 import {contentShipments} from './content-conversion.mjs';
-import {readShipmentQuantities} from './shipment-quantities.mjs';
+import {readShipmentFacts} from './shipment-quantities.mjs';
 import {contentSelection} from './public/content-conversion-filters.mjs';
 import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
@@ -34,9 +34,9 @@ async function readERP() {
   return erp;
 }
 
-async function overviewQuantities(source) {
-  if (source.quantities) return source.quantities;
-  if (Date.now() < (source.retryQuantitiesAt || 0)) return undefined;
+async function overviewShipmentFacts(source) {
+  if (source.shipmentFacts) return source.shipmentFacts;
+  if (Date.now() < (source.retryShipmentFactsAt || 0)) return undefined;
   const [, etag, modified, size] = /^([^:]+):(\d{4}-\d{2}-\d{2}T[^Z]+Z):(\d+):/.exec(source.signature || '') || [];
   const expectedSize = Number(size);
   if (!etag || !Number.isSafeInteger(expectedSize) || expectedSize <= 0) return undefined;
@@ -52,11 +52,11 @@ async function overviewQuantities(source) {
       object.Body?.destroy();
       throw Error('shipment_snapshot_mismatch');
     }
-    source.quantities = await readShipmentQuantities(object.Body, source.rows, {signal});
-    return source.quantities;
+    source.shipmentFacts = await readShipmentFacts(object.Body, source.rows, {signal});
+    return source.shipmentFacts;
   } catch (error) {
-    source.retryQuantitiesAt = Date.now() + 30_000;
-    console.warn(JSON.stringify({event:'erp_shipment_quantities_unavailable', name:error.name, status:error.$metadata?.httpStatusCode}));
+    source.retryShipmentFactsAt = Date.now() + 30_000;
+    console.warn(JSON.stringify({event:'erp_shipment_facts_unavailable', name:error.name, status:error.$metadata?.httpStatusCode}));
     return undefined;
   } finally {
     client?.destroy();
@@ -84,7 +84,7 @@ async function readOrigins() {
 async function readOverviewSelection(input, options) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const [source,rozetka]=await Promise.all([readERP(),readOrigins()]);
-  const quantities = await overviewQuantities(source);
+  const shipmentFacts = await overviewShipmentFacts(source);
   const key=JSON.stringify([range,baseline,source.mtime]);
   const readTransactions = (run, project, dataset, periods) => {
     const rows = source.rows.filter(row => erpChannel(row, rozetka) === 'site' && periods.some(({from, to}) =>
@@ -127,7 +127,7 @@ async function readOverviewSelection(input, options) {
     }
     previousYearTransactions = report.lastYear.rows;
   }
-  const result=buildOverviewAttribution({rows:source.rows,quantities,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report,previousYearTransactions},state,options);
+  const result=buildOverviewAttribution({rows:source.rows,...shipmentFacts,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report,previousYearTransactions},state,options);
   result.attribution.available=report.attributionAvailable;
   result.partial=!report.attributionAvailable||!report.webAvailable;
   if(result.partial)result.sourceNotice='Частина даних GA4 тимчасово недоступна; відвантаження ERP показані повністю.';
