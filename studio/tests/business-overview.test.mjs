@@ -102,14 +102,29 @@ test("public overview escapes category labels and marks missing integrations wit
   assert.match(html, /Звідки приріст виручки/);
   assert.match(html, /неповна розбивка/);
 });
-test('category and brand maps share the selected dates and comparison',()=>{
- const sales=source({shippedRevenue:20,shippedDocs:2});
- sales.categories=[{label:'Плитка',revenue:20}];sales.brands=[{label:'A',revenue:20}];
- sales.previous={...source({}),categories:[{label:'Плитка',revenue:10}],brands:[{label:'A',revenue:10}]};
- const html=renderBusinessOverview({chartSales:sales,sales},{...state,from:'2026-02-01',to:'2026-02-02',compareMode:'yoy'});
- assert.match(html,/2026-02-01 — 2026-02-02/);
- assert.doesNotMatch(html,/data-category-period=/);
- assert.match(html,/Бренди/);assert.match(html,/\+100%/);
+test('category and brand tooltips carry dated amounts in the selected measure and comparison', () => {
+  const sales = source({shippedRevenue:20,shippedDocs:2});
+  sales.categories = [{label:'Плитка',revenue:20,quantities:{'м²':33.12}}];
+  sales.brands = [{label:'A',revenue:20,quantities:{шт:4}}, {label:'B',revenue:5,quantities:{шт:2}}];
+  sales.previous = {...source({}),categories:[{label:'Плитка',revenue:10,quantities:{'м²':24}}],
+    brands:[{label:'A',revenue:10,quantities:{шт:0}}, {label:'B',revenue:1,missingQuantityLines:1}]};
+  const renderTips = selection => [...renderBusinessOverview({chartSales:sales,sales},
+    {...state,from:'2026-02-01',to:'2026-02-02',...selection}).matchAll(/data-category-meta="([^"]+)"/g)]
+    .map(([,meta]) => JSON.parse(meta.replaceAll('&quot;', '"')));
+
+  const revenue = renderTips({compareMode:'yoy'});
+  for (const dimension of ['categories','brands']) {
+    const tip = revenue.find(row => row.dimension === dimension);
+    assert.equal(tip.period,'01.02.2026 — 02.02.2026');
+    assert.equal(tip.baselineLabel,'01.02.2025 — 02.02.2025');
+    assert.deepEqual([tip.formattedValue,tip.formattedPrior,tip.formattedDelta],['20 ₴','10 ₴','+100%']);
+  }
+
+  const quantity = renderTips({compareMode:'mom',categoryMeasure:'goods',brandMeasure:'goods'});
+  assert.ok(quantity.every(tip => tip.baselineLabel === '01.01.2026 — 02.01.2026'));
+  assert.deepEqual(quantity.map(tip => [tip.formattedValue,tip.formattedPrior,tip.formattedDelta]), [
+    ['33,12 м²','24 м²','+38%'], ['4 шт.','0 шт.','Немає бази'], ['2 шт.','—','Немає бази'],
+  ]);
 });
 
 test('conversion falls back only to complete unthresholded daily GA4 data',()=>{

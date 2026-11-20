@@ -114,11 +114,37 @@ test('tile drill-down uses scoped net sales and the same dates last year even in
     {transactionId:'113', acquisition:'direct', device:'mobile'},
   ]},slice);
   assert.deepEqual(filtered.breakdown.pairs, [
-    {category:'Плитка',brand:'A',current:{revenue:100,goods:1}},
-    {category:'Плитка',brand:'D',previous:{revenue:20,goods:1}},
+    {category:'Плитка',brand:'A',current:{revenue:100,goods:1,missingQuantityLines:1}},
+    {category:'Плитка',brand:'D',previous:{revenue:20,goods:1,missingQuantityLines:1}},
   ]);
   const missing = buildOverviewAttribution({...source,previousYearTransactions:null},slice);
   assert.match(renderSalesBreakdown(missing.breakdown,{label:'Плитка',dimension:'categories',measure:'goods'}), /Дані за торішній період тимчасово недоступні/);
+});
+
+test('quantity mode keeps ERP units separate for mixed brands, categories and marketplace channels', () => {
+  const tile = item(100,'1','Плитка','A'), plumbing = item(200,'2','Сантехніка','A'), prior = item(70,'1','Плитка','A');
+  const priorPlumbing = item(80,'2','Сантехніка','A');
+  const source = {
+    ...fixture(),
+    rows: [order(500,100,{items:[tile]}),order(600,200,{items:[plumbing],cartNumber:'cart'}),
+      order(501,70,{items:[prior],shippedDate:'2025-11-12'}),order(601,80,{items:[priorPlumbing],shippedDate:'2025-11-12',cartNumber:'cart'})],
+    quantities: new WeakMap([[tile,{quantity:33.12,unit:'м²'}],[plumbing,{quantity:4,unit:'шт'}],[prior,{quantity:24,unit:'м²'}]]),
+  };
+  const state = {...selection,compareMode:'yoy',salesScope:'marketplaces',categoryMeasure:'goods',brandMeasure:'goods'};
+  const result = buildOverviewAttribution(source, state);
+  result.chartSales = scopedSales(result.sales, result.salesChannels, state.salesScope);
+  assert.deepEqual({...result.chartSales.brands[0].quantities},{'м²':33.12,шт:4});
+  assert.equal(result.chartSales.previous.brands[0].missingQuantityLines,1);
+  const html = renderBusinessOverview(result,state);
+  assert.match(html,/aria-label="Плитка: 33,12 м²; \+38%"/);
+  assert.match(html,/aria-label="Сантехніка: 4 шт\.; Немає бази"/);
+  assert.match(html,/aria-label="A: 33,12 м²; Немає бази"/);
+  assert.match(html,/aria-label="A: 4 шт\.; Немає бази"/);
+  const details = unit => renderSalesBreakdown(result.breakdown,{label:'A',dimension:'brands',measure:'goods',unit});
+  assert.match(details('м²'), /Плитка<\/th><td class="num">33,12 м²<\/td><td class="num">24 м²<\/td>/);
+  assert.doesNotMatch(details('м²'), /Сантехніка/);
+  assert.match(details('шт'), /Сантехніка<\/th><td class="num">4 шт\.<\/td><td class="num">—<\/td>/);
+  assert.doesNotMatch(details('шт'), /Плитка/);
 });
 
 test('MoM daily comparison does not count the last day of February four times',()=>{

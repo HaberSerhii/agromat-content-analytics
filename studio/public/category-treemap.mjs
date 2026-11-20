@@ -82,36 +82,34 @@ export function categoryColor(delta) {
   const foreground = whiteContrast >= 4.5 ? "#ffffff" : darkContrast >= 4.5 ? "#0c253e" : "#000000";
   return { band: (delta > 0 ? 1 : -1) * step, background: `rgb(${rgb.join(",")})`, foreground };
 }
-export function categoryMosaic(current, previous, compare = true, {limit = 9, otherLabel = 'Інші категорії', width = 1000, height = 520, measure = 'revenue'} = {}) {
-  const all = [...(current || [])]
+export function categoryMosaic(current, previous, compare = true, {limit = 9, otherLabel = 'Інші категорії', width = 1000, height = 520, measure = 'revenue', unit} = {}) {
+  const value = row => unit ? row.quantities?.[unit] ?? 0 : row[measure];
+  const all = (current || []).map(row => ({...row, [measure]: value(row)}))
     .filter((row) => row[measure] > 0)
     .sort((a, b) => b[measure] - a[measure]);
   const baseline = previous
-    ? new Map(previous.map((row) => [row.label, row[measure]]))
+    ? new Map(previous.map(row => [row.label, unit && row.missingQuantityLines ? null : value(row)]))
     : null;
   const rows = all
     .slice(0, limit)
     .map((row) => ({ ...row, prior: baseline?.get(row.label) ?? null }));
   if (all.length > limit) {
-    const top = new Set(rows.map((row) => row.label)),
-      rest = all.slice(limit);
+    const top = new Set(rows.map((row) => row.label)), rest = all.slice(limit);
+    const priorRest = baseline && [...baseline].filter(([label]) => !top.has(label)).map(([, prior]) => prior);
     rows.push({
       label: otherLabel,
       revenue: rest.reduce((sum, row) => sum + row.revenue, 0),
       docs: rest.reduce((sum, row) => sum + (row.docs || 0), 0),
       goods: rest.reduce((sum, row) => sum + (row.goods || 0), 0),
-      prior: baseline
-        ? [...baseline]
-            .filter(([label]) => !top.has(label))
-            .reduce((sum, [, value]) => sum + value, 0)
-        : null,
+      prior: priorRest && !priorRest.includes(null) ? priorRest.reduce((sum, prior) => sum + prior, 0) : null,
+      missingQuantityLines: unit && current.some(row => !top.has(row.label) && row.missingQuantityLines),
       items: rest,
     });
   }
   return treemapLayout(
     rows.map((row) => {
       const delta =
-        compare && row.prior > 0 ? (row[measure] / row.prior - 1) * 100 : null;
+        compare && row.prior > 0 && !(unit && row.missingQuantityLines) ? (row[measure] / row.prior - 1) * 100 : null;
       return { ...row, delta, tone: categoryTone(delta), color: categoryColor(delta) };
     }), width, height, measure,
   );
@@ -122,6 +120,7 @@ const esc = (value) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+const tooltipRow = (label, value) => `<div class="bo-quarter-tip-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
 export function bindCategoryTooltips(root = document) {
   root.querySelectorAll("[data-category-meta]").forEach((tile) => {
     const tooltip = tile.closest('.bo-card')?.querySelector('.bo-category-tooltip');
@@ -130,7 +129,10 @@ export function bindCategoryTooltips(root = document) {
     const show = (event) => {
       tile.classList.add("is-hovered");
       tile.setAttribute("aria-describedby", tooltip.id);
-      tooltip.innerHTML = `<div class="bo-category-tip-name">${esc(data.label)}</div>${data.period?`<small>${esc(data.period)}</small>`:""}<div class="bo-quarter-tip-row"><span>${esc(data.measureLabel || "Виторг")}</span><b>${esc(data.formattedValue || data.formattedRevenue)}</b></div><div class="bo-quarter-tip-row"><span>До ${esc(data.baselineLabel || data.baselineYear)}</span><b>${esc(data.formattedDelta)}</b></div>`;
+      tooltip.innerHTML = `<div class="bo-category-tip-name">${esc(data.label)}</div><small>${esc(data.measureLabel)}</small>` +
+        tooltipRow(data.period, data.formattedValue) + (data.baselineLabel
+          ? tooltipRow(data.baselineLabel, data.formattedPrior) + tooltipRow('Зміна', data.formattedDelta)
+          : '');
       tooltip.hidden = false;
       const box = tile.getBoundingClientRect(),
         x = event?.clientX ?? box.right,

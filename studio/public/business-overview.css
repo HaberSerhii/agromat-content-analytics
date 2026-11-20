@@ -1693,6 +1693,14 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-catalog-delta[data-catalog-score-history] { cursor: pointer; }
 .bo-overview-mosaics .bo-card > header { align-items: center; }
 .bo-map-units button { padding: 5px 8px; }
+.bo-quantity-group { margin-top: 8px; border-top: 1px solid var(--line); }
+.bo-quantity-group summary { display: flex; align-items: center; gap: 8px; padding: 9px 2px; cursor: pointer; font-size: 11px; }
+.bo-quantity-group summary::-webkit-details-marker { display: none; }
+.bo-quantity-group summary::before { content: '▸'; color: var(--muted); }
+.bo-quantity-group[open] summary::before { content: '▾'; }
+.bo-quantity-group summary b { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bo-overview-mosaics .bo-quantity-group .bo-category-mosaic { height: clamp(170px, 17vw, 240px); }
+.bo-quantity-notice { margin: 12px 0 0; color: var(--muted); font-size: 11px; }
 .bo-overview-mosaics .bo-mosaic-tile strong {
   display: block;
   width: 100%;

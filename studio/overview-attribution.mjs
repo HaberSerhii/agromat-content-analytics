@@ -28,13 +28,23 @@ const shipped=row=>!!row.shippedDate&&String(row.state).toLocaleLowerCase('uk').
 const excluded=row=>['створення нового замовлення','дубль замовлення','фейкове замовлення','попередній прорахунок'].some(reason=>String(row.cancelReason||'').toLocaleLowerCase('uk').replace(/\s+/g,' ').includes(reason));
 export const erpChannel=(row,rozetka)=>row.cartNumber?'monomarket':row.webshopId&&rozetka.has(String(row.webshopId))?'rozetka':'site';
 
-function salesAggregate(records,range) {
+function addQuantity(total, value) {
+  if (!value) {
+    total.missingQuantityLines = (total.missingQuantityLines || 0) + 1;
+    return;
+  }
+  const quantities = total.quantities ||= Object.create(null);
+  quantities[value.unit] = (quantities[value.unit] || 0) + value.quantity;
+}
+
+function salesAggregate(records,range,quantities) {
   const byDate=new Map(),brands=new Map(),categories=new Map();
   let revenue=0,docs=0,goods=0,canceled=0;
-  const group=(map,label,item,ref)=>{
+  const group=(map,label,item,ref,quantity)=>{
     label=label||'Не визначено';
     const row=map.get(label)||{label,revenue:0,goods:0,refs:new Set()};
     row.revenue+=item.revenue;row.goods+=item.qty||0;row.refs.add(ref);map.set(label,row);
+    addQuantity(row, quantity);
   };
   for (const {row} of records) {
     if (excluded(row)) continue;
@@ -47,22 +57,27 @@ function salesAggregate(records,range) {
     revenue+=net;docs++;goods+=row.goodsCount;
     const day=byDate.get(row.shippedDate)||{date:row.shippedDate,revenue:0,docs:0,goods:0,canceled:0};
     day.revenue+=net;day.docs++;day.goods+=row.goodsCount;byDate.set(day.date,day);
-    for(const item of items){group(brands,item.brand,item,row.docsRef);group(categories,item.category,item,row.docsRef);}
+    for (const [index,item] of items.entries()) {
+      const quantity = quantities?.get(row.items[index]);
+      group(brands,item.brand,item,row.docsRef,quantity);
+      group(categories,item.category,item,row.docsRef,quantity);
+    }
   }
   const buckets=map=>[...map.values()].map(({refs,...row})=>({...row,docs:refs.size})).sort((a,b)=>b.revenue-a.revenue);
   return {available:true,hasData:docs>0||canceled>0,range,metrics:{shippedRevenue:revenue,shippedDocs:docs,shippedGoods:goods,canceledDocs:canceled},byDate:[...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date)),brands:buckets(brands),categories:buckets(categories)};
 }
 
-function salesBreakdown(records, range, lastYear, matches, pastMatches) {
+function salesBreakdown(records, range, lastYear, matches, pastMatches, quantities) {
   const pairs = new Map();
-  const add = (items, period) => {
-    for (const item of items) {
+  const add = (row, items, period) => {
+    for (const [index,item] of items.entries()) {
       const category = item.category || 'Не визначено', brand = item.brand || 'Не визначено';
       const key = JSON.stringify([category, brand]);
       const pair = pairs.get(key) || {category, brand};
       const totals = pair[period] ||= {revenue:0, goods:0};
       totals.revenue += item.revenue;
       totals.goods += item.qty || 0;
+      addQuantity(totals, quantities?.get(row.items[index]));
       pairs.set(key, pair);
     }
   };
@@ -73,8 +88,8 @@ function salesBreakdown(records, range, lastYear, matches, pastMatches) {
     const prior = pastMatches && inRange(row.shippedDate, lastYear) && pastMatches(record);
     if (!current && !prior) continue;
     const items = netSalesItems(row);
-    if (current) add(items, 'current');
-    if (prior) add(items, 'previous');
+    if (current) add(row, items, 'current');
+    if (prior) add(row, items, 'previous');
   }
   return {range, lastYear, previousAvailable: Boolean(pastMatches), pairs:[...pairs.values()]};
 }
@@ -100,7 +115,7 @@ function orderMargin(records, range) {
     coveredDocs, docs, byDate:[...byDate.values()]};
 }
 
-export function buildOverviewAttribution({rows,transactions,previousYearTransactions,webRows,rozetkaIds,updatedAt},input,{includeMargin = false} = {}) {
+export function buildOverviewAttribution({rows,quantities,transactions,previousYearTransactions,webRows,rozetkaIds,updatedAt},input,{includeMargin = false} = {}) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const rozetka=new Set(rozetkaIds),index=transactionIndex(transactions);
   const seen=new Set(),records=[];
@@ -119,14 +134,14 @@ export function buildOverviewAttribution({rows,transactions,previousYearTransact
   }
   const matches=match=>(state.acquisition==='all'||match?.acquisition===state.acquisition)&&(state.device==='all'||match?.device===state.device);
   const filtered=records.filter(record=>matches(record.match));
-  const aggregate=selection=>({...salesAggregate(selection,range),updatedAt,previous:{...salesAggregate(selection,baseline),updatedAt}});
+  const aggregate=selection=>({...salesAggregate(selection,range,quantities),updatedAt,previous:{...salesAggregate(selection,baseline,quantities),updatedAt}});
   const sales=aggregate(filtered),salesChannels=Object.fromEntries(['site','rozetka','monomarket'].map(channel=>[channel,aggregate(filtered.filter(row=>row.channel===channel))]));
   const lastYear = comparisonRange(range, 'yoy');
   const scopedRecords = records.filter(({channel}) => state.salesScope === 'all' || (channel === 'site') === (state.salesScope === 'site'));
   const pastIndex = previousYearTransactions && transactionIndex(previousYearTransactions);
   const pastMatches = previousYearTransactions === null ? null : ({row, channel, match}) =>
     matches(pastIndex ? (channel === 'site' ? pastIndex.get(String(row.webshopId)) : null) : match);
-  const breakdown = salesBreakdown(scopedRecords, range, lastYear, matches, pastMatches);
+  const breakdown = salesBreakdown(scopedRecords, range, lastYear, matches, pastMatches, quantities);
   const preview = {};
   if (includeMargin) {
     const selected = scopedRecords.filter(record => matches(record.match));

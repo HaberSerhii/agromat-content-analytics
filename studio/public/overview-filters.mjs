@@ -74,6 +74,11 @@ export function combineSales(sources) {
     for (const source of sources) for (const row of source[key] || []) {
       const name = row.label ?? row.date, item = rows.get(name) || { [row.label == null ? 'date' : 'label']: name };
       for (const field of fields) item[field] = (item[field] || 0) + (Number(row[field]) || 0);
+      if (row.missingQuantityLines) item.missingQuantityLines = (item.missingQuantityLines || 0) + row.missingQuantityLines;
+      if (row.quantities) {
+        const quantities = item.quantities ||= Object.create(null);
+        for (const [unit, value] of Object.entries(row.quantities)) quantities[unit] = (quantities[unit] || 0) + value;
+      }
       rows.set(name, item);
     }
     return [...rows.values()].sort((a, b) => key === 'byDate' ? a.date.localeCompare(b.date) : b.revenue - a.revenue);

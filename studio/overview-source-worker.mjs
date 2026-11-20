@@ -9,6 +9,7 @@ import {readInventoryDemand,releaseInventoryDemandCache} from './inventory-deman
 import {inventorySelection} from './public/inventory-demand-filters.mjs';
 import {readContentConversion} from './content-conversion-source.mjs';
 import {contentShipments} from './content-conversion.mjs';
+import {readShipmentQuantities} from './shipment-quantities.mjs';
 import {contentSelection} from './public/content-conversion-filters.mjs';
 import {comparisonRange, hasWebSlice} from './public/overview-filters.mjs';
 
@@ -27,10 +28,39 @@ async function readERP() {
     releaseERP();
     const entry=deserialize(await fs.readFile(filename));
     if(!Array.isArray(entry.value?.rows)||Date.now()-entry.createdAt>24*3600000)throw Error('erp_cache_unavailable');
-    erp={rows:entry.value.rows,mtime:stat.mtimeMs,updatedAt:new Date(entry.createdAt).toISOString()};
+    erp={rows:entry.value.rows,signature:entry.value.signature,mtime:stat.mtimeMs,updatedAt:new Date(entry.createdAt).toISOString()};
   }
   erpEviction=setTimeout(releaseERP,30_000).unref();
   return erp;
+}
+
+async function overviewQuantities(source) {
+  if (source.quantities) return source.quantities;
+  if (Date.now() < (source.retryQuantitiesAt || 0)) return undefined;
+  const [, etag, modified, size] = /^([^:]+):(\d{4}-\d{2}-\d{2}T[^Z]+Z):(\d+):/.exec(source.signature || '') || [];
+  const expectedSize = Number(size);
+  if (!etag || !Number.isSafeInteger(expectedSize) || expectedSize <= 0) return undefined;
+  let client;
+  try {
+    const require = createRequire('/opt/agromat-content-analytics/package.json');
+    const {S3Client, GetObjectCommand} = require('@aws-sdk/client-s3');
+    const url = new URL(process.env.SALES_S3_URL || 's3://dataset4bq/analysebillsofparsel.csv');
+    client = new S3Client({region: process.env.AWS_REGION || 'us-east-1', maxAttempts: 1});
+    const signal = AbortSignal.timeout(12_000);
+    const object = await client.send(new GetObjectCommand({Bucket: url.hostname, Key: url.pathname.slice(1), IfMatch: etag}), {abortSignal: signal});
+    if (object.LastModified?.toISOString() !== modified || object.ContentLength !== expectedSize) {
+      object.Body?.destroy();
+      throw Error('shipment_snapshot_mismatch');
+    }
+    source.quantities = await readShipmentQuantities(object.Body, source.rows, {signal});
+    return source.quantities;
+  } catch (error) {
+    source.retryQuantitiesAt = Date.now() + 30_000;
+    console.warn(JSON.stringify({event:'erp_shipment_quantities_unavailable', name:error.name, status:error.$metadata?.httpStatusCode}));
+    return undefined;
+  } finally {
+    client?.destroy();
+  }
 }
 async function readOrigins() {
   if(origins&&Date.now()-origins.time<6*3600000)return origins.ids;
@@ -54,6 +84,7 @@ async function readOrigins() {
 async function readOverviewSelection(input, options) {
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const [source,rozetka]=await Promise.all([readERP(),readOrigins()]);
+  const quantities = await overviewQuantities(source);
   const key=JSON.stringify([range,baseline,source.mtime]);
   const readTransactions = (run, project, dataset, periods) => {
     const rows = source.rows.filter(row => erpChannel(row, rozetka) === 'site' && periods.some(({from, to}) =>
@@ -96,7 +127,7 @@ async function readOverviewSelection(input, options) {
     }
     previousYearTransactions = report.lastYear.rows;
   }
-  const result=buildOverviewAttribution({rows:source.rows,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report,previousYearTransactions},state,options);
+  const result=buildOverviewAttribution({rows:source.rows,quantities,rozetkaIds:[...rozetka],updatedAt:source.updatedAt,...report,previousYearTransactions},state,options);
   result.attribution.available=report.attributionAvailable;
   result.partial=!report.attributionAvailable||!report.webAvailable;
   if(result.partial)result.sourceNotice='Частина даних GA4 тимчасово недоступна; відвантаження ERP показані повністю.';

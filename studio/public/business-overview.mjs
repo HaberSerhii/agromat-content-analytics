@@ -1,7 +1,7 @@
 import { overviewRevenueWaterfall } from "./revenue-drivers.mjs";
 import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=margin-tooltip';
 import {renderSiteFunnel} from "./site-funnel.mjs?v=overview-copy";
-import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=fastoverview2";
+import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=category-comparison";
 import {
   graphRange,
   yearBefore,
@@ -304,52 +304,65 @@ function weeklyPanel(data, state) {
       )}</div><div class="bo-quarter-tooltip" id="quarter-channel-tooltip" role="tooltip" hidden></div><div class="bo-legend">${channels.map((channel) => `<span><i style="background:${channel.color}"></i>${channel.name}</span>`).join("")}</div>`,
   );
 }
+const quantityNumber = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:4});
+const unitNames = new Map([
+  ['м²', ['Квадратні метри', 'м²']], ['шт', ['Штуки', 'шт.']], ['компл', ['Комплекти', 'компл.']],
+  ['міш', ['Мішки', 'міш.']], ['банк', ['Банки', 'банк.']], ['каністр', ['Каністри', 'каністр.']],
+  ['пак', ['Пакування', 'пак.']], ['рул', ['Рулони', 'рул.']], ['грн', ['Позиції з одиницею «грн»', 'грн']],
+]);
+const unitLabel = unit => unitNames.get(unit)?.[1] ?? unit;
+const formatQuantity = (value, unit) => `${quantityNumber.format(value)} ${unitLabel(unit)}`;
+
+function salesMosaic(tiles, {measure, unit, dimension, period, baselineLabel}) {
+  const shownLabels = tiles.filter(tile => !tile.items).map(tile => tile.label);
+  const format = value => !Number.isFinite(value) ? '—' : unit ? formatQuantity(value, unit) : money(value);
+  return `<div class="bo-category-mosaic">${tiles.map(tile => {
+    const formattedDelta = !baselineLabel ? 'Порівняння вимкнено' : tile.delta == null ? 'Немає бази' : (tile.delta > 0 ? '+' : '') + percent(tile.delta);
+    const formattedValue = format(tile[measure]);
+    const meta = {label:tile.label, dimension, measure, unit, shownLabels:tile.items ? shownLabels : undefined,
+      measureLabel:unit ? 'Кількість' : 'Виторг', period, formattedValue, baselineLabel, formattedPrior:format(tile.prior), formattedDelta};
+    return `<button type="button" class="bo-mosaic-tile tone-${tile.tone} ${tile.w < 140 || tile.h < 90 ? 'is-small' : ''}" title="${esc(tile.label)}" data-category-meta="${esc(JSON.stringify(meta))}" aria-haspopup="dialog" aria-label="${esc(tile.label)}: ${esc(formattedValue)}; ${esc(formattedDelta)}" style="${tile.color ? `background:${tile.color.background};color:${tile.color.foreground};` : ''}left:${tile.x / 10}%;top:${tile.y / 6.8}%;width:calc(${tile.w / 10}% - 3px);height:calc(${tile.h / 6.8}% - 3px)"><strong>${esc(tile.label)}</strong><span>${esc(formattedValue)} · ${esc(formattedDelta)}</span></button>`;
+  }).join('')}</div>`;
+}
+
 function categoryPanel(model, state, data, dimension = 'categories') {
   const brand = dimension === 'brands', range = {from:state.from,to:state.to};
   const measure = state[brand ? 'brandMeasure' : 'categoryMeasure'] === 'goods' ? 'goods' : 'revenue';
-  const measureLabel = measure === 'goods' ? 'Кількість' : 'Виторг';
-  const format = measure === 'goods' ? value => `${number(value)} шт.` : money;
-  const controls = `<div class="bo-segments bo-map-units" role="group" aria-label="${brand ? 'Одиниці карти брендів' : 'Одиниці карти категорій'}">${[['revenue','грн'],['goods','шт.']].map(([key,label]) =>
+  const controls = `<div class="bo-segments bo-map-units" role="group" aria-label="${brand ? 'Показник карти брендів' : 'Показник карти категорій'}">${[['revenue','грн'],['goods','Кількість']].map(([key,label]) =>
     `<button type="button" data-map="${dimension}" data-measure="${key}" aria-pressed="${measure === key}">${label}</button>`
   ).join('')}</div>`;
+  const current = model.sales?.[dimension] || [];
   const prior = model.sales?.previous?.available && model.sales.previous.hasData ? model.sales.previous[dimension] : null;
-  const tiles = categoryMosaic(model.sales?.[dimension], prior, state.yoy, {measure,limit:24,otherLabel:brand?'Інші бренди':'Інші категорії',height:680});
-  const shownLabels = tiles.filter(tile => !tile.items).map(tile => tile.label);
-  const baselineLabel = rangeLabel(data.comparisonRange || comparisonRange(range, state.compareMode || 'yoy'));
-  return card(
-    dimension,
-    brand ? 'Бренди' : 'Категорії',
-    "",
-    tiles.length
-      ? `<div class="bo-category-mosaic">${tiles
-          .map((tile) => {
-            const formattedDelta = !state.yoy
-              ? "Порівняння вимкнено"
-              : tile.delta == null
-                ? "Немає бази"
-                : (tile.delta > 0 ? "+" : "") + percent(tile.delta);
-            const meta = {
-              label: tile.label,
-              dimension,
-              measure,
-              shownLabels: tile.items ? shownLabels : undefined,
-              measureLabel,
-              formattedValue: format(tile[measure]),
-              formattedDelta,
-              baselineLabel,
-              period: `${range.from} — ${range.to}`,
-            };
-            return `<button type="button" class="bo-mosaic-tile tone-${tile.tone} ${tile.w < 140 || tile.h < 90 ? "is-small" : ""}" title="${esc(tile.label)}" data-category-meta="${esc(JSON.stringify(meta))}" aria-haspopup="dialog" aria-label="${esc(tile.label)}: ${esc(format(tile[measure]))}; ${esc(formattedDelta)}" style="${tile.color ? `background:${tile.color.background};color:${tile.color.foreground};` : ""}left:${tile.x / 10}%;top:${tile.y / 6.8}%;width:calc(${tile.w / 10}% - 3px);height:calc(${tile.h / 6.8}% - 3px)"><strong>${esc(tile.label)}</strong><span>${format(tile[measure])} · ${esc(formattedDelta)}</span></button>`;
-          })
-          .join(
-            "",
-          )}</div><div class="bo-category-legend"><span><i class="decline"></i>падіння</span><div class="bo-heatmap-scale" role="img" aria-label="Тепла шкала падіння, холодна шкала зростання; крок 2%">${Array.from({length:41},(_,index)=>(index-20)*2).map(delta=>`<i style="background:${categoryColor(delta).background}" title="${delta>0?'+':''}${delta}%"></i>`).join("")}</div><span><i class="growth"></i>зростання</span><span><i class="missing"></i>немає бази</span></div><div class="bo-quarter-tooltip bo-category-tooltip" id="${dimension}-mosaic-tooltip" role="tooltip" hidden></div>`
-      : empty(data.scopeNotice || (model.sales == null ? `Завантажуємо ${brand?'бренди':'категорії'}…` : data.scopeNotice || `Немає продажів за ${brand?'брендами':'категоріями'}.`)),
-    controls,
-  );
+  const baselineLabel = state.yoy ? rangeLabel(data.comparisonRange || comparisonRange(range, state.compareMode || 'yoy')) : null;
+  const options = {measure,limit:24,otherLabel:brand ? 'Інші бренди' : 'Інші категорії',height:680};
+  const meta = {measure, dimension, period:rangeLabel(range), baselineLabel};
+  const legend = `<div class="bo-category-legend"><span><i class="decline"></i>падіння</span><div class="bo-heatmap-scale" role="img" aria-label="Тепла шкала падіння, холодна шкала зростання; крок 2%">${Array.from({length:41},(_,index)=>(index-20)*2).map(delta=>`<i style="background:${categoryColor(delta).background}" title="${delta>0?'+':''}${delta}%"></i>`).join('')}</div><span><i class="growth"></i>зростання</span><span><i class="missing"></i>немає бази</span></div>`;
+  const tooltip = `<div class="bo-quarter-tooltip bo-category-tooltip" id="${dimension}-mosaic-tooltip" role="tooltip" hidden></div>`;
+  const noSales = data.scopeNotice || (model.sales == null ? `Завантажуємо ${brand?'бренди':'категорії'}…` : `Немає продажів за ${brand?'брендами':'категоріями'}.`);
+  let body;
+  if (measure === 'revenue') {
+    const tiles = categoryMosaic(current, prior, state.yoy, options);
+    body = tiles.length ? salesMosaic(tiles, meta) + legend + tooltip : empty(noSales);
+  } else {
+    const totals = new Map();
+    for (const row of current) for (const [unit, quantity] of Object.entries(row.quantities || {})) {
+      totals.set(unit, (totals.get(unit) || 0) + quantity);
+    }
+    const units = [...unitNames.keys()].filter(unit => totals.has(unit));
+    units.push(...[...totals.keys()].filter(unit => !unitNames.has(unit)).sort((a,b) => a.localeCompare(b,'uk')));
+    const hasMissing = current.some(row => row.missingQuantityLines);
+    const groups = units.map((unit, index) => {
+      const tiles = categoryMosaic(current, prior, state.yoy, {...options, unit});
+      const name = unitNames.get(unit)?.[0] ?? unit;
+      return `<details class="bo-quantity-group" ${index < 2 ? 'open' : ''}><summary><span>${esc(name)}</span><b>${esc(formatQuantity(totals.get(unit),unit))}</b></summary>${tiles.length ? salesMosaic(tiles, {...meta, unit}) : empty('Немає додатних кількостей для карти.')}</details>`;
+    }).join('');
+    body = groups ? groups + (hasMissing ? '<p class="bo-quantity-notice">Для частини позицій ERP не передав кількість.</p>' : '') + legend + tooltip
+      : empty(current.length ? 'Кількість за даними ERP недоступна.' : noSales);
+  }
+  return card(dimension, brand ? 'Бренди' : 'Категорії', '', body, controls);
 }
 
-export function renderSalesBreakdown(source, {label, dimension, measure, shownLabels}) {
+export function renderSalesBreakdown(source, {label, dimension, measure, unit, shownLabels}) {
   if (!source) return '<p>Деталізація продажів тимчасово недоступна.</p>';
   const key = dimension === 'brands' ? 'brand' : 'category';
   const omitted = shownLabels && new Set(shownLabels);
@@ -358,20 +371,32 @@ export function renderSalesBreakdown(source, {label, dimension, measure, shownLa
   for (const pair of source.pairs) {
     if (omitted ? omitted.has(pair[key]) : pair[key] !== label) continue;
     const name = pair[detailsKey];
-    const row = rows.get(name) || {name, current:0, previous:0};
-    row.current += pair.current?.[measure] ?? 0;
-    row.previous += pair.previous?.[measure] ?? 0;
+    const row = rows.get(name) || {name, current:0, previous:0, missingCurrent:false, missingPrevious:false, hasQuantity:false};
+    if (unit) {
+      const current = pair.current?.quantities?.[unit], previous = pair.previous?.quantities?.[unit];
+      row.current += current ?? 0;
+      row.previous += previous ?? 0;
+      row.missingCurrent ||= Boolean(pair.current?.missingQuantityLines);
+      row.missingPrevious ||= Boolean(pair.previous?.missingQuantityLines);
+      row.hasQuantity ||= current != null || previous != null;
+    } else {
+      row.current += pair.current?.[measure] ?? 0;
+      row.previous += pair.previous?.[measure] ?? 0;
+    }
     rows.set(name, row);
   }
-  if (!rows.size) return '<p>У цьому зрізі немає відвантажених продажів.</p>';
-  const sorted = [...rows.values()].sort((a, b) => b.current - a.current || b.previous - a.previous || a.name.localeCompare(b.name, 'uk'));
-  const format = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:measure === 'goods' ? 0 : 2});
+  const sorted = [...rows.values()].filter(row => !unit || row.hasQuantity)
+    .sort((a, b) => b.current - a.current || b.previous - a.previous || a.name.localeCompare(b.name, 'uk'));
+  if (!sorted.length) return '<p>У цьому зрізі немає відвантажених продажів.</p>';
+  const number = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
+  const format = value => unit ? formatQuantity(value,unit) : number.format(value);
   const dates = range => `<small>${rangeLabel(range).replace(' — ', ' — <wbr>')}</small>`;
-  return `<p class="bo-breakdown-source">Відвантажені продажі · ERP · ${measure === 'goods' ? 'шт.' : 'грн'}</p>
+  const missing = sorted.some(row => row.missingCurrent || (source.previousAvailable && row.missingPrevious));
+  return `<p class="bo-breakdown-source">Відвантажені продажі · ERP · ${esc(unit ? unitLabel(unit) : 'грн')}</p>
     <div class="bo-breakdown-table"><table aria-label="Відвантажені продажі за два періоди">
       <thead><tr><th scope="col">${detailsKey === 'brand' ? 'Бренд' : 'Категорія'}</th><th scope="col" class="num">Вибраний період${dates(source.range)}</th><th scope="col" class="num">Торік${dates(source.lastYear)}</th></tr></thead>
-      <tbody>${sorted.map(row => `<tr><th scope="row">${esc(row.name)}</th><td class="num">${format.format(row.current)}</td><td class="num">${source.previousAvailable ? format.format(row.previous) : '—'}</td></tr>`).join('')}</tbody>
-    </table></div>${source.previousAvailable ? '' : '<p>Дані за торішній період тимчасово недоступні.</p>'}`;
+      <tbody>${sorted.map(row => `<tr><th scope="row">${esc(row.name)}</th><td class="num">${row.missingCurrent ? '—' : esc(format(row.current))}</td><td class="num">${source.previousAvailable && !row.missingPrevious ? esc(format(row.previous)) : '—'}</td></tr>`).join('')}</tbody>
+    </table></div>${source.previousAvailable ? '' : '<p>Дані за торішній період тимчасово недоступні.</p>'}${missing ? '<p>Для частини позицій ERP не передав кількість.</p>' : ''}`;
 }
 
 export function trafficAreaMarkup(source) {

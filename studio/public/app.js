@@ -1,9 +1,9 @@
-import {overviewDefaults, overviewControls, validComparison, comparisonRange, scopedSales, scopeKey} from '/overview-filters.mjs?v=overview-copy';
+import {overviewDefaults, overviewControls, validComparison, comparisonRange, scopedSales, scopeKey} from '/overview-filters.mjs?v=sales-quantities';
 import {bindComparisonTooltips} from "/site-funnel.mjs?v=overview-copy";
-import {bindCategoryTooltips} from "/category-treemap.mjs?v=fastoverview2";
+import {bindCategoryTooltips} from "/category-treemap.mjs?v=category-comparison";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=catalog-score-history";
-import { apiParams, createApiCache } from "/api-cache.mjs?v=catalog-score-history";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips } from "/business-overview.mjs?v=category-comparison";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=sales-quantities";
 import {
   defaultRange,
   chartSeries,
@@ -1474,7 +1474,7 @@ $("#detail").onclick = (e) => {
 };
 document.addEventListener("click", (e) => {
   if (!e.target.isConnected) return;
-  $$("details[open]").forEach((d) => {
+  $$("details[open]:not(.bo-quantity-group)").forEach((d) => {
     if (!d.contains(e.target)) d.open = false;
   });
 });
