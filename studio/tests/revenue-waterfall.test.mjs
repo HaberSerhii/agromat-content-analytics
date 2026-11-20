@@ -81,7 +81,8 @@ test('overview driver chart uses selected-period traffic and shows an ERP order 
  assert.equal(report.steps[0].key,'traffic');
  for (const traffic of [{complete:false},{thresholded:true},{sessions:0},{range:{from:'2026-11-14',to:range.to}}]) {
    const fallback=overviewRevenueWaterfall({...data,channels:{...data.channels,...traffic}},range);
-   assert.deepEqual(fallback.steps.map(step=>step.key),['orders','aov','marketplaces']);
+   assert.deepEqual(fallback.steps.map(step=>step.key),['orders','aov','new-products','marketplaces']);
+   assert.equal(fallback.steps.find(step=>step.key==='new-products').value,null);
    assert.equal(fallback.residual,0);
  }
  assert.equal(overviewRevenueWaterfall({...data,salesChannels:{}},range),null);
@@ -90,8 +91,8 @@ test('channel scopes reconcile independently, including negative and zero-order 
  const range={from:'2026-11-15',to:'2026-11-15'},data=overviewFixture();
  const site=overviewRevenueWaterfall(data,{...range,salesScope:'site'});
  const market=overviewRevenueWaterfall(data,{...range,salesScope:'marketplaces'});
- assert.deepEqual(site.steps.map(step=>step.key),['traffic','conversion','aov']);
- assert.deepEqual(market.steps.map(step=>[step.key,step.value]),[['marketplaces',160000]]);
+ assert.deepEqual(site.steps.map(step=>step.key),['traffic','conversion','aov','new-products']);
+ assert.deepEqual(market.steps.map(step=>[step.key,step.value]),[['new-products',null],['marketplaces',160000]]);
  assert.equal(site.end+market.end,current.all.metrics.shippedRevenue);
  const decrease=revenueWaterfall(previous,current,{},{});
  assert.ok(decrease.steps.every(step=>step.value<0));
@@ -101,15 +102,16 @@ test('channel scopes reconcile independently, including negative and zero-order 
  assert.equal(firstSales.residual,0);
 });
 
-test('cancelled order value contributes once to revenue from creation through shipment',()=>{
+test('cancellation effect and new SKU shipments each contribute once to the realized revenue change',()=>{
  const receive = (received,receivedAmount,canceledAmount) => ({available:true,received,receivedAmount,canceledAmount,
    canceledAmountShare:canceledAmount/receivedAmount});
  const prior={...previous,orderLoss:receive(1000,4000000,1000000)};
- const now={...current,orderLoss:receive(1200,4800000,960000)};
+ const now={...current,orderLoss:receive(1200,4800000,960000),
+   assortment:{available:true,newRevenue:110000,newSiteRevenue:70000,effect:-190000}};
  const report=revenueWaterfall(now,prior,{},{});
- assert.equal(Math.round(report.steps.find(step=>step.key==='order-loss').value),240000);
- assert.equal(report.steps.filter(step=>step.key==='order-loss').length,1);
- assert.equal(Math.round(report.steps.find(step=>step.key==='shipment-bridge').value),-550000);
+ assert.deepEqual(report.steps.map(step=>[step.label,Math.round(step.value)]),[
+   ['Трафік',140000],['CR',-190000],['AOV',30000],['Ефект скасувань',240000],['Нові товари',110000],['Маркетплейси',120000],
+ ]);
  assert.ok(Math.abs(report.residual)<.01);
  assert.equal(revenueWaterfall(prior,now,{},{}).steps.find(step=>step.key==='order-loss').value < 0,true);
  const missingBase = revenueWaterfall(now,{...prior,orderLoss:{available:false}},{},{});

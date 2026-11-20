@@ -1395,9 +1395,9 @@ body.business-page .bo-heading h1 {
 .bo-waterfall-plot svg {width:100%;height:auto;max-height:360px;display:block;}
 .bo-waterfall-plot text {font-size:10px;fill:var(--muted);font-family:inherit;}
 .bo-waterfall-plot .bo-waterfall-number {font-size:13px;fill:var(--text);font-weight:600;}
-.bo-waterfall-actions {display:flex;flex-wrap:wrap;gap:5px;}
-.bo-waterfall-actions button {display:flex;align-items:center;gap:5px;padding:4px 7px;min-height:32px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:10px;cursor:pointer;}
-.bo-waterfall-actions b {white-space:nowrap;color:var(--blue);}
+.bo-waterfall-plot [data-waterfall-detail] {cursor:pointer;}
+.bo-waterfall-hit {fill:transparent;}
+.bo-waterfall-plot [data-waterfall-detail]:focus-visible .bo-waterfall-hit {stroke:var(--blue);stroke-width:2;}
 .bo-order-loss p {margin:5px 0 10px;color:var(--muted);font-size:11px;line-height:1.5;}
 .bo-order-loss-table {width:100%;table-layout:fixed;white-space:normal;font-size:11px;}
 .bo-order-loss-table :is(th,td) {padding:6px 4px;vertical-align:middle;text-align:right;}

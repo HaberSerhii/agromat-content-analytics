@@ -45,8 +45,9 @@ export async function readAssortmentCatalogue(range, {directory = process.env.PR
   return {groups,coverage:{observed:days.size,days:rangeDays(range),matched:groups.size,candidates:candidates.size}};
 }
 
-export function assortmentImpact({groups,coverage}, rows, range, comparisonRange, includes, excluded) {
+export function assortmentImpact({groups,coverage}, rows, range, comparisonRange, includes, excluded, isSite = () => true) {
   const newSales = new Map();
+  const siteNewSales = new Map();
   const existing = new Set();
   let first = '', removedRevenue = 0, removedPrevious = 0;
   const inPeriod = (date, period) => date >= period.from && date <= period.to;
@@ -65,17 +66,24 @@ export function assortmentImpact({groups,coverage}, rows, range, comparisonRange
     if ((!current && !previous) || !includes(row)) continue;
     for (const item of netSalesItems(row)) {
       const code = String(item.code).trim(), group = groups.get(code);
-      if (group === 'new' && current) newSales.set(code,(newSales.get(code) || 0) + item.revenue);
+      if (group === 'new' && current) {
+        newSales.set(code,(newSales.get(code) || 0) + item.revenue);
+        if (isSite(row)) siteNewSales.set(code,(siteNewSales.get(code) || 0) + item.revenue);
+      }
       if (group === 'removed') {
         if (current) removedRevenue += item.revenue;
         if (previous) removedPrevious += item.revenue;
       }
     }
   }
-  for (const code of existing) newSales.delete(code);
+  for (const code of existing) {
+    newSales.delete(code);
+    siteNewSales.delete(code);
+  }
   const newRevenue = [...newSales.values()].reduce((sum,value)=>sum+value,0);
+  const newSiteRevenue = [...siteNewSales.values()].reduce((sum,value)=>sum+value,0);
   const comparisonAvailable = Boolean(first && first <= comparisonRange.from);
   return {available:true,range,comparisonRange,coverage,added:[...groups.values()].filter(group=>group==='new').length-existing.size,
-    sold:newSales.size,newRevenue,removed:[...groups.values()].filter(group=>group==='removed').length,removedRevenue,
+    sold:newSales.size,newRevenue,newSiteRevenue,removed:[...groups.values()].filter(group=>group==='removed').length,removedRevenue,
     removedPrevious:comparisonAvailable?removedPrevious:null,effect:comparisonAvailable?newRevenue-removedPrevious:null};
 }

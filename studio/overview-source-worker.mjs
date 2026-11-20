@@ -165,9 +165,10 @@ export function readOverviewAssortment(input, signal) {
   return queueSource(async () => {
     const catalogue = await readAssortmentCatalogue(range).catch(()=>null);
     if (!catalogue) return {available:false,range,comparisonRange:baseline, notice:'Бракує знімків каталогу на межах вибраного періоду.'};
-    const [source,rozetka] = await Promise.all([readERP(),state.salesScope === 'all' ? null : readOrigins()]);
-    const includes = row => state.salesScope === 'all' || (erpChannel(row,rozetka) === 'site') === (state.salesScope === 'site');
-    return assortmentImpact(catalogue,source.rows,range,baseline,includes,excludedAnalyticsOrder);
+    const [source,rozetka] = await Promise.all([readERP(),readOrigins()]);
+    const isSite = row => erpChannel(row,rozetka) === 'site';
+    const includes = row => state.salesScope === 'all' || isSite(row) === (state.salesScope === 'site');
+    return assortmentImpact(catalogue,source.rows,range,baseline,includes,excludedAnalyticsOrder,isSite);
   }, signal);
 }
 

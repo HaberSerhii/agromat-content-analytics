@@ -79,7 +79,7 @@ test('lost website orders count by creation, include phone orders, and exclude m
   assert.equal(orderLoss.previous.received,1);
   assert.equal(buildOverviewAttribution(source,{...selection,salesScope:'marketplaces'}).orderLoss,undefined);
   const html = renderBusinessOverview(buildOverviewAttribution(source,selection),selection);
-  assert.match(html,/Втрачені замовлення/);
+  assert.match(html,/data-waterfall-detail="order-loss"/);
   assert.doesNotMatch(html,/bo-order-loss-table/);
   assert.match(renderOrderLoss(orderLoss,'wow'),/Сайт AGROMAT/);
   const yoy = {...selection,compareMode:'yoy'};

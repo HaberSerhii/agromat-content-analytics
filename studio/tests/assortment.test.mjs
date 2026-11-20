@@ -19,8 +19,12 @@ test('assortment includes confirmed new SKUs and deducts the lost sales of archi
   assert.equal(report.removedPrevious,120);
   assert.equal(report.removedRevenue,20);
   assert.equal(report.effect,230);
+  const bothChannels = assortmentImpact(catalogue,rows,range,previous,()=>true,()=>false,row=>!row.marketplace);
+  assert.equal(bothChannels.newRevenue,600);
+  assert.equal(bothChannels.newSiteRevenue,350);
   assert.match(renderAssortmentDetail(report),/Ефект асортименту за базовим виторгом/);
-  const chart = renderRevenueWaterfall(null,{compareMode:'mom'},null,report);
+  const chart = renderRevenueWaterfall({available:true,range,comparisonRange:previous,start:100,end:450,
+    steps:[{key:'new-products',label:'Нові товари',value:350,from:100,to:450}]},{compareMode:'mom'});
   assert.match(chart,/data-waterfall-detail="assortment"/);
-  assert.doesNotMatch(chart,/<table/);
+  assert.doesNotMatch(chart,/<table|bo-waterfall-actions|Фактори сайту/);
 });

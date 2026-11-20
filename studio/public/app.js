@@ -2,9 +2,9 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, sc
 import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=tap-tooltips";
 import {bindCategoryTooltips, categoryComparisonRows} from "/category-treemap.mjs?v=tap-tooltips";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=tap-tooltips";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, renderAssortmentDetail, renderOrderLoss, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=compact-waterfall";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, renderAssortmentDetail, renderOrderLoss, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=waterfall-factors";
 import {bindTitleTooltips, dismissTooltip} from '/tap-tooltip.mjs';
-import { apiParams, createApiCache } from "/api-cache.mjs?v=compact-waterfall";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=waterfall-factors";
 import {
   defaultRange,
   chartSeries,
@@ -366,10 +366,17 @@ function bindBusinessOverview() {
   bindOverviewFunnel();
   bindComparisonTooltips('catalog');
   bindTitleTooltips(document, '.bo-channel-row[title], .bo-margin-delta[title], .bo-ready-to-ship[title], .bo-kpi-subvalue > span[title]');
-  $$('[data-waterfall-detail]').forEach(button => button.onclick = event => {
-    event.stopPropagation();
-    if (button.dataset.waterfallDetail === 'assortment') modal('Нові товари', renderAssortmentDetail(data.assortment));
-    else modal('Втрачені замовлення', renderOrderLoss(data.orderLoss,state.compareMode));
+  $$('[data-waterfall-detail]').forEach(button => {
+    button.onclick = event => {
+      event.stopPropagation();
+      if (button.dataset.waterfallDetail === 'assortment') modal('Нові товари', renderAssortmentDetail(data.assortment));
+      else modal('Втрачені замовлення', renderOrderLoss(data.orderLoss,state.compareMode));
+    };
+    button.onkeydown = event => {
+      if (!['Enter',' '].includes(event.key)) return;
+      event.preventDefault();
+      button.onclick(event);
+    };
   });
   $$('[data-catalog-score-history]').forEach(button => button.onclick = () => {
     const catalog = data.catalogHealth;

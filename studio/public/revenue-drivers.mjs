@@ -26,61 +26,55 @@ export function revenueWaterfall(current, previous, range, baseline, mode = 'yoy
     return {available:false,range,comparisonRange:baseline,mode,notice:'Немає повної порівнюваної бази відвантажень.'};
   }
 
+  const assortment = current.assortment;
+  const newRevenue = assortment?.available && Number.isFinite(assortment.newRevenue) &&
+    (scope !== 'all' || Number.isFinite(assortment.newSiteRevenue)) ? assortment.newRevenue : null;
+  const newSiteRevenue = newRevenue === null || scope === 'marketplaces' ? 0
+    : scope === 'site' ? newRevenue : assortment.newSiteRevenue;
+  const newMarketplaceRevenue = (newRevenue ?? 0) - newSiteRevenue;
+  const cancellationImpact = scope === 'marketplaces' ? null : orderLossImpact(current.orderLoss, previous.orderLoss);
+  const cancellation = cancellationImpact ?? 0;
   const factors = [];
   let method = '';
   if (scope !== 'marketplaces') {
     const t0 = sessions(previous.traffic, baseline), t1 = sessions(current.traffic, range);
-    const received0 = previous.orderLoss, received1 = current.orderLoss;
-    const cancellationImpact = orderLossImpact(received1, received0);
-    if (cancellationImpact !== null) {
-      // Attribute the change in retained order value, then reconcile it to ERP shipments.
-      const baselineRetained = 1 - received0.canceledAmountShare;
-      const baselineReceived = received0.receivedAmount;
-      const afterOrders = received1.received * (baselineReceived / received0.received);
-      const afterTraffic = t0 && t1 ? baselineReceived * t1 / t0 : baselineReceived;
-      if (t0 && t1) factors.push({key:'traffic',label:'Сайт: трафік',value:(afterTraffic-baselineReceived)*baselineRetained});
-      factors.push(
-        {key:t0 && t1 ? 'conversion' : 'orders',label:t0 && t1 ? 'Сайт: конверсія' : 'Сайт: замовлення',value:(afterOrders-afterTraffic)*baselineRetained},
-        {key:'aov',label:'Сайт: чек',value:(received1.receivedAmount-afterOrders)*baselineRetained},
-        {key:'order-loss',label:'Ефект скасувань',value:cancellationImpact},
-      );
-      const retainedDelta = (received1.receivedAmount - received1.canceledAmount) - (baselineReceived - received0.canceledAmount);
-      const shipmentBridge = (s1-s0) - retainedDelta;
-      if (Math.abs(shipmentBridge) > .005) factors.push({key:'shipment-bridge',label:'Різниця відвантажень',value:shipmentBridge});
-      method = 'Фактори сайту включають вхідні дзвінки. Конверсія відносить отримані замовлення ERP до сеансів GA4. Різниця відвантажень враховує різні дати створення й відвантаження, відкриті замовлення та повернення.';
-      if (received0.estimated || received1.estimated) method += ' Для замовлень без суми використано середній чек отриманих замовлень.';
-    } else if (d0 > 0 && d1 > 0) {
-      // Revenue = GA4 sessions × (ERP shipped orders / GA4 sessions) × ERP shipped AOV.
+    const existingSiteRevenue = s1 - newSiteRevenue;
+    if (d0 > 0 && d1 > 0) {
       const baselineCheck = s0 / d0;
       const afterOrders = d1 * baselineCheck;
+      // Cancelled order value is reported separately from the order-volume effect.
+      // Net sales of new SKUs are removed from the average-check contribution.
       if (t0 && t1) {
-        const afterTraffic = t1 * (d0 / t0) * baselineCheck;
+        const afterTraffic = s0 * t1 / t0;
         factors.push(
-          {key:'traffic',label:'Сайт: трафік',value:afterTraffic - s0},
-          {key:'conversion',label:'Сайт: конверсія',value:afterOrders - afterTraffic},
+          {key:'traffic',label:'Трафік',value:afterTraffic - s0},
+          {key:'conversion',label:'CR',value:afterOrders - afterTraffic - cancellation,
+            description:'Внесок зміни відвантажених замовлень на сеанс GA4 після виділення ефекту скасувань.'},
         );
-        method = 'Конверсія сайту тут — відвантажені замовлення ERP / сеанси GA4.';
+        method = 'CR базується на відвантажених замовленнях на сеанс GA4. Ефект скасувань виділено окремо.';
       } else {
-        factors.push({key:'orders',label:'Сайт: замовлення',value:afterOrders - s0});
-        method = 'Трафік і конверсію об’єднано у зміну замовлень: бракує порівнюваних сеансів GA4.';
+        factors.push({key:'orders',label:'Замовлення',value:afterOrders - s0 - cancellation,
+          description:'Трафік і CR об’єднані через брак порівнюваних сеансів GA4.'});
+        method = 'Трафік і CR об’єднані через брак порівнюваних сеансів GA4.';
       }
-      factors.push({key:'aov',label:'Сайт: чек',value:s1 - afterOrders});
+      factors.push({key:'aov',label:'AOV',value:existingSiteRevenue-afterOrders,
+        description:'Внесок середнього чека відвантажених замовлень без виторгу нових SKU.'});
     } else {
-      factors.push({key:'site',label:'Сайт',value:s1-s0});
-      method = 'Зміна сайту показана загалом: в одному з періодів немає відвантажених замовлень.';
+      factors.push({key:'site',label:'Виторг',value:existingSiteRevenue-s0-cancellation});
     }
-    if (mode === 'yoy' && cancellationImpact === null && (received0 || received1)) {
-      factors.push({key:'order-loss',label:'Ефект скасувань',value:0});
+    if (cancellationImpact !== null || (mode === 'yoy' && (current.orderLoss || previous.orderLoss))) {
+      factors.push({key:'order-loss',label:'Ефект скасувань',value:cancellation});
     }
   }
-  if (scope !== 'site') factors.push({key:'marketplaces',label:'Маркетплейси',value:r1+m1-r0-m0});
+  if (assortment) factors.push({key:'new-products',label:'Нові товари',value:newRevenue});
+  if (scope !== 'site') factors.push({key:'marketplaces',label:'Маркетплейси',value:r1+m1-r0-m0-newMarketplaceRevenue});
   const other = end-s1-r1-m1-(start-s0-r0-m0);
   if (Math.abs(other) > .005) factors.push({key:'other',label:'Інші канали',value:other});
 
   let running = start;
   const steps = factors.map(factor => {
     const from = running;
-    running += factor.value;
+    running += factor.value ?? 0;
     return {...factor,from,to:running};
   });
   return {available:true,range,comparisonRange:baseline,mode,scope,start,end,steps,method,residual:end-running,source:'ERP',updatedAt:new Date().toISOString()};
@@ -95,7 +89,8 @@ export function overviewRevenueWaterfall(data, range, mode = 'yoy') {
   const old = Object.fromEntries(ids.map(id=>[id,legacy?data.waterfallBaseline[id]:data.salesChannels[id].previous]));
   const scope = range.salesScope || 'all';
   const zero = {available:true,metrics:{shippedRevenue:0,shippedDocs:0}};
-  const current = {all:scopedSales(data.sales,data.salesChannels,scope),traffic:data.channels,orderLoss:data.orderLoss?.current};
+  const current = {all:scopedSales(data.sales,data.salesChannels,scope),traffic:data.channels,orderLoss:data.orderLoss?.current,
+    assortment:data.assortment || {available:false}};
   const previous = {all:scopedSales(legacy?data.waterfallBaseline.all:data.sales.previous,old,scope),
     traffic:legacy?data.waterfallBaseline.traffic:data.channels?.previous,orderLoss:legacy?undefined:data.orderLoss?.previous};
   for (const id of ids) {

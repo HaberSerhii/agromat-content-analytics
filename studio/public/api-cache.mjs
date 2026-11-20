@@ -9,7 +9,7 @@ export function apiParams(kind, state, extra = {}) {
   if (kind === 'catalog-health') return new URLSearchParams({schema:'catalog6',from:values.from,to:values.to,compareMode:values.compareMode});
   if(kind==='overview')return new URLSearchParams({schema:'linked10',from:values.from,to:values.to,compareMode:values.compareMode,
     salesScope:values.salesScope,acquisition:'all',device:'all'});
-  if(kind==='assortment')return new URLSearchParams({from:values.from,to:values.to,compareMode:values.compareMode,
+  if(kind==='assortment')return new URLSearchParams({schema:'assortment2',from:values.from,to:values.to,compareMode:values.compareMode,
     salesScope:values.salesScope,acquisition:'all',device:'all'});
   if(kind==='site-funnel')return new URLSearchParams({mode:values.mode||'week'});
   if(kind==='capabilities')return new URLSearchParams();
