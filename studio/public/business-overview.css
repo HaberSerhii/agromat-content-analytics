@@ -1395,6 +1395,21 @@ body.business-page .bo-heading h1 {
 .bo-waterfall-plot svg {width:100%;height:auto;max-height:360px;display:block;}
 .bo-waterfall-plot text {font-size:10px;fill:var(--muted);font-family:inherit;}
 .bo-waterfall-plot .bo-waterfall-number {font-size:13px;fill:var(--text);font-weight:600;}
+.bo-waterfall-method {margin:0;color:var(--muted);font-size:11px;line-height:1.5;}
+.bo-order-loss {margin-top:16px;padding-top:14px;border-top:1px solid var(--line);}
+.bo-order-loss h3 {margin:0;font-size:14px;}
+.bo-order-loss p {margin:5px 0 10px;color:var(--muted);font-size:11px;line-height:1.5;}
+.bo-order-loss-table {width:100%;table-layout:fixed;white-space:normal;font-size:11px;}
+.bo-order-loss-table :is(th,td) {padding:6px 4px;vertical-align:middle;text-align:right;}
+.bo-order-loss-table tr > :first-child {width:42%;text-align:left;}
+.bo-order-loss-table td {font-variant-numeric:tabular-nums;}
+.bo-order-loss-table td small {display:block;color:var(--muted);font-size:10px;}
+.bo-order-loss-reasons {margin:12px 0;}
+.bo-order-loss-reasons > summary {cursor:pointer;font-size:12px;font-weight:600;}
+.bo-order-loss .bo-order-loss-result {display:flex;flex-wrap:wrap;gap:4px 14px;margin:.7rem 0;}
+.bo-order-loss-result b {white-space:nowrap;color:var(--text);}
+.bo-order-loss-result b.positive {color:var(--green,#087243);}
+.bo-order-loss-result b.negative {color:var(--red,#af312a);}
 @media(max-width:720px){.bo-waterfall > header {flex-wrap:wrap;} .bo-waterfall-plot {overflow-x:auto;} .bo-waterfall-plot svg {min-width:620px;}}
 .bo-quarter-stacked {padding-left:5px;padding-right:5px;}
 .bo-accounting-note {display:flex;align-items:flex-start;gap:9px;padding:12px 14px;border-radius:8px;background:var(--bg);color:var(--muted);font-size:11px;line-height:1.7;}
@@ -1915,6 +1930,12 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 }
 
 .studio-touch-tooltip { width: max-content; max-width: min(330px, calc(100vw - 16px)); min-width: 0; overflow-wrap: anywhere; }
+.bo-overview-summary .bo-waterfall-plot.is-dense {max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;}
+.bo-overview-summary .bo-waterfall-plot.is-dense svg {min-width:var(--bo-waterfall-width);max-height:none;}
+@media (min-width:901px) {
+  .bo-overview-summary:has(.bo-waterfall-plot.is-dense) {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .bo-overview-summary > #bo-waterfall:has(.bo-waterfall-plot.is-dense) {grid-column:1/-1;}
+}
 
 @media (max-width: 360px), (max-width: 1000px) and (max-height: 500px) {
   body.business-page { --bo-header-height: 0px; }

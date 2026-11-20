@@ -25,8 +25,59 @@ export function transactionIndex(rows) {
 
 const inRange=(date,range)=>date&&date>=range.from&&date<=range.to;
 const shipped=row=>!!row.shippedDate&&String(row.state).toLocaleLowerCase('uk').includes('повністю відвантаж');
+const canceledOrder=row=>String(row.state).toLocaleLowerCase('uk').includes('скас');
 const excluded=row=>['створення нового замовлення','дубль замовлення','фейкове замовлення','попередній прорахунок'].some(reason=>String(row.cancelReason||'').toLocaleLowerCase('uk').replace(/\s+/g,' ').includes(reason));
 export const erpChannel=(row,rozetka)=>row.cartNumber?'monomarket':row.webshopId&&rozetka.has(String(row.webshopId))?'rozetka':'site';
+
+const orderLossReasons = [
+  ['stock','Наявність товару',/наявност|відсутн|нема(?:є)? товар/],
+  ['contact','Зв’язок із клієнтом',/не відповіда|не виходить на зв|не на зв|не додзвон|не вдалося зв/],
+  ['payment','Оплата',/оплат|платіж|рахунок/],
+  ['delivery','Доставка і строки',/достав|логіст|термін|строк/],
+  ['price','Ціна',/цін|вартіст/],
+  ['customer','Відмова клієнта',/відмов|передумав|не ?актуальн|самостійно скасував/],
+  ['other','Інші причини'],
+  ['unknown','Причину не вказано'],
+];
+
+const orderTotals = () => ({received:0, canceled:0, known:0, knownCanceled:0, receivedRecorded:0, canceledRecorded:0, reasons:new Map()});
+
+function addReceivedOrder(totals, row) {
+  const canceled = canceledOrder(row);
+  const known = Number.isFinite(row.docsSum) && row.docsSum > 0;
+  totals.received++;
+  if (canceled) {
+    totals.canceled++;
+    const reason = String(row.cancelReason || '').toLocaleLowerCase('uk').trim();
+    const key = orderLossReasons.find(([, , pattern])=>pattern?.test(reason))?.[0] ?? (reason ? 'other' : 'unknown');
+    const bucket = totals.reasons.get(key) || {count:0,known:0,amount:0};
+    bucket.count++;
+    if (known) { bucket.known++; bucket.amount += row.docsSum; }
+    totals.reasons.set(key,bucket);
+  }
+  if (!known) return;
+  totals.known++;
+  totals.receivedRecorded += row.docsSum;
+  if (canceled) {
+    totals.knownCanceled++;
+    totals.canceledRecorded += row.docsSum;
+  }
+}
+
+function finishOrderTotals(totals, range, coverage) {
+  if (!coverage.first || coverage.first > range.from || coverage.last < range.to) return {available:false, range};
+  const {received,canceled,known,knownCanceled,receivedRecorded,canceledRecorded} = totals;
+  const average = known > 0 ? receivedRecorded / known : null;
+  const receivedAmount = average === null && received ? null : receivedRecorded + (received - known) * (average ?? 0);
+  const canceledAmount = average === null && canceled ? null : canceledRecorded + (canceled - knownCanceled) * (average ?? 0);
+  const byReason = Object.fromEntries([...totals.reasons].map(([key,{count,known,amount}])=>[key,{
+    count, amount:average === null ? null : amount + (count-known)*average, estimated:average !== null && known < count,
+  }]));
+  const cancelShare = received ? canceled / received : null;
+  const canceledAmountShare = receivedAmount > 0 && canceledAmount !== null ? canceledAmount / receivedAmount : null;
+  return {available:true,range,received,canceled,receivedAmount,canceledAmount,average,cancelShare,canceledAmountShare,
+    receivedWithAmount:known,canceledWithAmount:knownCanceled,estimated:average !== null && known < received,byReason};
+}
 
 function addQuantity(total, value) {
   if (!value) {
@@ -49,7 +100,7 @@ function salesAggregate(records,range,quantities) {
   for (const {row} of records) {
     if (excluded(row)) continue;
     const statusDate=row.shippedDate||row.createdDate;
-    if (inRange(statusDate,range)&&String(row.state).toLocaleLowerCase('uk').includes('скас')) {
+    if (inRange(statusDate,range)&&canceledOrder(row)) {
       canceled++;const day=byDate.get(statusDate)||{date:statusDate,revenue:0,docs:0,goods:0,canceled:0};day.canceled++;byDate.set(statusDate,day);
     }
     if (!shipped(row)||!inRange(row.shippedDate,range)) continue;
@@ -139,10 +190,24 @@ export function buildOverviewAttribution({rows,quantities,margins,transactions,p
   const state=validateSelection(input),range={from:state.from,to:state.to},baseline=comparisonRange(range,state.compareMode);
   const rozetka=new Set(rozetkaIds),index=transactionIndex(transactions);
   const seen=new Set(),records=[];
+  const measureOrderLoss = state.salesScope !== 'marketplaces' && state.acquisition === 'all' && state.device === 'all';
+  const receivedCoverage = {first:null,last:null};
+  const receivedCurrent = orderTotals(), receivedPrevious = orderTotals();
   for (const raw of rows) {
     if(seen.has(raw.docsRef))throw Error('duplicate_erp_document');seen.add(raw.docsRef);
+    const created = measureOrderLoss && String(raw.createdDate || '').slice(0,10);
+    const inCurrent = measureOrderLoss && inRange(created, range);
+    const inPrevious = measureOrderLoss && inRange(created, baseline);
+    if (created && /^\d{4}-\d\d-\d\d$/.test(created)) {
+      if (!receivedCoverage.first || created < receivedCoverage.first) receivedCoverage.first = created;
+      if (!receivedCoverage.last || created > receivedCoverage.last) receivedCoverage.last = created;
+    }
     const row=goodsOnlySalesRow(raw);if(!row)continue;
     const channel=erpChannel(row,rozetka),match=channel==='site'&&row.webshopId?index.get(String(row.webshopId)):null;
+    if ((inCurrent || inPrevious) && channel === 'site' && !excluded(row)) {
+      if (inCurrent) addReceivedOrder(receivedCurrent, row);
+      if (inPrevious) addReceivedOrder(receivedPrevious, row);
+    }
     records.push({row,channel,match});
   }
   // An ERP snapshot of open orders, independent of the sales history range.
@@ -163,6 +228,11 @@ export function buildOverviewAttribution({rows,quantities,margins,transactions,p
     matches(pastIndex ? (channel === 'site' ? pastIndex.get(String(row.webshopId)) : null) : match);
   const breakdown = salesBreakdown(scopedRecords, range, lastYear, matches, pastMatches, quantities);
   const preview = {};
+  if (measureOrderLoss) {
+    preview.orderLoss = {current:finishOrderTotals(receivedCurrent, range, receivedCoverage),
+      previous:finishOrderTotals(receivedPrevious, baseline, receivedCoverage),
+      reasons:orderLossReasons.map(([key,label])=>({key,label})), updatedAt};
+  }
   if (includeMargin) {
     const selected = scopedRecords.filter(record => matches(record.match));
     preview.margin = {

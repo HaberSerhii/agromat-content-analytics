@@ -53,6 +53,43 @@ test('ready-to-ship amount is a current ERP snapshot outside the chart series',(
   assert.match(markup,/data-bo-metric="revenue"[^]*?Транзит<\/span><b>\+2,8\sтис\.[^]*?<\/button>/);
 });
 
+test('lost website orders count by creation, include phone orders, and exclude marketplaces and reissues',()=>{
+  const source = fixture();
+  source.rows = [
+    order(1,100,{createdDate:'2026-11-04',shippedDate:'2026-11-20'}),
+    order(2,150,{createdDate:'2026-11-12',state:'Скасована',cancelReason:'Немає в наявності',webshopId:'',shippedDate:null}),
+    order(3,0,{createdDate:'2026-11-13',state:'Скасована',shippedDate:null}),
+    order(4,450,{createdDate:'2026-11-14',state:'Скасована',cancelReason:'Створення нового замовлення',shippedDate:null}),
+    order(500,500,{createdDate:'2026-11-15',state:'Скасована',shippedDate:null}),
+    order(6,500,{createdDate:'2026-11-16',state:'Скасована',cartNumber:'market-cart',shippedDate:null}),
+    order(7,200,{createdDate:'2026-11-16',shippedDate:'2026-11-22'}),
+    order(8,800,{createdDate:'2026-11-17',state:'Відвантаження дозволено',shippedDate:null}),
+  ];
+  const {orderLoss} = buildOverviewAttribution(source,selection);
+  assert.equal(orderLoss.current.received,4);
+  assert.equal(orderLoss.current.canceled,2);
+  assert.equal(orderLoss.current.canceledWithAmount,1);
+  assert.equal(orderLoss.current.average,1150/3);
+  assert.equal(orderLoss.current.canceledAmount,150+1150/3);
+  assert.equal(orderLoss.current.cancelShare,.5);
+  assert.equal(orderLoss.current.estimated,true);
+  assert.deepEqual(orderLoss.current.byReason.stock,{count:1,amount:150,estimated:false});
+  assert.deepEqual(orderLoss.current.byReason.unknown,{count:1,amount:1150/3,estimated:true});
+  assert.equal(Object.values(orderLoss.current.byReason).reduce((sum,reason)=>sum+reason.amount,0),orderLoss.current.canceledAmount);
+  assert.equal(orderLoss.previous.received,1);
+  assert.equal(buildOverviewAttribution(source,{...selection,salesScope:'marketplaces'}).orderLoss,undefined);
+  const html = renderBusinessOverview(buildOverviewAttribution(source,selection),selection);
+  assert.match(html,/Втрачені замовлення/);
+  assert.match(html,/Сайт AGROMAT/);
+  const yoy = {...selection,compareMode:'yoy'};
+  const yoyData = buildOverviewAttribution(source,yoy);
+  assert.equal(yoyData.orderLoss.previous.available,false);
+  const yoyHtml = renderBusinessOverview(yoyData,yoy);
+  assert.match(yoyHtml,/Частка скасованих<\/th><td>0%<\/td><td>50%<\/td>/);
+  assert.match(yoyHtml,/Наявність товару<\/th><td>0<small>0 ₴<\/small><\/td>/);
+  assert.match(yoyHtml,/Нулі замість відсутніх даних/);
+});
+
 test('enabled margin uses scoped shipped net revenue and retains ERP zeros', () => {
   const source = fixture();
   source.rows = [

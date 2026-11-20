@@ -2,9 +2,9 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, sc
 import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=tap-tooltips";
 import {bindCategoryTooltips, categoryComparisonRows} from "/category-treemap.mjs?v=tap-tooltips";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=tap-tooltips";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=tap-tooltips";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=order-loss";
 import {bindTitleTooltips, dismissTooltip} from '/tap-tooltip.mjs';
-import { apiParams, createApiCache } from "/api-cache.mjs?v=funnel-filters";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=order-loss";
 import {
   defaultRange,
   chartSeries,

@@ -1,4 +1,4 @@
-import { overviewRevenueWaterfall } from "./revenue-drivers.mjs";
+import { orderLossImpact, overviewRevenueWaterfall } from "./revenue-drivers.mjs?v=order-loss";
 import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=tap-tooltips';
 import {renderOverviewFunnel} from "./site-funnel.mjs?v=tap-tooltips";
 import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=tap-tooltips";
@@ -528,27 +528,69 @@ function marketPanel(data) {
     `<div class="bo-price-index">${source.buckets.map((bin) => `<div class="bo-price-bin" role="img" tabindex="0" aria-label="${esc(bin.label)}%: ${number(bin.count)} SKU"><strong>${number(bin.count)}</strong><i style="height:${(bin.count / max) * 155}px;background:${bin.risk ? "var(--red)" : "var(--blue)"}" title="${esc(bin.label)}% · ${number(bin.count)} SKU"></i><span>${bin.label.replace("<", "&lt;").replace(">", "&gt;")}</span></div>`).join("")}</div>`,
   );
 }
-export function renderRevenueWaterfall(source, state) {
+function renderOrderLoss(source, mode) {
+  if (!source) return '';
+  const {current,previous} = source;
+  const periods = [previous,current];
+  const missing = mode === 'yoy' ? 0 : null;
+  const count = value => number(value ?? missing);
+  const moneyValue = (value,estimated) => `${estimated && Number.isFinite(value) ? '≈ ' : ''}${money(value ?? missing)}`;
+  const rate = value => percent(Number.isFinite(value) ? value*100 : missing);
+  const fields = [
+    ['Отримано замовлень', period => count(period.received)],
+    ['Сума отриманих', period => moneyValue(period.receivedAmount,period.estimated)],
+    ['Середній чек отриманих', period => moneyValue(period.average,period.estimated)],
+    ['Скасовано замовлень', period => count(period.canceled)],
+    ['Частка скасованих', period => rate(period.cancelShare)],
+    ['Сума скасувань', period => moneyValue(period.canceledAmount,period.canceledWithAmount < period.canceled)],
+    ['Частка суми без скасувань', period => rate(Number.isFinite(period.canceledAmountShare) ? 1-period.canceledAmountShare : null)],
+  ];
+  const impact = orderLossImpact(current,previous);
+  const estimate = periods.some(period=>period.estimated);
+  const shareChange = periods.every(period=>Number.isFinite(period.cancelShare)) ? (current.cancelShare - previous.cancelShare)*100 : null;
+  const header = `<thead><tr><th scope="col">Показник</th>${periods.map(period=>`<th scope="col">${esc(rangeLabel(period.range))}</th>`).join('')}</tr></thead>`;
+  const reasonRows = source.reasons?.map(({key,label})=>`<tr><th scope="row">${esc(label)}</th>${periods.map(period=>{
+    const reason = period.byReason?.[key] || (period.available ? {count:0,amount:0} : {});
+    return `<td>${esc(count(reason.count))}<small>${esc(moneyValue(reason.amount,reason.estimated))}</small></td>`;
+  }).join('')}</tr>`).join('');
+  const periodHasGaps = periods.some(period=>!period.available || period.average === null || period.canceledAmountShare === null);
+  return `<section class="bo-order-loss" aria-labelledby="order-loss-title">
+    <h3 id="order-loss-title">Втрачені замовлення</h3><p>Сайт AGROMAT</p>
+    <table class="bo-order-loss-table">${header}
+    <tbody>${fields.map(([label,render])=>`<tr><th scope="row">${label}</th>${periods.map(period=>`<td>${esc(render(period))}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    <p class="bo-order-loss-result">${(shareChange ?? missing) !== null ? `<span>Зміна частки скасованих <b>${signedPoints.format(shareChange ?? missing)} п. п.</b></span>` : ''}${(impact ?? missing) !== null ? `<span>Ефект зміни скасувань <b class="${deltaTone(impact ?? missing)}">${impact > 0 ? '+' : ''}${esc(moneyValue(impact,estimate))}</b></span>` : ''}</p>
+    ${reasonRows ? `<details class="bo-order-loss-reasons" open><summary>Втрати за причинами</summary><table class="bo-order-loss-table">${header}<tbody>${reasonRows}</tbody></table></details>` : ''}
+    <p>Замовлення через вхідні дзвінки входять до каналу сайту. Період визначає дата створення, статус береться на дату експорту ERP.${estimate ? ' Суми, яких бракує, оцінено за середнім чеком отриманих замовлень того самого періоду.' : ''}</p>
+    ${mode === 'yoy' && periodHasGaps ? '<p class="bo-order-loss-coverage">Нулі замість відсутніх даних. Для грошового ефекту потрібні суми обох періодів.</p>' : ''}
+  </section>`;
+}
+
+export function renderRevenueWaterfall(source, state, orderLoss) {
   const mode = state.compareMode || 'yoy';
+  const orderLossMarkup = state.salesScope === 'marketplaces' ? '' : renderOrderLoss(orderLoss,mode);
   const magnitude=Math.max(Math.abs(source?.start||0),Math.abs(source?.end||0));
   const scale=magnitude>=1000000?1000000:magnitude>=1000?1000:1;
-  const sub = `${{wow:'WoW',mom:'MoM',yoy:'YoY'}[mode] || mode} · ${scale===1000000?'млн ':scale===1000?'тис. ':''}₴`;
-  if (!source?.available) return card('waterfall','Звідки приріст виручки',sub,empty(source?.notice || 'Завантажуємо порівнювані відвантаження…'),'','bo-waterfall');
+  if (!source?.available) return card('waterfall','Звідки приріст виручки','',empty(source?.notice || 'Завантажуємо порівнювані відвантаження…') + orderLossMarkup,'','bo-waterfall');
   const label = period => mode === 'yoy' ? period.from.slice(0,4) : `${period.from.slice(8)}.${period.from.slice(5,7)}–${period.to.slice(8)}.${period.to.slice(5,7)}`;
+  const channelScope = {site:'Фактори сайту',marketplaces:'Маркетплейси',all:'Фактори сайту й маркетплейси'}[source.scope || 'all'];
+  const sub = `${label(source.comparisonRange)} → ${label(source.range)} · ${scale===1000000?'млн ':scale===1000?'тис. ':''}₴ · ${channelScope}`;
   const steps = [{label:label(source.comparisonRange),from:0,to:source.start,value:source.start,total:true},...source.steps,{label:label(source.range),from:0,to:source.end,value:source.end,total:true}];
+  const dense = steps.length > 6;
+  const plotWidth = dense ? 32 + steps.length * 88 : 480;
   const min = Math.min(0,...steps.flatMap(step=>[step.from,step.to]));
   const max = Math.max(1,...steps.flatMap(step=>[step.from,step.to]));
-  const top=34,bottom=207,left=16,right=464;
+  const top=34,bottom=207,left=16,right=plotWidth-16;
   const y=value=>bottom-(value-min)/(max-min)*(bottom-top);
   const slot=(right-left)/steps.length, width=Math.min(52,slot*.65), x=index=>left+index*slot+(slot-width)/2;
   const amount=value=>{const scaled=Math.abs(value)/scale,formatted=scaled>0&&scaled<.005?'<0,01':new Intl.NumberFormat('uk-UA',{maximumFractionDigits:2}).format(scaled);return `${value<0?'−':''}${formatted}`;};
   const bars=steps.map((step,index)=>{
     const barY=Math.min(y(step.from),y(step.to)),height=Math.max(2,Math.abs(y(step.to)-y(step.from)));
     const color=step.total?'var(--text)':step.value>=0?'var(--blue)':'var(--red)';
-    const labels=step.label==='Інші канали'?['Інші','канали']:[step.label];
-    return `${index<steps.length-1?`<path d="M${x(index)+width} ${y(step.to)}H${x(index+1)}" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3 4"/>`:''}<rect x="${x(index)}" y="${barY}" width="${width}" height="${height}" rx="7" fill="${color}"><title>${esc(step.label)}: ${step.value>0&&!step.total?'+':''}${number(step.value)} ₴</title></rect><text x="${x(index)+width/2}" y="${barY-9}" text-anchor="middle" class="bo-waterfall-number">${step.value>0&&!step.total?'+':''}${esc(amount(step.value))}</text><text x="${x(index)+width/2}" y="${bottom+20}" text-anchor="middle">${labels.map((label,i)=>`<tspan x="${x(index)+width/2}" dy="${i?12:0}">${esc(label)}</tspan>`).join('')}</text>`;
+    const labels = ['Сайт:', 'Інші', 'Ефект', 'Різниця'].some(prefix=>step.label.startsWith(prefix+' ')) ? step.label.split(' ',2) : [step.label];
+    return `${index<steps.length-1?`<path d="M${x(index)+width} ${y(step.to)}H${x(index+1)}" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3 4"/>`:''}<rect x="${x(index)}" y="${barY}" width="${width}" height="${height}" rx="7" fill="${color}"><title>${esc(step.label)}: ${step.value>0&&!step.total?'+':''}${number(step.value)} ₴</title></rect><text x="${x(index)+width/2}" y="${barY-9}" text-anchor="middle" class="bo-waterfall-number">${step.value>0&&!step.total?'+':''}${esc(amount(step.value))}</text><text x="${x(index)+width/2}" y="${bottom+20}" text-anchor="middle">${labels.map((label,i)=>`<tspan x="${x(index)+width/2}" dy="${i?16:0}">${esc(label)}</tspan>`).join('')}</text>`;
   }).join('');
-  return card('waterfall','Звідки приріст виручки',sub,`<div class="bo-waterfall-plot"><svg viewBox="0 0 480 250" role="img" aria-label="Внесок замовлень, чека й каналів у зміну відвантаженого виторгу">${bars}</svg></div>`,'','bo-waterfall');
+  const plotAccessibility = dense ? ` tabindex="0" role="region" aria-label="Діаграма факторів" style="--bo-waterfall-width:${plotWidth}px"` : '';
+  return card('waterfall','Звідки приріст виручки',sub,`<div class="bo-waterfall-plot${dense ? ' is-dense' : ''}"${plotAccessibility}><svg viewBox="0 0 ${plotWidth} 250" role="img" aria-label="Фактори зміни відвантаженого виторгу">${bars}</svg></div>${source.method ? `<p class="bo-waterfall-method">${esc(source.method)}</p>` : ''}${orderLossMarkup}`,'','bo-waterfall');
 }
 
 const catalogDecimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
@@ -680,7 +722,7 @@ export function renderBusinessOverview(data, state, {panel} = {}) {
       ? `Маржа ERP після повернень · ${number(coveredLines)} з ${number(lines)} позицій зі значенням` : '';
     return `<span class="bo-kpi-subvalue"><span title="${esc(hint)}">Прибуток, %</span><b>${percent(marginPercent)}</b>${state.yoy ? marginDelta(marginPercent, previous?.percent) : ''}</span>`;
   };
-  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${metric.key === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${metric.key === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${subvalue(m.key)}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid">${chart}${channelPanel(model, state, data.margin)}<div class="bo-overview-summary">${weeklyPanel(data, state)}${catalogPanel(data)}${renderRevenueWaterfall(overviewRevenueWaterfall(data, state, state.compareMode || "yoy"), state)}</div><div class="bo-overview-trio">${renderOverviewFunnel(data.siteFunnel,state,data.scopeNotice)}${trafficPanel(data)}${marketPanel(data)}</div><div class="bo-overview-mosaics">${categoryPanel(model, state, data)}${categoryPanel(model, state, data, "brands")}</div></div></div>`;
+  return `<div class="business-overview ${data.updating?'is-updating':''}" aria-busy="${!!data.updating}">${data.updating?'<p class="bo-cache-notice" role="status">Оновлюємо вибраний зріз…</p>':''}${data.cachedAt?`<p class="bo-cache-notice" role="status">Збережені дані · ${new Date(data.cachedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} · оновлюємо у фоні</p>`:''}<div class="bo-kpis" aria-label="Ключові показники">${model.metrics.map((m) => `<button class="bo-kpi ${metric.key === m.key ? "selected" : ""}" data-bo-metric="${m.key}" aria-pressed="${metric.key === m.key}"><div class="bo-kpi-label"><span>${m.label}</span>${state.yoy ? badge(m.delta, m.lower) : ""}</div><strong>${m.format(m.value)}</strong>${subvalue(m.key)}${weeklyChart(history, m.key, { mini: true, id: "mini-" + m.key, compare: state.yoy, showCaption: false, ...miniOptions })}</button>`).join("")}</div><div class="bo-grid">${chart}${channelPanel(model, state, data.margin)}<div class="bo-overview-summary">${weeklyPanel(data, state)}${catalogPanel(data)}${renderRevenueWaterfall(overviewRevenueWaterfall(data, state, state.compareMode || "yoy"), state, data.orderLoss)}</div><div class="bo-overview-trio">${renderOverviewFunnel(data.siteFunnel,state,data.scopeNotice)}${trafficPanel(data)}${marketPanel(data)}</div><div class="bo-overview-mosaics">${categoryPanel(model, state, data)}${categoryPanel(model, state, data, "brands")}</div></div></div>`;
 }
 
 export function bindQuarterTooltips(root = document) {

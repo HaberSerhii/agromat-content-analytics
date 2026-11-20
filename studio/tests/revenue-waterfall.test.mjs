@@ -10,19 +10,19 @@ const sales = (revenue, docs = 10) => ({
 });
 const current = {
   all: sales(4040000),
-  site: sales(3000000, 150),
-  rozetka: sales(6000000 / 10),
-  monomarket: sales(440000),
-  traffic: { available: true, rows: [{ sessions: 1100, purchases: 150 }] },
+  site: sales(3090000, 299),
+  rozetka: sales(550000),
+  monomarket: sales(400000),
+  traffic: { available: true, sessions: 21000, purchases: 150 },
 };
 const previous = {
   all: sales(3590000),
-  site: sales(2800000, 140),
+  site: sales(2800000, 280),
   rozetka: sales(450000),
   monomarket: sales(340000),
-  traffic: { available: true, rows: [{ sessions: 1000, purchases: 140 }] },
+  traffic: { available: true, sessions: 20000, purchases: 140 },
 };
-test("waterfall uses a single ERP identity without a cross-system adjustment", () => {
+test("waterfall explains the example's growth by traffic, shipped conversion, average check and marketplaces", () => {
   const report = revenueWaterfall(
     current,
     previous,
@@ -37,11 +37,13 @@ test("waterfall uses a single ERP identity without a cross-system adjustment", (
         report.end,
     ) < 0.01,
   );
-  assert.ok(report.steps.some((step) => step.key === "marketplaces"));
+  assert.deepEqual(report.steps.map(step=>[step.key,Math.round(step.value)]),[
+    ['traffic',140000],['conversion',50000],['aov',100000],['marketplaces',160000],
+  ]);
   assert.ok(Math.abs(report.residual) < 0.01);
   const changed = {
     ...current,
-    traffic: { available: true, rows: [{ sessions: 2000, purchases: 200 }] },
+    traffic: { ...current.traffic, purchases: 200 },
   };
   assert.deepEqual(revenueWaterfall(changed, previous, {}, {}).steps, report.steps);
   assert.ok(!report.steps.some(step=>step.key==='reconcile'));
@@ -69,16 +71,50 @@ test("invalid or missing baselines are explicit rather than fabricated", () => {
 
 import { overviewRevenueWaterfall } from '../public/revenue-drivers.mjs';
 function overviewFixture(){
- return {sales:{...current.all,previous:previous.all},salesChannels:Object.fromEntries(['site','rozetka','monomarket'].map(id=>[id,{...current[id],previous:previous[id]}])),history:{web:{available:true,days:[{date:'2026-11-15',sessions:1100,purchases:150},{date:'2025-11-15',sessions:1000,purchases:140},{date:'2026-10-15',sessions:1000,purchases:140}]}}};
+ return {sales:{...current.all,previous:previous.all},salesChannels:Object.fromEntries(['site','rozetka','monomarket'].map(id=>[id,{...current[id],previous:previous[id]}])),channels:{...current.traffic,previous:previous.traffic}};
 }
-test('overview driver chart reuses ERP aggregates and does not depend on GA4 attribution rates',()=>{
+test('overview driver chart uses selected-period traffic and shows an ERP order fallback for incomplete GA4',()=>{
  const range={from:'2026-11-15',to:'2026-11-15'},data=overviewFixture();
  const report=overviewRevenueWaterfall(data,range);
  assert.equal(report.available,true);assert.equal(report.start,3590000);assert.equal(report.end,4040000);
  assert.ok(Math.abs(report.start+report.steps.reduce((sum,step)=>sum+step.value,0)-report.end)<.01);
- assert.equal(overviewRevenueWaterfall({...data,history:{web:{...data.history.web,thresholded:true}}},range).available,true);
- assert.equal(overviewRevenueWaterfall({...data,history:{web:{available:true,days:data.history.web.days.slice(0,1)}}},range).available,true);
+ assert.equal(report.steps[0].key,'traffic');
+ for (const traffic of [{complete:false},{thresholded:true},{sessions:0},{range:{from:'2026-11-14',to:range.to}}]) {
+   const fallback=overviewRevenueWaterfall({...data,channels:{...data.channels,...traffic}},range);
+   assert.deepEqual(fallback.steps.map(step=>step.key),['orders','aov','marketplaces']);
+   assert.equal(fallback.residual,0);
+ }
  assert.equal(overviewRevenueWaterfall({...data,salesChannels:{}},range),null);
+});
+test('channel scopes reconcile independently, including negative and zero-order contributions',()=>{
+ const range={from:'2026-11-15',to:'2026-11-15'},data=overviewFixture();
+ const site=overviewRevenueWaterfall(data,{...range,salesScope:'site'});
+ const market=overviewRevenueWaterfall(data,{...range,salesScope:'marketplaces'});
+ assert.deepEqual(site.steps.map(step=>step.key),['traffic','conversion','aov']);
+ assert.deepEqual(market.steps.map(step=>[step.key,step.value]),[['marketplaces',160000]]);
+ assert.equal(site.end+market.end,current.all.metrics.shippedRevenue);
+ const decrease=revenueWaterfall(previous,current,{},{});
+ assert.ok(decrease.steps.every(step=>step.value<0));
+ assert.ok(Math.abs(decrease.residual)<.01);
+ const firstSales=revenueWaterfall(current,{...previous,all:sales(790000),site:sales(0,0)},{},{});
+ assert.deepEqual(firstSales.steps.map(step=>step.key),['site','marketplaces']);
+ assert.equal(firstSales.residual,0);
+});
+
+test('cancelled order value contributes once to revenue from creation through shipment',()=>{
+ const receive = (received,receivedAmount,canceledAmount) => ({available:true,received,receivedAmount,canceledAmount,
+   canceledAmountShare:canceledAmount/receivedAmount});
+ const prior={...previous,orderLoss:receive(1000,4000000,1000000)};
+ const now={...current,orderLoss:receive(1200,4800000,960000)};
+ const report=revenueWaterfall(now,prior,{},{});
+ assert.equal(Math.round(report.steps.find(step=>step.key==='order-loss').value),240000);
+ assert.equal(report.steps.filter(step=>step.key==='order-loss').length,1);
+ assert.equal(Math.round(report.steps.find(step=>step.key==='shipment-bridge').value),-550000);
+ assert.ok(Math.abs(report.residual)<.01);
+ assert.equal(revenueWaterfall(prior,now,{},{}).steps.find(step=>step.key==='order-loss').value < 0,true);
+ const missingBase = revenueWaterfall(now,{...prior,orderLoss:{available:false}},{},{});
+ assert.equal(missingBase.steps.find(step=>step.key==='order-loss').value,0);
+ assert.equal(missingBase.residual,0);
 });
 test('previous-month drivers accept only the exact requested ERP baseline and preserve missing source data',()=>{
  const range={from:'2026-11-15',to:'2026-11-15'},data=overviewFixture();
