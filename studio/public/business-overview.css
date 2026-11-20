@@ -1866,10 +1866,15 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-margin-delta.positive { color: var(--green, #087243); }
 .bo-margin-delta.negative { color: var(--red, #af312a); }
 .bo-margin-delta.neutral { color: var(--muted); }
-.bo-channel-margin { margin-top: 14px; overflow-x: auto; }
-.bo-channel-margin table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
-.bo-channel-margin caption { text-align: left; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
-.bo-channel-margin th, .bo-channel-margin td { padding: 6px 4px; text-align: right; white-space: nowrap; }
-.bo-channel-margin th:first-child { text-align: left; }
-.bo-channel-margin thead th { color: var(--muted); font-size: 10px; font-weight: 600; }
-.bo-channel-margin tbody tr { border-top: 1px solid var(--line); }
+.bo-channel-layout[data-channel-metric="margin"] { grid-template-columns: minmax(0,1fr); gap: 11px; margin-top: 12px; }
+.bo-channel-layout[data-channel-metric="margin"] .bo-channel-donut { width: 128px; justify-self: center; }
+.bo-channel-profit { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.bo-channel-profit th, .bo-channel-profit td { padding: 7px 4px; text-align: right; vertical-align: top; white-space: normal; }
+.bo-channel-profit th:first-child { width: 28%; text-align: left; overflow-wrap: anywhere; }
+.bo-channel-profit th:nth-child(2) { width: 44%; }
+.bo-channel-profit thead th { color: var(--muted); font-size: 10px; font-weight: 600; }
+.bo-channel-profit tbody th { color: var(--text); font-weight: 500; }
+.bo-channel-profit tbody tr { border-top: 1px solid var(--line); }
+.bo-channel-profit .bo-dot { display: inline-block; width: 6px; height: 6px; margin-inline-end: 5px; vertical-align: 1px; }
+.bo-channel-profit-change { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 1px 4px; margin-top: 3px; }
+.bo-channel-profit-change small { color: var(--muted); font-size: 10px; white-space: nowrap; }

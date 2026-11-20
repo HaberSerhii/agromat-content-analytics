@@ -2,7 +2,7 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, sc
 import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=funnel-filters";
 import {bindCategoryTooltips} from "/category-treemap.mjs?v=category-comparison";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=margin-tooltip";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=channel-metrics";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=channel-profit";
 import { apiParams, createApiCache } from "/api-cache.mjs?v=funnel-filters";
 import {
   defaultRange,

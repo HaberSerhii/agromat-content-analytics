@@ -76,8 +76,8 @@ test('overview KPI order and sales channels follow the chosen ERP metric', () =>
   const channel = (revenue,docs,canceled) => source({shippedRevenue:revenue,shippedDocs:docs,canceledDocs:canceled});
   const sales = channel(600,13,5);
   const site = {...channel(100,4,1),previous:channel(50,2,2)};
-  const margin = {amount:60,byChannel:{site:{amount:10},rozetka:{amount:20},monomarket:{amount:30}},
-    previous:{byChannel:{site:{amount:5}}}};
+  const margin = {amount:60,byChannel:{site:{amount:10,percent:10},rozetka:{amount:20,percent:10},monomarket:{amount:30,percent:10}},
+    previous:{byChannel:{site:{amount:5,percent:8},rozetka:{amount:0,percent:null}}}};
   const data = {sales,chartSales:sales,margin,salesChannels:{site,rozetka:channel(200,3,4),monomarket:channel(300,6,0)}};
   const html = renderBusinessOverview(data,state);
   assert.deepEqual([...html.matchAll(/data-bo-metric="(\w+)"/g)].map(([,key])=>key),
@@ -87,7 +87,20 @@ test('overview KPI order and sales channels follow the chosen ERP metric', () =>
     const panel = renderBusinessOverview(data,selected,{panel:'channels'});
     assert.ok(panel.includes('data-channel-metric="'+key+'"'));
     assert.ok(panel.includes('class="bo-donut-total">'+total+'<'));
-    assert.match(panel,/Валова маржа за каналами/);
+    assert.doesNotMatch(panel,/Валова маржа за каналами/);
+    if (key==='margin') {
+      assert.match(panel,/Прибуток, грн/);
+      assert.match(panel,/Маржа, %/);
+      assert.doesNotMatch(panel,/class="bo-channel-list"/);
+      const row = id => panel.match(new RegExp('data-channel="'+id+'"[\\s\\S]*?</tr>'))[0];
+      assert.match(row('site'),/<b>10,00<\/b>[\s\S]*?\+5,00 грн[\s\S]*?\(\+100%\)[\s\S]*?<b>10%<\/b>[\s\S]*?\+2 п\. п\./);
+      assert.match(row('rozetka'),/\+20,00 грн/);
+      assert.doesNotMatch(row('rozetka'),/<small>/);
+      assert.match(row('monomarket'),/Немає бази для порівняння/);
+      assert.doesNotMatch(renderBusinessOverview(data,{...selected,yoy:false},{panel:'channels'}),/bo-channel-profit-change/);
+      continue;
+    }
+    assert.doesNotMatch(panel,/class="bo-channel-profit"/);
     const siteRow = panel.match(/data-channel="site"[^]*?<\/div>/)[0];
     assert.ok(siteRow.includes('<b>'+siteValue+'</b>'));
     if (key==='canceled') assert.match(siteRow,/bo-delta positive[^]*?50%/);
@@ -101,7 +114,7 @@ test('overview KPI order and sales channels follow the chosen ERP metric', () =>
 
   const loss = {...data,margin:{...margin,amount:40,byChannel:{...margin.byChannel,site:{amount:-10}}}};
   const panel = renderBusinessOverview(loss,{...state,chartMetric:'margin'},{panel:'channels'});
-  assert.match(panel,/<b>-10 ₴<\/b>/);
+  assert.match(panel,/<b>-10,00<\/b>/);
   assert.match(panel,/bo-donut-label">підсумок/);
   assert.doesNotMatch(panel,/stroke-dasharray/);
 });

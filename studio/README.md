@@ -8,7 +8,7 @@ The overview shares a calendar and comparison. A fresh visit selects the current
 
 Sales buttons select all channels, the website or marketplaces. The site funnel has its own acquisition (Direct, Organic and CPC) and device (Mobile and Desktop) controls. These controls apply to both funnel periods. The site funnel is unavailable when marketplaces are selected because the website's GA4 property covers website traffic.
 
-Selecting revenue, profit, shipped orders or cancellations updates the main chart and the sales channel breakdown. Selecting traffic, average check or conversion updates the main chart and keeps the last channel metric selected. Channel totals and comparison values come from the same period and ERP scope as their KPI.
+Selecting revenue, profit, shipped orders or cancellations updates the main chart and the sales channel breakdown. Selecting traffic, average check or conversion updates the main chart and keeps the last channel metric selected. Profit shows each channel’s amount in UAH, margin rate, and changes in UAH, relative percent, and margin percentage points. Channel totals and comparison values come from the same period and ERP scope as their KPI.
 
 All sales figures remain ERP shipments. Website orders are joined by the exact verified `ERP webshopId = GA4 transaction_id` relation. No joins by order number, cart number, amount, contact details or nearest date are allowed. Duplicate GA4 records do not duplicate shipments. Conflicting attributes remain unresolved. Missing IDs, absent matches and ambiguous matches are shown in aggregate coverage details. Monomarket cart identifiers and verified Rozetka origin IDs take precedence over website attribution.
 

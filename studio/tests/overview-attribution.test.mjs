@@ -109,8 +109,8 @@ test('line rates drive channel margins, mixed orders and the weighted comparison
   assert.equal(result.margin.coveredLines, 4);
   assert.equal(result.margin.previous.byChannel.site.percent, 20);
   assert.equal(result.margin.previous.byChannel.rozetka.percent, null);
-  const html = renderBusinessOverview(result, selection);
-  assert.match(html, /Валова маржа за каналами/);
+  const html = renderBusinessOverview(result, {...selection,chartMetric:'margin'});
+  assert.match(html, /Прибуток і маржа за каналами продажу/);
   assert.match(html, /\+12,86 п\. п\./);
   assert.match(html, /−4,12 п\. п\./);
   assert.match(html, /Немає бази для порівняння/);

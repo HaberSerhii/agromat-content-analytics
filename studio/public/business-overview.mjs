@@ -190,19 +190,29 @@ function empty(text) {
 }
 const signedPoints = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 2, signDisplay: "exceptZero" });
 const marginMoney = new Intl.NumberFormat("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signedMoney = new Intl.NumberFormat("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: "exceptZero" });
+const deltaTone = delta => Math.abs(delta) < 0.005 ? 'neutral' : delta > 0 ? 'positive' : 'negative';
+const missingComparison = '<span class="bo-margin-delta neutral" title="Немає бази для порівняння">—</span>';
 function marginDelta(current, previous) {
-  if (!Number.isFinite(current) || !Number.isFinite(previous)) return '<span class="bo-margin-delta neutral" title="Немає бази для порівняння">—</span>';
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return missingComparison;
   const delta = current - previous;
-  const style = Math.abs(delta) < 0.005 ? "neutral" : delta > 0 ? "positive" : "negative";
-  return `<span class="bo-margin-delta ${style}" title="Маржа за період порівняння · ${percent(previous)}">${signedPoints.format(delta).replace(/^-/u, "−")} п. п.</span>`;
+  return `<span class="bo-margin-delta ${deltaTone(delta)}" title="Маржа за період порівняння · ${percent(previous)}">${signedPoints.format(delta).replace(/^-/u, "−")} п. п.</span>`;
 }
-function channelMarginTable(channels, margin, compare) {
-  if (!margin?.byChannel) return "";
-  const rows = channels.map(({id, name}) => {
-    const current = margin.byChannel[id], prior = margin.previous?.byChannel?.[id];
-    return `<tr><th scope="row">${esc(name)}</th><td>${current?.amount == null ? "—" : marginMoney.format(current.amount)}</td><td>${percent(current?.percent)}</td>${compare ? `<td>${marginDelta(current?.percent, prior?.percent)}</td>` : ""}</tr>`;
+function profitDelta(current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return missingComparison;
+  const delta = current - previous;
+  const relative = change(current, previous);
+  return `<span class="bo-margin-delta ${deltaTone(delta)}" title="Прибуток за період порівняння · ${marginMoney.format(previous)} грн">${signedMoney.format(delta).replace(/^-/u, '−')} грн</span>` +
+    (relative == null ? '' : `<small>(${signedPoints.format(relative).replace(/^-/u, '−')}%)</small>`);
+}
+function channelProfitTable(channels, margin, compare) {
+  const rows = channels.map(({id, name, color, value, prior}) => {
+    const rate = margin?.byChannel?.[id]?.percent, priorRate = margin?.previous?.byChannel?.[id]?.percent;
+    return `<tr data-channel="${id}"><th scope="row"><span class="bo-dot" style="background:${color}"></span>${esc(name)}</th>
+      <td><b>${value == null ? '—' : marginMoney.format(value)}</b>${compare && value != null ? `<div class="bo-channel-profit-change">${profitDelta(value,prior)}</div>` : ''}</td>
+      <td><b>${percent(rate)}</b>${compare && rate != null ? `<div class="bo-channel-profit-change">${marginDelta(rate,priorRate)}</div>` : ''}</td></tr>`;
   }).join("");
-  return `<div class="bo-channel-margin"><table><caption>Валова маржа за каналами</caption><thead><tr><th scope="col">Канал</th><th scope="col">Маржа, грн</th><th scope="col">Маржа, %</th>${compare ? '<th scope="col">Зміна</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<table class="bo-channel-profit" aria-label="Прибуток і маржа за каналами продажу"><thead><tr><th scope="col">Канал</th><th scope="col">Прибуток, грн</th><th scope="col">Маржа, %</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function channelPanel(model, state, margin) {
   const {key, label, value:total, format, lower} = model.channelMetric;
@@ -228,7 +238,7 @@ function channelPanel(model, state, margin) {
   const count = positive.length;
   const ringLabel = !complete ? 'неповна розбивка' : canShare || !count && total === 0
     ? `${count} ${count===1?'канал':count>1&&count<5?'канали':'каналів'}` : 'підсумок';
-  const channelRows = rows.map(channel => {
+  const breakdown = key === 'margin' ? channelProfitTable(rows,margin,state.yoy) : `<div class="bo-channel-list">${rows.map(channel => {
     const {id,name,color,value,prior} = channel;
     const amount = format(value);
     const ratio = canShare && value != null ? `<small>${number(value/total*100)}%</small>` : '';
@@ -236,12 +246,12 @@ function channelPanel(model, state, margin) {
     const info = value == null ? (id==='prom' ? 'Джерело не підключено' : 'Дані недоступні')
       : exact(value) + (prior == null ? '' : ` · Було ${exact(prior)}`);
     return `<div class="bo-channel-row" data-channel="${id}" title="${esc(name)}: ${esc(info)}"><span class="bo-dot" style="background:${color}"></span><span>${esc(name)}</span><span class="bo-channel-values"><b>${esc(amount)}</b>${ratio || comparison ? `<span class="bo-channel-comparison">${ratio}${comparison}</span>` : ''}</span></div>`;
-  }).join('');
+  }).join('')}</div>`;
   return card(
     "channels",
     "Канали продажу",
     label,
-    `<div class="bo-channel-layout" data-channel-metric="${key}"><svg class="bo-channel-donut" viewBox="0 0 160 160" role="img" aria-label="${esc(label)} за каналами продажу"><circle cx="80" cy="80" r="60" fill="none" stroke="var(--line)" stroke-width="20"/>${segments}<text x="80" y="78" text-anchor="middle" class="bo-donut-total">${esc(format(total))}</text><text x="80" y="98" text-anchor="middle" class="bo-donut-label">${ringLabel}</text></svg><div class="bo-channel-list">${channelRows}</div></div>${channelMarginTable(model.channels, margin, state.yoy)}`,
+    `<div class="bo-channel-layout" data-channel-metric="${key}"><svg class="bo-channel-donut" viewBox="0 0 160 160" role="img" aria-label="${esc(label)} за каналами продажу"><circle cx="80" cy="80" r="60" fill="none" stroke="var(--line)" stroke-width="20"/>${segments}<text x="80" y="78" text-anchor="middle" class="bo-donut-total">${esc(format(total))}</text><text x="80" y="98" text-anchor="middle" class="bo-donut-label">${ringLabel}</text></svg>${breakdown}</div>`,
   );
 }
 export function quarterChannelRows(data, today) {
