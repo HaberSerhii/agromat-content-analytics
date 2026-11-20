@@ -1390,14 +1390,25 @@ body.business-page .bo-heading h1 {
 .bo-price-bin i {display:block;width:100%;min-height:2px;max-width:64px;border-radius:8px 8px 5px 5px;}
 .bo-price-bin span {color:var(--muted);font-size:10px;white-space:nowrap;margin-top:10px;}
 @media(max-width:720px){.bo-price-index {gap:10px;} .bo-price-bin strong {font-size:11px;} .bo-price-bin span {font-size:9px;}}
-.bo-waterfall {grid-column:1/-1;}
+.bo-waterfall {grid-column:1/-1;align-self:start;}
 .bo-waterfall .panelhead,.bo-waterfall > header {align-items:center;}
-.bo-waterfall-plot svg {width:100%;height:auto;max-height:360px;display:block;}
-.bo-waterfall-plot text {font-size:10px;fill:var(--muted);font-family:inherit;}
-.bo-waterfall-plot .bo-waterfall-number {font-size:13px;fill:var(--text);font-weight:600;}
-.bo-waterfall-plot [data-waterfall-detail] {cursor:pointer;}
-.bo-waterfall-hit {fill:transparent;}
-.bo-waterfall-plot [data-waterfall-detail]:focus-visible .bo-waterfall-hit {stroke:var(--blue);stroke-width:2;}
+.bo-waterfall-plot {--bo-waterfall-height:clamp(112px,16vw,140px);container-type:inline-size;}
+.bo-waterfall-chart {position:relative;}
+.bo-waterfall-chart .bo-waterfall-bars {position:absolute;top:0;left:0;width:100%;min-width:0;height:var(--bo-waterfall-height);pointer-events:none;}
+.bo-waterfall-unit {display:block;color:var(--muted);font-size:10px;line-height:1.3;}
+.bo-waterfall-columns {display:grid;grid-template-columns:var(--bo-waterfall-columns);}
+.bo-waterfall-column {position:relative;display:grid;grid-template-columns:minmax(0,1fr);align-content:start;min-width:0;margin:0;padding:calc(var(--bo-waterfall-height) + 6px) 1px 0;border:0;border-radius:5px;background:transparent;text-align:center;color:var(--muted);font:inherit;}
+.bo-waterfall-column[data-waterfall-detail] {cursor:pointer;}
+.bo-waterfall-column[data-waterfall-detail]:focus-visible {outline-offset:-2px;}
+.bo-waterfall-value {position:absolute;top:calc(var(--bo-waterfall-height) * var(--bo-waterfall-y) - 4px);left:50%;transform:translate(-50%,-100%);color:var(--text);font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.2;}
+.bo-waterfall-label {display:block;font-size:11px;line-height:1.22;overflow-wrap:anywhere;}
+
+@container (max-width: 410px) {
+  .bo-waterfall-label {justify-self:center;width:max-content;max-width:calc(100% + 24px);overflow-wrap:normal;}
+  .bo-waterfall-period-end {display:block;}
+  .bo-waterfall-column:nth-child(even) .bo-waterfall-label {margin-top:28px;}
+  .bo-waterfall-column:nth-child(even)::after {content:"";position:absolute;top:calc(var(--bo-waterfall-height) + 2px);left:50%;height:27px;border-left:1px dotted var(--line);}
+}
 .bo-order-loss p {margin:5px 0 10px;color:var(--muted);font-size:11px;line-height:1.5;}
 .bo-order-loss-table {width:100%;table-layout:fixed;white-space:normal;font-size:11px;}
 .bo-order-loss-table :is(th,td) {padding:6px 4px;vertical-align:middle;text-align:right;}
@@ -1621,10 +1632,7 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-overview-summary .bo-quarter-summary strong{font-size:23px}
 .bo-overview-summary .bo-quarter-stacked{min-height:205px;gap:5px}
 .bo-overview-summary .bo-quarter-stacked .bo-stack{height:155px}
-.bo-overview-summary .bo-waterfall-plot{margin:22px auto 0;overflow:visible;max-width:none}
-.bo-overview-summary .bo-waterfall-plot svg{min-width:0;width:100%;height:auto;max-height:250px}
-.bo-overview-summary .bo-waterfall-plot text{font-size:11px}
-.bo-overview-summary .bo-waterfall-plot .bo-waterfall-number{font-size:15px}
+.bo-overview-summary .bo-waterfall-plot{margin:12px auto 0;overflow:visible;max-width:none}
 .bo-overview-mosaics .bo-category-mosaic{height:clamp(320px,25vw,380px);min-height:0;aspect-ratio:auto}
 .bo-overview-mosaics .bo-category-legend{gap:7px 10px;font-size:8px}
 .bo-overview-mosaics .bo-heatmap-scale{width:150px;min-width:80px;flex:1}
@@ -1698,7 +1706,7 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-funnel .bo-funnel-filters { gap: 8px 10px; margin-bottom: 12px; }
 .bo-funnel-filters .bo-filter-group:disabled { opacity: .55; }
 .bo-funnel .bo-funnel-filters .bo-segments button { padding-inline: 6px; font-size: 10px; }
-.bo-overview-summary { grid-template-columns: minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr); }
+.bo-overview-summary { grid-template-columns: minmax(0,1fr) minmax(0,1.05fr) minmax(0,1.23fr); }
 .bo-catalog-table { border-collapse: collapse; width: 100%; font-size: 11px; }
 .bo-catalog-table th, .bo-catalog-table td { border-bottom: 1px solid var(--line); padding: 10px 3px; }
 .bo-catalog-table thead th { color: var(--muted); font-weight: 500; font-size: 9px; }
@@ -1930,6 +1938,11 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 }
 
 .studio-touch-tooltip { width: max-content; max-width: min(330px, calc(100vw - 16px)); min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 390px) {
+  .bo-overview-summary>#bo-waterfall {padding-inline:10px;}
+  .bo-waterfall-value {font-size:11px;letter-spacing:-.15px;}
+  .bo-waterfall-label {font-size:10px;}
+}
 
 @media (max-width: 360px), (max-width: 1000px) and (max-height: 500px) {
   body.business-page { --bo-header-height: 0px; }

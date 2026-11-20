@@ -589,28 +589,54 @@ export function renderRevenueWaterfall(source, state) {
   const label = period => mode === 'yoy' ? period.from.slice(0,4) : `${period.from.slice(8)}.${period.from.slice(5,7)}–${period.to.slice(8)}.${period.to.slice(5,7)}`;
   const unit = `${scale===1000000?'млн ':scale===1000?'тис. ':''}₴`;
   const steps = [{label:label(source.comparisonRange),from:0,to:source.start,value:source.start,total:true},...source.steps,{label:label(source.range),from:0,to:source.end,value:source.end,total:true}];
-  const dense = steps.length > 6;
-  const plotWidth = dense ? 32 + steps.length * 88 : 480;
+  const weights = steps.map(step=>step.key === 'marketplaces' ? 1.16
+    : step.key === 'order-loss' ? 1.08 : 1);
+  const totalWeight = weights.reduce((sum,weight)=>sum+weight,0);
   const min = Math.min(0,...steps.flatMap(step=>[step.from,step.to]));
   const max = Math.max(1,...steps.flatMap(step=>[step.from,step.to]));
-  const top=34,bottom=207,left=16,right=plotWidth-16;
-  const y=value=>bottom-(value-min)/(max-min)*(bottom-top);
-  const slot=(right-left)/steps.length, width=Math.min(52,slot*.65), x=index=>left+index*slot+(slot-width)/2;
-  const amount=value=>{if(value===null)return '—';const scaled=Math.abs(value)/scale,formatted=scaled>0&&scaled<.005?'<0,01':new Intl.NumberFormat('uk-UA',{maximumFractionDigits:2}).format(scaled);return `${value<0?'−':''}${formatted}`;};
-  const bars=steps.map((step,index)=>{
-    const barY=Math.min(y(step.from),y(step.to)),height=Math.max(2,Math.abs(y(step.to)-y(step.from)));
-    const color=step.total?'var(--text)':step.value===null?'var(--line)':step.value>=0?'var(--blue)':'var(--red)';
-    const labels = step.label.includes(' ') ? step.label.split(' ',2) : [step.label];
+  const plotWidth = 480, plotHeight = 138, top = 22, bottom = 136;
+  let position = 0;
+  const bars = weights.map(weight=>{
+    const slot = plotWidth*weight/totalWeight, width = Math.min(52,slot*.65);
+    const x = position+(slot-width)/2;
+    position += slot;
+    return {x,width};
+  });
+  const y = value => bottom - (value-min)/(max-min)*(bottom-top);
+  const format = new Intl.NumberFormat('uk-UA',{maximumFractionDigits:2});
+  const amount = value => {
+    if (value === null) return '—';
+    const scaled = Math.abs(value)/scale;
+    return (value<0?'−':'') + (scaled>0 && scaled<.005 ? '<0,01' : format.format(scaled));
+  };
+  const columns = steps.map((step,index)=>{
+    const {x,width} = bars[index], next = bars[index+1];
+    const barY = Math.min(y(step.from),y(step.to));
+    const height = Math.max(2,Math.abs(y(step.to)-y(step.from)));
+    const color = step.total?'var(--text)':step.value===null?'var(--line)':step.value>=0?'var(--blue)':'var(--red)';
     const detail = {'order-loss':'order-loss','new-products':'assortment'}[step.key];
     const sign = step.value>0&&!step.total?'+':'';
-    const title = `${step.label} · ${step.value===null?'Немає даних':`${sign}${number(step.value)} ₴`}${step.description ? ' · '+step.description : ''}`;
-    const connector = index<steps.length-1?`<path d="M${x(index)+width} ${y(step.to)}H${x(index+1)}" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="3 4"/>`:'';
-    const column = `<title>${esc(title)}</title><rect x="${x(index)}" y="${barY}" width="${width}" height="${height}" rx="7" fill="${color}"/><text x="${x(index)+width/2}" y="${barY-9}" text-anchor="middle" class="bo-waterfall-number">${sign}${esc(amount(step.value))}</text><text x="${x(index)+width/2}" y="${bottom+20}" text-anchor="middle">${labels.map((label,i)=>`<tspan x="${x(index)+width/2}" dy="${i?16:0}">${esc(label)}</tspan>`).join('')}</text>`;
-    const control = detail ? ` data-waterfall-detail="${detail}" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${esc(title)}"` : '';
-    const tapArea = detail ? `<rect class="bo-waterfall-hit" x="${left+index*slot+2}" y="${Math.min(barY-25,bottom-26)}" width="${slot-4}" height="${250-Math.min(barY-25,bottom-26)}" rx="7"/>` : '';
-    return `${connector}<g${control}>${tapArea}${column}</g>`;
-  }).join('');
-  return card('waterfall','Звідки приріст виручки','',`<div class="bo-waterfall-plot"><svg viewBox="0 0 ${plotWidth} 250" role="group" aria-label="Фактори зміни відвантаженого виторгу"><text x="${left}" y="14">${unit}</text>${bars}</svg></div>`,'','bo-waterfall');
+    const valueLabel = step.value===null ? 'Немає даних' : sign+number(step.value)+' ₴';
+    const title = esc([step.label,valueLabel,step.description].filter(Boolean).join(' · '));
+    const connector = next ? `<path d="M${x+width} ${y(step.to)}H${next.x}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>` : '';
+    const graphic = `${connector}<rect x="${x}" y="${barY}" width="${width}" height="${height}" rx="4" fill="${color}"/>`;
+    const dateParts = step.total ? step.label.split('–') : [];
+    const axisLabel = dateParts.length === 2
+      ? `${esc(dateParts[0])}–<wbr><span class="bo-waterfall-period-end">${esc(dateParts[1])}</span>`
+      : esc(step.label.replace('Маркетплейси','Маркет­плейси'));
+    const tag = detail ? 'button' : 'div';
+    const control = detail ? ` type="button" data-waterfall-detail="${detail}" aria-haspopup="dialog" aria-label="${title}"` : '';
+    const content = `<${tag} class="bo-waterfall-column" title="${title}"${control}>` +
+      `<span class="bo-waterfall-value" style="--bo-waterfall-y:${barY/plotHeight}">${sign}${esc(amount(step.value))}</span>` +
+      `<span class="bo-waterfall-label">${axisLabel}</span></${tag}>`;
+    return {graphic,content};
+  });
+  const tracks = weights.map(weight=>`minmax(0,${weight}fr)`).join(' ');
+  const body = `<div class="bo-waterfall-plot" role="group" aria-label="Фактори зміни відвантаженого виторгу">
+    <span class="bo-waterfall-unit">${unit}</span><div class="bo-waterfall-chart">
+    <svg class="bo-waterfall-bars" viewBox="0 0 ${plotWidth} ${plotHeight}" preserveAspectRatio="none" aria-hidden="true">${columns.map(column=>column.graphic).join('')}</svg>
+    <div class="bo-waterfall-columns" style="--bo-waterfall-columns:${tracks}">${columns.map(column=>column.content).join('')}</div></div></div>`;
+  return card('waterfall','Звідки приріст виручки','',body,'','bo-waterfall');
 }
 
 const catalogDecimal = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:2});
