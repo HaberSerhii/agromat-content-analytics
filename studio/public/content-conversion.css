@@ -139,6 +139,7 @@
 @keyframes cv-loading { to { background-position:-220% 0; } }
 @media (prefers-reduced-motion:reduce) { .cv-skeleton { animation:none; } }
 @media (max-width:1000px) { .cv-dimensions { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:760px) { .cv-report { --cv-control-height:36px; } }
 @media (max-width:700px) {
   .cv-report .bo-card { padding:9px; }
   .cv-report .cv-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); padding:0; }

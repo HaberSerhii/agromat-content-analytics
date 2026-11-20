@@ -1878,3 +1878,34 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 .bo-channel-profit .bo-dot { display: inline-block; width: 6px; height: 6px; margin-inline-end: 5px; vertical-align: 1px; }
 .bo-channel-profit-change { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 1px 4px; margin-top: 3px; }
 .bo-channel-profit-change small { color: var(--muted); font-size: 10px; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .bo-overview-summary, .bo-overview-trio { grid-template-columns: minmax(0,1fr); }
+  .bo-report-mobile button,
+  .bo-filter-groups .bo-segments button,
+  .bo-main-chart .bo-segments button,
+  .bo-map-units button { min-height: 36px; }
+  .bo-kpi-label { column-gap: 5px; row-gap: 3px; }
+}
+
+@media (max-width: 480px) {
+  .bo-quarter-stacked .bo-week { min-width: 27px; }
+}
+
+@media (max-width: 360px) {
+  .bo-period-control .dated { grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); }
+  .bo-period-control .dated #apply-dates { grid-column: 1/-1; justify-self: end; width: auto; padding-inline: 12px; }
+  #bo-catalog .bo-catalog-table { table-layout: fixed; white-space: normal; font-size: 9px; }
+  #bo-catalog .bo-catalog-table :is(th,td) { padding-inline: 2px; }
+  #bo-catalog .bo-catalog-table th:first-child { width: 28%; overflow-wrap: anywhere; }
+  #bo-catalog .bo-catalog-table th:nth-child(2) { width: 19%; }
+  #bo-catalog .bo-catalog-table th:nth-child(3) { width: 23%; }
+  #bo-catalog .bo-catalog-table thead th { padding-inline: 4px; font-size: 8px; overflow-wrap: anywhere; }
+  #bo-catalog .bo-catalog-table :is(td,.bo-catalog-delta) { white-space: normal; overflow-wrap: anywhere; }
+  .bo-catalog-delta { max-width: 100%; font-size: 9px; }
+}
+
+@media (max-width: 360px), (max-width: 1000px) and (max-height: 500px) {
+  body.business-page { --bo-header-height: 0px; }
+  .bo-sticky-header { position: static; }
+}
