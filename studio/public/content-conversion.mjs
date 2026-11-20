@@ -1,6 +1,6 @@
 import {
   contentDefaults, contentSelection, contentDevices, contentSources, contentPriceBands, contentSorts, minimumContentSample,
-} from './content-conversion-filters.mjs';
+} from './content-conversion-filters.mjs?v=in-stock';
 import {addDays, rangeDays, rangeLabel} from './overview-filters.mjs';
 
 const escape = value => String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;')
@@ -31,7 +31,7 @@ const segments = (attribute,choices,selected,label) =>
     `<button type="button" class="cv-control" ${attribute}="${key}" aria-pressed="${key===selected}">${text}</button>`).join('')}</div>`;
 
 const activeFilters = state => [state.root,state.category,state.brand,state.search,
-  state.price!=='all',state.stock!=='all',state.promo!=='all',state.device!=='all',state.source!=='all',
+  state.price!=='all',state.promo!=='all',state.device!=='all',state.source!=='all',
   state.minScore!==0 || state.maxScore!==100,state.comparison!=='prior'].filter(Boolean).length;
 
 function filters(state,draft,report,today,open) {
@@ -42,7 +42,7 @@ function filters(state,draft,report,today,open) {
   return `<form class="bo-card cv-filters" data-cv-form>
     <div class="cv-toolbar">
       ${segments('data-cv-period',[[7,'7 днів'],[30,'30 днів'],[90,'90 днів']],preset,'Період')}
-      <span class="cv-range">${rangeLabel(state)}</span>
+      <span class="cv-range">${rangeLabel(state)} · Тільки товари в наявності</span>
       <button type="button" class="cv-control" data-cv-toggle-filters aria-controls="cv-filters" aria-expanded="${open}">Фільтри${count?' · '+count:''}</button>
     </div>
     <div id="cv-filters" data-cv-filters ${open?'':'hidden'}>
@@ -55,7 +55,6 @@ function filters(state,draft,report,today,open) {
         ${select('category','Підкатегорія',labels(choices.categories,fields.category),fields.category)}
         ${select('brand','Бренд',labels(choices.brands,fields.brand),fields.brand)}
         ${select('price','Ціна',[['all','Усі'],...contentPriceBands],fields.price)}
-        ${select('stock','Наявність',[['all','Усі'],['in','Є в наявності'],['out','Немає в наявності'],['unknown','Невідомо']],fields.stock)}
         ${select('promo','Акції',[['all','Усі'],['yes','Акційний'],['no','Неакційний'],['unknown','Невідомо']],fields.promo)}
         ${select('device','Пристрій',contentDevices,fields.device)}
         ${select('source','Залучення',contentSources,fields.source)}
@@ -260,7 +259,7 @@ function notices(report,state) {
     <p>${coverage} · Період порівняння ${rangeLabel(report.previous)} · Каталог ${day(report.catalogDate)}${report.promoDate?' · Акції '+day(report.promoDate):''}${report.erpDate?' · ERP '+day(report.erpDate):''}</p>
     ${dataWarnings.length?`<ul>${dataWarnings.map(text=>`<li>${text}</li>`).join('')}</ul>`:''}
     <p>Одиниця аналізу — SKU-сесія. Один сеанс може містити кілька товарів. Події в кошику й покупка враховуються після першого перегляду того самого SKU, у межах сесії та вибраного періоду. У порівнянні до та після сесію відносимо до дати її першого PDP для відповідного SKU. Виручка GA4 — сума товарних рядків покупок у гривнях. ERP — чистий виторг повністю відвантажених товарів за датою відвантаження.${report.erpDate ? ' Виторг ERP у вибраному асортименті '+uah(report.erpRevenue)+'.' : ''}</p>
-    <p>Групи Content Score використовують точні денні знімки. Дробові бали зіставляються з верхньою межею кожної групи без округлення. Фільтр балу бере останній знімок у періоді, а категорія, бренд, ціна, наявність, фото, характеристики, відгуки та акції — останній знімок каталогу. Через зміну балу один SKU може потрапити до кількох груп.</p>
+    <p>До обох періодів входять лише товари із залишком від 1 за останнім знімком каталогу. Групи Content Score використовують точні денні знімки. Дробові бали зіставляються з верхньою межею кожної групи без округлення. Фільтр балу бере останній знімок у періоді. Категорія, бренд, ціна, фото, характеристики, відгуки та акції беруться з останнього знімка каталогу. Через зміну балу один SKU може потрапити до кількох груп.</p>
     <p>Для покращених SKU остання зміна має підвищувати Content Score. Вікна до і після мають повне покриття та сесії. День зміни пропускаємо. Протягом порівняння враховуємо товари з однією зміною балу.</p>
     <p>Мала вибірка — менше ${minimumContentSample} SKU-сесій. Аналоги зіставляються за категорією, брендом, ціновим діапазоном, наявністю та акційністю з урахуванням вибраного трафіку. Для прогнозу потрібно щонайменше 5 аналогів. Дохід сценарію використовує середню виручку GA4 на покупку SKU в аналогів. Зв’язок між балом і конверсією є спостережуваним.</p>
   </details>`;
@@ -274,7 +273,7 @@ export function mountContentConversion(root,today) {
   const detailSelection = () => improvedVisible ? {...state,table:'improved',bucket:''} : state;
   const action = (selector,fn) => root.querySelectorAll(selector).forEach(node=>node.addEventListener('click',()=>fn(node)));
   const focus = selector => selector && root.querySelector(selector)?.focus({preventScroll:true});
-  const attrs = ['root','category','brand','price','stock','promo','device','source','minScore','maxScore'];
+  const attrs = ['root','category','brand','price','promo','device','source','minScore','maxScore'];
   function draw(focusTarget) {
     const hasChart = groups.includes(state.table);
     const showDetails = !hasChart || state.bucket !== '' || improvedVisible;

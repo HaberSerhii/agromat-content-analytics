@@ -24,6 +24,9 @@ test('validated ranges compare equal lengths at leap dates and reject unexpected
   for (const values of [{to:today},{from:'2026-08-01'},{device:'smartwatch'},{minScore:'81',maxScore:'80'},{bucket:'5'},
     {from:'2026-02-30'},{query:'anything'}]) assert.throws(()=>select(values));
   assert.throws(()=>contentSelection('device=desktop&device=mobile',today));
+  for (const stock of [undefined,'all','in','out','unknown']) {
+    assert.equal((stock === undefined ? select({}) : select({stock})).stock,'in');
+  }
 });
 
 test('catalogue uses categorical attributes, review counts and rejects ambiguous SKU joins', () => {
@@ -74,6 +77,37 @@ test('historical groups use exact daily scores, SKU-session rates are weighted, 
   assert.equal(partial.current.atcRate,null);
   assert.equal(partial.current.mean,90);
   assert.equal(partial.groups.photos[3].sessions,null);
+});
+
+test('both periods, group tables and ERP totals use only SKUs in the latest stock snapshot', async () => {
+  const catalog = sampleCatalogue([
+    product(1,{stockQty:1}),
+    product(2,{stockQty:0,brand:'Без залишку',categoryName:'Підкатегорія 2',categoryPath:'Розділ 2 / Підкатегорія 2'}),
+    product(3,{stockQty:null,brand:'Невідомий залишок'}),
+  ]);
+  const traffic = compactContentTraffic();
+  traffic.add([
+    event('coverage','20261117',null,0,0),event('coverage','20261118',null,0,0),
+    event('current','20261118',101,50,10,1),event('current','20261118',102,90,50,9),
+    event('current','20261118',103,70,35,7),event('current','20261118',999,5,0),
+    event('previous','',101,25,5,1),event('previous','',102,35,10,3),event('previous','',103,20,8,2),
+  ]);
+  const scores = {'2026-11-17':{'1':50,'2':100,'3':100},'2026-11-18':{'1':60,'2':100,'3':20}};
+  const shipments = {updatedAt:'2026-11-19T08:00:00Z',byCode:new Map([
+    ['1',{revenue:370,orders:1}],['2',{revenue:1200,orders:2}],['3',{revenue:500,orders:1}],
+  ])};
+  const selection = select({from:'2026-11-18',table:'photos',stock:'out'});
+  const report = await buildContentReport({catalog,traffic,shipments,
+    readScore:async date=>scores[date],scoreDates:Object.keys(scores)},selection);
+  assert.equal(report.products,1);
+  assert.deepEqual([report.current.count,report.current.mean,report.current.sessions,report.current.purchaseRate],[1,60,50,2]);
+  assert.deepEqual([report.baseline.count,report.baseline.mean,report.baseline.sessions,report.baseline.purchaseRate],[1,50,25,4]);
+  assert.equal(report.unmatched,5);
+  assert.equal(report.erpRevenue,370);
+  assert.deepEqual(report.options,{roots:['Корінь'],categories:['Тест'],brands:['Бренд']});
+  assert.equal(report.groups.photos[3].sessions,50);
+  assert.deepEqual(contentTable(report,selection).rows.map(row=>row.code),['1']);
+  assert.ok(Object.values(report.tables).flat().every(row=>row.stock==='in'));
 });
 
 test('history uses equal seven-day windows, excludes change day and compares a stable peer cohort', async () => {

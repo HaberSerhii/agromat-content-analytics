@@ -445,7 +445,7 @@ async function load({keepView=false}={}) {
   else { syncOverviewHeader(); bindShell(); }
   try {
     if (section === 'home' && view === 'content-conversion') {
-      const module = await import('/content-conversion.mjs?v=improvements');
+      const module = await import('/content-conversion.mjs?v=in-stock');
       if (id === requestId) module.mountContentConversion($('#content'), today);
       return;
     }

@@ -121,10 +121,10 @@ function scoreOverview(products,snapshot) {
 }
 
 function matches(product, selection) {
-  const {root,category,brand,price,stock,promo,search} = selection;
+  const {root,category,brand,price,promo,search} = selection;
   return (!root || product.root === root) && (!category || product.category === category) &&
     (!brand || product.brand === brand) && (price === 'all' || price === product.priceBand) &&
-    (stock === 'all' || stock === product.stock) && (promo === 'all' || promo === product.promo) &&
+    (promo === 'all' || promo === product.promo) &&
     (!search || [product.code,product.sku,product.name].some(part => part?.toLocaleLowerCase('uk').includes(search)));
 }
 
@@ -316,8 +316,9 @@ export async function buildContentReport({catalog, traffic, readScore, scoreDate
   }
   const [currentScore, priorScore] = await Promise.all([close(range),close(previous)]);
   const {catalogue,refs} = catalog;
+  const inStock = catalogue.filter(product=>product.stock === 'in');
   const scoreFilter = selection.minScore !== 0 || selection.maxScore !== 100;
-  const products = catalogue.filter(p=>matches(p,{...selection,search:selection.search.toLocaleLowerCase('uk')}) &&
+  const products = inStock.filter(p=>matches(p,{...selection,search:selection.search.toLocaleLowerCase('uk')}) &&
     (!scoreFilter || (validScore(currentScore?.scores[p.code]) &&
       currentScore.scores[p.code] >= selection.minScore && currentScore.scores[p.code] <= selection.maxScore)));
   const meta = new Map(products.map(p=>[p.code,p]));
@@ -425,7 +426,7 @@ export async function buildContentReport({catalog, traffic, readScore, scoreDate
     groups:Object.fromEntries(Object.entries(grouped).map(([key,rows])=>[key,rows.map(row=>({
       label:row.label, skus:row.codes.size,...present(row.metrics,coveredCurrent > 0 && (key !== 'score' || scoreDays.size > 0)),
     }))])),
-    options:{roots:distinct(catalogue.map(p=>p.root)),categories:distinct(catalogue.filter(p=>!selection.root || p.root === selection.root).map(p=>p.category)),
-      brands:distinct(catalogue.filter(p=>(!selection.root || p.root === selection.root) && (!selection.category || p.category === selection.category)).map(p=>p.brand))},
+    options:{roots:distinct(inStock.map(p=>p.root)),categories:distinct(inStock.filter(p=>!selection.root || p.root === selection.root).map(p=>p.category)),
+      brands:distinct(inStock.filter(p=>(!selection.root || p.root === selection.root) && (!selection.category || p.category === selection.category)).map(p=>p.brand))},
   };
 }

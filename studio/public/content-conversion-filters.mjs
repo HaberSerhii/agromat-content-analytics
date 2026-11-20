@@ -42,13 +42,15 @@ export function contentSelection(input, today = new Date().toLocaleDateString('s
   for (const [key, allowed, fallback] of [
     ['comparison',['prior','year'],'prior'],
     ['device',contentDevices.map(([id])=>id),'all'],['source',contentSources.map(([id])=>id),'all'],
-    ['price',['all',...contentPriceBands.map(([id])=>id)],'all'],['stock',['all','in','out','unknown'],'all'],
+    ['price',['all',...contentPriceBands.map(([id])=>id)],'all'],['stock',['all','in','out','unknown'],'in'],
     ['promo',['all','yes','no','unknown'],'all'],['table',contentTables,'score'],
     ['sort',contentSorts,result.table==='improved'?'change':'views'],['direction',['asc','desc'],'desc'],['export',['0','1'],'0'],
   ]) {
     result[key] ??= fallback;
     if (!allowed.includes(result[key])) throw Error('invalid_content_selection');
   }
+  // Requests from older tabs still carry the previous stock filter values.
+  result.stock = 'in';
   for (const key of ['root','category','brand','search']) {
     result[key] = (result[key] ?? '').trim();
     if (result[key].length > 160 || /[\u0000-\u001f]/.test(result[key])) throw Error('invalid_content_filter');
