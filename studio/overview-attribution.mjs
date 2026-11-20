@@ -27,6 +27,7 @@ const inRange=(date,range)=>date&&date>=range.from&&date<=range.to;
 const shipped=row=>!!row.shippedDate&&String(row.state).toLocaleLowerCase('uk').includes('повністю відвантаж');
 const canceledOrder=row=>String(row.state).toLocaleLowerCase('uk').includes('скас');
 const excluded=row=>['створення нового замовлення','дубль замовлення','фейкове замовлення','попередній прорахунок'].some(reason=>String(row.cancelReason||'').toLocaleLowerCase('uk').replace(/\s+/g,' ').includes(reason));
+export {excluded as excludedAnalyticsOrder};
 export const erpChannel=(row,rozetka)=>row.cartNumber?'monomarket':row.webshopId&&rozetka.has(String(row.webshopId))?'rozetka':'site';
 
 const orderLossReasons = [

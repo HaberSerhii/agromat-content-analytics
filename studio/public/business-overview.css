@@ -1395,9 +1395,9 @@ body.business-page .bo-heading h1 {
 .bo-waterfall-plot svg {width:100%;height:auto;max-height:360px;display:block;}
 .bo-waterfall-plot text {font-size:10px;fill:var(--muted);font-family:inherit;}
 .bo-waterfall-plot .bo-waterfall-number {font-size:13px;fill:var(--text);font-weight:600;}
-.bo-waterfall-method {margin:0;color:var(--muted);font-size:11px;line-height:1.5;}
-.bo-order-loss {margin-top:16px;padding-top:14px;border-top:1px solid var(--line);}
-.bo-order-loss h3 {margin:0;font-size:14px;}
+.bo-waterfall-actions {display:flex;flex-wrap:wrap;gap:5px;}
+.bo-waterfall-actions button {display:flex;align-items:center;gap:5px;padding:4px 7px;min-height:32px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:10px;cursor:pointer;}
+.bo-waterfall-actions b {white-space:nowrap;color:var(--blue);}
 .bo-order-loss p {margin:5px 0 10px;color:var(--muted);font-size:11px;line-height:1.5;}
 .bo-order-loss-table {width:100%;table-layout:fixed;white-space:normal;font-size:11px;}
 .bo-order-loss-table :is(th,td) {padding:6px 4px;vertical-align:middle;text-align:right;}
@@ -1930,12 +1930,6 @@ body.business-page .bo-sticky-header h1{font-size:27px;letter-spacing:-.8px}
 }
 
 .studio-touch-tooltip { width: max-content; max-width: min(330px, calc(100vw - 16px)); min-width: 0; overflow-wrap: anywhere; }
-.bo-overview-summary .bo-waterfall-plot.is-dense {max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;}
-.bo-overview-summary .bo-waterfall-plot.is-dense svg {min-width:var(--bo-waterfall-width);max-height:none;}
-@media (min-width:901px) {
-  .bo-overview-summary:has(.bo-waterfall-plot.is-dense) {grid-template-columns:repeat(2,minmax(0,1fr));}
-  .bo-overview-summary > #bo-waterfall:has(.bo-waterfall-plot.is-dense) {grid-column:1/-1;}
-}
 
 @media (max-width: 360px), (max-width: 1000px) and (max-height: 500px) {
   body.business-page { --bo-header-height: 0px; }

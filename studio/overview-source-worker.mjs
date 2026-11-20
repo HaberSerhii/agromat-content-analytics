@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import {deserialize} from 'node:v8';
 import {createRequire} from 'node:module';
 import {createInterface} from 'node:readline';
-import {buildOverviewAttribution,validateSelection,erpChannel} from './overview-attribution.mjs';
+import {buildOverviewAttribution,validateSelection,erpChannel,excludedAnalyticsOrder} from './overview-attribution.mjs';
+import {assortmentImpact,readAssortmentCatalogue} from './assortment-source.mjs';
 import {readBoundedWeb,readBoundedTransactions,transactionLookback} from './overview-query.mjs';
 import {catalogSelection, loadCatalogHealth} from './catalog-health.mjs';
 import {readInventoryDemand,releaseInventoryDemandCache} from './inventory-demand-source.mjs';
@@ -158,6 +159,18 @@ export function readOverviewCatalog(params = new URLSearchParams()) {
   });
 }
 
+export function readOverviewAssortment(input, signal) {
+  const state = validateSelection(input);
+  const range = {from:state.from,to:state.to}, baseline = comparisonRange(range,state.compareMode);
+  return queueSource(async () => {
+    const catalogue = await readAssortmentCatalogue(range).catch(()=>null);
+    if (!catalogue) return {available:false,range,comparisonRange:baseline, notice:'Бракує знімків каталогу на межах вибраного періоду.'};
+    const [source,rozetka] = await Promise.all([readERP(),state.salesScope === 'all' ? null : readOrigins()]);
+    const includes = row => state.salesScope === 'all' || (erpChannel(row,rozetka) === 'site') === (state.salesScope === 'site');
+    return assortmentImpact(catalogue,source.rows,range,baseline,includes,excludedAnalyticsOrder);
+  }, signal);
+}
+
 export function loadInventoryDemand(input, signal) {
   const selection = inventorySelection(input);
   return queueSource(()=>readInventoryDemand(selection,readERP,readOrigins,releaseERP),signal);
@@ -184,6 +197,7 @@ if(process.argv.includes('--stdio')) {
       request=JSON.parse(line);
       let value;
       if (request.kind === 'catalog-health') value = await readOverviewCatalog(new URLSearchParams(request.selection));
+      else if (request.kind === 'assortment') value = await readOverviewAssortment(request.selection);
       else if (request.kind === 'inventory-demand') value = await loadInventoryDemand(request.selection);
       else if (request.kind === 'content-conversion') value = await loadContentConversion(request.selection);
       else value = await loadOverviewSelection(request.selection,{includeMargin:true});

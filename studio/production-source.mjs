@@ -1,5 +1,5 @@
 import http from 'node:http';
-import {loadOverviewSelection, readOverviewCatalog, loadInventoryDemand, loadContentConversion} from './overview-source-worker.mjs';
+import {loadOverviewSelection, readOverviewCatalog, readOverviewAssortment, loadInventoryDemand, loadContentConversion} from './overview-source-worker.mjs';
 import {contentSelection} from './public/content-conversion-filters.mjs';
 import {inventorySelection} from './public/inventory-demand-filters.mjs';
 import {validateSelection} from './overview-attribution.mjs';
@@ -20,6 +20,11 @@ const server = http.createServer(async (req, res) => {
   let read;
   if (url.pathname === '/catalog-health') {
     read = () => readOverviewCatalog(url.searchParams);
+  } else if (url.pathname === '/assortment') {
+    let selection;
+    try { selection = validateSelection(Object.fromEntries(url.searchParams)); }
+    catch { return json(400, {available:false}); }
+    read = () => readOverviewAssortment(selection);
   } else if (url.pathname === '/content-conversion') {
     try { contentSelection(url.searchParams); } catch { return json(400, {available:false}); }
     read = () => loadContentConversion(url.searchParams);

@@ -2,9 +2,9 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, sc
 import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=tap-tooltips";
 import {bindCategoryTooltips, categoryComparisonRows} from "/category-treemap.mjs?v=tap-tooltips";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=tap-tooltips";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=order-loss";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, renderAssortmentDetail, renderOrderLoss, overviewModel, bindQuarterTooltips, channelMetrics } from "/business-overview.mjs?v=compact-waterfall";
 import {bindTitleTooltips, dismissTooltip} from '/tap-tooltip.mjs';
-import { apiParams, createApiCache } from "/api-cache.mjs?v=order-loss";
+import { apiParams, createApiCache } from "/api-cache.mjs?v=compact-waterfall";
 import {
   defaultRange,
   chartSeries,
@@ -366,6 +366,11 @@ function bindBusinessOverview() {
   bindOverviewFunnel();
   bindComparisonTooltips('catalog');
   bindTitleTooltips(document, '.bo-channel-row[title], .bo-margin-delta[title], .bo-ready-to-ship[title], .bo-kpi-subvalue > span[title]');
+  $$('[data-waterfall-detail]').forEach(button => button.onclick = event => {
+    event.stopPropagation();
+    if (button.dataset.waterfallDetail === 'assortment') modal('Нові товари', renderAssortmentDetail(data.assortment));
+    else modal('Втрачені замовлення', renderOrderLoss(data.orderLoss,state.compareMode));
+  });
   $$('[data-catalog-score-history]').forEach(button => button.onclick = () => {
     const catalog = data.catalogHealth;
     const segment = catalog.segments.find(({label}) => label === button.dataset.catalogScoreHistory);
@@ -537,6 +542,11 @@ async function load({keepView=false}={}) {
 
       if (id !== requestId) return;
       delete dashboard.updating; draw();
+      catalogJobs.push((async () => {
+          dashboard.assortment = await read('assortment',selection);
+          if (id === requestId && $('#detail[open] #assortment-loading')) modal('Нові товари',renderAssortmentDetail(dashboard.assortment));
+          draw();
+        })());
       await Promise.all(catalogJobs);
       if (id !== requestId) return;
       draw();

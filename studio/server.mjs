@@ -210,6 +210,18 @@ export const server = http.createServer(async (req, res) => {
       }
       if (waiters.length >= 24) return json(503, { error: "busy" });
       const kind = url.pathname.slice(5);
+      if (kind === 'assortment') {
+        let selection;
+        try { selection = validateSelection(Object.fromEntries(url.searchParams)); }
+        catch { return json(400,{available:false,error:'invalid_filter_or_range'}); }
+        try {
+          const report = await readProductionSource(kind,new URLSearchParams(selection));
+          if (!res.destroyed) return json(200,report);
+        } catch {
+          if (!res.destroyed) return json(503,{available:false,notice:'Дані асортименту тимчасово недоступні.'});
+        }
+        return;
+      }
       if (kind === 'content-conversion') {
         let selection;
         try { selection = contentSelection(url.searchParams); }

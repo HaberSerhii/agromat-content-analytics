@@ -53,7 +53,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
   if (url.pathname === "/api/health") return json(200, { status: "ok", service: "studio-local-preview", source });
   if (url.pathname === "/api/capabilities") return json(200, { available: true, privateOverview: false });
-  if (['/api/overview', '/api/catalog-health', '/api/inventory-demand', '/api/content-conversion'].includes(url.pathname)) {
+  if (['/api/overview', '/api/catalog-health', '/api/inventory-demand', '/api/content-conversion', '/api/assortment'].includes(url.pathname)) {
     if (!/^(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(req.headers.host || '')) return json(403, {available:false});
     if (url.pathname === '/api/content-conversion') {
       try { contentSelection(url.searchParams); }
