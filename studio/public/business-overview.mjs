@@ -598,12 +598,46 @@ export function bindRevenueWaterfall(root) {
   for (const button of root.querySelectorAll('.bo-waterfall-column')) {
     const popup = button.popoverTargetElement;
     if (!popup) continue;
+    let hoverOpened = false, closeTimer;
+    const clearClose = () => clearTimeout(closeTimer);
+    const leave = event => {
+      if (!hoverOpened || event.pointerType !== 'mouse' ||
+          button.contains(event.relatedTarget) || popup.contains(event.relatedTarget)) return;
+      clearClose();
+      closeTimer = setTimeout(() => {
+        if (hoverOpened && popup.matches(':popover-open') && !popup.matches(':focus-within')) popup.hidePopover();
+      }, 220);
+    };
+    button.addEventListener('pointerenter', event => {
+      if (event.pointerType !== 'mouse') return;
+      clearClose();
+      if (popup.matches(':popover-open')) return;
+      hoverOpened = true;
+      popup.showPopover({source:button});
+    });
+    button.addEventListener('pointerdown', event => {
+      if (event.pointerType === 'mouse') return;
+      hoverOpened = false;
+      clearClose();
+    });
+    button.addEventListener('click', event => {
+      if (event.detail && hoverOpened && popup.matches(':popover-open')) event.preventDefault();
+    });
+    button.addEventListener('pointerleave', leave);
+    popup.addEventListener('pointerenter', clearClose);
+    popup.addEventListener('pointerleave', leave);
     popup.addEventListener('toggle', event => {
-      if (event.newState !== 'open') return;
+      if (event.newState !== 'open') {
+        hoverOpened = false;
+        clearClose();
+        return;
+      }
       const anchor = button.querySelector('.bo-waterfall-value').getBoundingClientRect();
       const viewport = popup.ownerDocument.defaultView;
-      const top = anchor.bottom + 12 + popup.offsetHeight <= viewport.innerHeight - 8
-        ? anchor.bottom + 12 : anchor.top - popup.offsetHeight - 12;
+      const {top:buttonTop,bottom:buttonBottom} = button.getBoundingClientRect();
+      const below = hoverOpened ? buttonBottom + 8 : anchor.bottom + 12;
+      const above = (hoverOpened ? buttonTop - 8 : anchor.top - 12) - popup.offsetHeight;
+      const top = below + popup.offsetHeight <= viewport.innerHeight - 8 || above < 8 ? below : above;
       placeFixedTooltip(popup,anchor.left + anchor.width/2 - popup.offsetWidth/2,top);
     });
   }

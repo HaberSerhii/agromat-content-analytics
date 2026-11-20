@@ -2,7 +2,7 @@ import {overviewDefaults, overviewControls, validComparison, comparisonRange, sc
 import {bindComparisonTooltips, renderOverviewFunnel} from "/site-funnel.mjs?v=tap-tooltips";
 import {bindCategoryTooltips, categoryComparisonRows} from "/category-treemap.mjs?v=tap-tooltips";
 import { bindWeeklyCharts } from "/weekly-charts.mjs?v=tap-tooltips";
-import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, renderOrderLoss, overviewModel, bindQuarterTooltips, bindRevenueWaterfall, channelMetrics } from "/business-overview.mjs?v=waterfall-popup";
+import { renderBusinessOverview, renderSalesBreakdown, renderCatalogScoreHistory, renderOrderLoss, overviewModel, bindQuarterTooltips, bindRevenueWaterfall, channelMetrics } from "/business-overview.mjs?v=waterfall-hover";
 import {bindTitleTooltips, dismissTooltip} from '/tap-tooltip.mjs';
 import { apiParams, createApiCache } from "/api-cache.mjs?v=waterfall-factors";
 import {
