@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assortmentImpact} from '../assortment-source.mjs';
-import {renderAssortmentDetail,renderRevenueWaterfall} from '../public/business-overview.mjs';
 
 const range = {from:'2026-11-01',to:'2026-11-19'};
 const previous = {from:'2026-10-01',to:'2026-10-19'};
@@ -22,9 +21,4 @@ test('assortment includes confirmed new SKUs and deducts the lost sales of archi
   const bothChannels = assortmentImpact(catalogue,rows,range,previous,()=>true,()=>false,row=>!row.marketplace);
   assert.equal(bothChannels.newRevenue,600);
   assert.equal(bothChannels.newSiteRevenue,350);
-  assert.match(renderAssortmentDetail(report),/Ефект асортименту за базовим виторгом/);
-  const chart = renderRevenueWaterfall({available:true,range,comparisonRange:previous,start:100,end:450,
-    steps:[{key:'new-products',label:'Нові товари',value:350,from:100,to:450}]},{compareMode:'mom'});
-  assert.match(chart,/data-waterfall-detail="assortment"/);
-  assert.doesNotMatch(chart,/<table|bo-waterfall-actions|Фактори сайту/);
 });

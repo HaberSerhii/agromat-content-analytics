@@ -1390,7 +1390,7 @@ body.business-page .bo-heading h1 {
 .bo-price-bin i {display:block;width:100%;min-height:2px;max-width:64px;border-radius:8px 8px 5px 5px;}
 .bo-price-bin span {color:var(--muted);font-size:10px;white-space:nowrap;margin-top:10px;}
 @media(max-width:720px){.bo-price-index {gap:10px;} .bo-price-bin strong {font-size:11px;} .bo-price-bin span {font-size:9px;}}
-.bo-waterfall {grid-column:1/-1;align-self:start;}
+.bo-waterfall {grid-column:1/-1;}
 .bo-waterfall .panelhead,.bo-waterfall > header {align-items:center;}
 .bo-waterfall-plot {--bo-waterfall-height:clamp(112px,16vw,140px);container-type:inline-size;}
 .bo-waterfall-chart {position:relative;}

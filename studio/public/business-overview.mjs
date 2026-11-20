@@ -1,4 +1,4 @@
-import { orderLossImpact, overviewRevenueWaterfall } from "./revenue-drivers.mjs?v=waterfall-factors";
+import { orderLossImpact, overviewRevenueWaterfall } from "./revenue-drivers.mjs?v=waterfall-acov";
 import { comparisonRange, rangeLabel, selectedHistory, rangeDays } from './overview-filters.mjs?v=tap-tooltips';
 import {renderOverviewFunnel} from "./site-funnel.mjs?v=tap-tooltips";
 import { categoryMosaic, categoryPeriod, categoryColor } from "./category-treemap.mjs?v=tap-tooltips";
@@ -565,22 +565,6 @@ export function renderOrderLoss(source, mode) {
   </section>`;
 }
 
-export function renderAssortmentDetail(source) {
-  if (!source?.available) return `<p${source ? '' : ' id="assortment-loading"'}>${esc(source?.notice || (source ? 'Дані асортименту тимчасово недоступні.' : 'Завантажуємо дані асортименту…'))}</p>`;
-  const {coverage} = source;
-  const financial = value => value === null ? '—' : `${marginMoney.format(value)} ₴`;
-  const rows = [
-    ['Нові SKU',number(source.added)], ['Нові SKU з продажами',number(source.sold)],
-    ['Виторг нових SKU',financial(source.newRevenue)], ['Виведені SKU',number(source.removed)],
-    ['Виторг виведених SKU за базовий період',financial(source.removedPrevious)],
-    ['Виторг виведених SKU за вибраний період',financial(source.removedRevenue)],
-    ['Ефект асортименту за базовим виторгом',financial(source.effect)],
-  ];
-  return `<p>${esc(rangeLabel(source.range))} · база ${esc(rangeLabel(source.comparisonRange))}</p>
-    <table class="bo-order-loss-table"><tbody>${rows.map(([label,value])=>`<tr><th scope="row">${label}</th><td>${esc(value)}</td></tr>`).join('')}</tbody></table>
-    <p>Покриття каталогу ${number(coverage.observed)} з ${number(coverage.days)} днів. З кодами товарів зіставлено ${number(coverage.matched)} з ${number(coverage.candidates)} змін. Кількість SKU за каталогом, виторг за вибраним каналом.</p>`;
-}
-
 export function renderRevenueWaterfall(source, state) {
   const mode = state.compareMode || 'yoy';
   const magnitude=Math.max(Math.abs(source?.start||0),Math.abs(source?.end||0));
@@ -614,7 +598,7 @@ export function renderRevenueWaterfall(source, state) {
     const barY = Math.min(y(step.from),y(step.to));
     const height = Math.max(2,Math.abs(y(step.to)-y(step.from)));
     const color = step.total?'var(--text)':step.value===null?'var(--line)':step.value>=0?'var(--blue)':'var(--red)';
-    const detail = {'order-loss':'order-loss','new-products':'assortment'}[step.key];
+    const detail = step.key === 'order-loss';
     const sign = step.value>0&&!step.total?'+':'';
     const valueLabel = step.value===null ? 'Немає даних' : sign+number(step.value)+' ₴';
     const title = esc([step.label,valueLabel,step.description].filter(Boolean).join(' · '));
@@ -623,9 +607,9 @@ export function renderRevenueWaterfall(source, state) {
     const dateParts = step.total ? step.label.split('–') : [];
     const axisLabel = dateParts.length === 2
       ? `${esc(dateParts[0])}–<wbr><span class="bo-waterfall-period-end">${esc(dateParts[1])}</span>`
-      : esc(step.label.replace('Маркетплейси','Маркет­плейси'));
+      : esc(step.label.replace('Маркетплейси','Маркет­плейси').replace('Скасування','Скасу­вання'));
     const tag = detail ? 'button' : 'div';
-    const control = detail ? ` type="button" data-waterfall-detail="${detail}" aria-haspopup="dialog" aria-label="${title}"` : '';
+    const control = detail ? ` type="button" data-waterfall-detail="order-loss" aria-haspopup="dialog" aria-label="${title}"` : '';
     const content = `<${tag} class="bo-waterfall-column" title="${title}"${control}>` +
       `<span class="bo-waterfall-value" style="--bo-waterfall-y:${barY/plotHeight}">${sign}${esc(amount(step.value))}</span>` +
       `<span class="bo-waterfall-label">${axisLabel}</span></${tag}>`;

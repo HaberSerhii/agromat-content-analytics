@@ -2,6 +2,14 @@ import { comparisonRange, scopedSales } from './overview-filters.mjs';
 
 export const waterfallComparison = (range, mode = 'yoy') => comparisonRange(range, mode === 'month' ? 'mom' : mode);
 const metric = (source, key) => source?.available && Number.isFinite(source.metrics?.[key]) ? source.metrics[key] : null;
+const receivedCheck = period => period?.available && period.received > 0 && Number.isFinite(period.receivedAmount)
+  ? period.receivedAmount / period.received : null;
+const checkFormat = new Intl.NumberFormat('uk-UA', {maximumFractionDigits:0});
+
+function checkComparison(before, after, previousEstimated = false, currentEstimated = false) {
+  const formatCheck = (value, estimated) => value === null ? '—' : `${estimated ? '≈' : ''}${checkFormat.format(value)} ₴`;
+  return `${formatCheck(before, previousEstimated)} → ${formatCheck(after, currentEstimated)}`;
+}
 
 function sessions(source, period) {
   if (!source?.available || source.complete === false || source.incomplete || source.thresholded) return null;
@@ -26,48 +34,51 @@ export function revenueWaterfall(current, previous, range, baseline, mode = 'yoy
     return {available:false,range,comparisonRange:baseline,mode,notice:'Немає повної порівнюваної бази відвантажень.'};
   }
 
-  const assortment = current.assortment;
-  const newRevenue = assortment?.available && Number.isFinite(assortment.newRevenue) &&
-    (scope !== 'all' || Number.isFinite(assortment.newSiteRevenue)) ? assortment.newRevenue : null;
-  const newSiteRevenue = newRevenue === null || scope === 'marketplaces' ? 0
-    : scope === 'site' ? newRevenue : assortment.newSiteRevenue;
-  const newMarketplaceRevenue = (newRevenue ?? 0) - newSiteRevenue;
-  const cancellationImpact = scope === 'marketplaces' ? null : orderLossImpact(current.orderLoss, previous.orderLoss);
-  const cancellation = cancellationImpact ?? 0;
   const factors = [];
   let method = '';
   if (scope !== 'marketplaces') {
+    const cancellation = orderLossImpact(current.orderLoss, previous.orderLoss) ?? (mode === 'yoy' ? 0 : null);
     const t0 = sessions(previous.traffic, baseline), t1 = sessions(current.traffic, range);
-    const existingSiteRevenue = s1 - newSiteRevenue;
+    const aov0 = receivedCheck(previous.orderLoss), aov1 = receivedCheck(current.orderLoss);
+    const acov0 = d0 > 0 ? s0 / d0 : null, acov1 = d1 > 0 ? s1 / d1 : null;
+    const aovComparison = checkComparison(aov0,aov1,previous.orderLoss?.estimated,current.orderLoss?.estimated);
+    const acovComparison = checkComparison(acov0,acov1);
+    let aovImpact = null, acovImpact = null;
     if (d0 > 0 && d1 > 0) {
-      const baselineCheck = s0 / d0;
-      const afterOrders = d1 * baselineCheck;
-      // Cancelled order value is reported separately from the order-volume effect.
-      // Net sales of new SKUs are removed from the average-check contribution.
+      const afterOrders = d1 * acov0;
+      // Both check effects use the same shipped-order count so they sum to the change in the shipped check.
+      const shippedCheckImpact = s1 - afterOrders;
+      if (aov0 !== null && aov1 !== null) aovImpact = d1 * (aov1 - aov0);
+      acovImpact = shippedCheckImpact - (aovImpact ?? 0);
       if (t0 && t1) {
         const afterTraffic = s0 * t1 / t0;
         factors.push(
           {key:'traffic',label:'Трафік',value:afterTraffic - s0},
-          {key:'conversion',label:'CR',value:afterOrders - afterTraffic - cancellation,
+          {key:'conversion',label:'CR',value:afterOrders - afterTraffic - (cancellation ?? 0),
             description:'Внесок зміни відвантажених замовлень на сеанс GA4 після виділення ефекту скасувань.'},
         );
         method = 'CR базується на відвантажених замовленнях на сеанс GA4. Ефект скасувань виділено окремо.';
       } else {
-        factors.push({key:'orders',label:'Замовлення',value:afterOrders - s0 - cancellation,
+        factors.push({key:'orders',label:'Замовлення',value:afterOrders - s0 - (cancellation ?? 0),
           description:'Трафік і CR об’єднані через брак порівнюваних сеансів GA4.'});
         method = 'Трафік і CR об’єднані через брак порівнюваних сеансів GA4.';
       }
-      factors.push({key:'aov',label:'AOV',value:existingSiteRevenue-afterOrders,
-        description:'Внесок середнього чека відвантажених замовлень без виторгу нових SKU.'});
     } else {
-      factors.push({key:'site',label:'Виторг',value:existingSiteRevenue-s0-cancellation});
+      factors.push({key:'site',label:'Виторг',value:s1-s0-(cancellation ?? 0)});
     }
-    if (cancellationImpact !== null || (mode === 'yoy' && (current.orderLoss || previous.orderLoss))) {
-      factors.push({key:'order-loss',label:'Ефект скасувань',value:cancellation});
-    }
+    factors.push(
+      {key:'aov',label:'AOV',value:aovImpact,
+        description:`Середній чек отриманих замовлень сайту: ${aovComparison}. Внесок зміни чека зважено на кількість виконаних замовлень за вибраний період.`},
+      {key:'acov',label:'ACOV',value:acovImpact,
+        description:`Середній чек виконаних замовлень після повернень: ${acovComparison}. ${acovImpact === null
+          ? 'Для порівняння потрібні виконані замовлення за обидва періоди.'
+          : aovImpact === null
+          ? 'Показано внесок зміни виконаного чека. Для окремого внеску AOV потрібні дані про отримані замовлення за обидва періоди.'
+          : 'Внесок зміни розриву між виконаним і отриманим чеком.'}`},
+      {key:'order-loss',label:'Скасування',value:cancellation},
+    );
   }
-  if (assortment) factors.push({key:'new-products',label:'Нові товари',value:newRevenue});
-  if (scope !== 'site') factors.push({key:'marketplaces',label:'Маркетплейси',value:r1+m1-r0-m0-newMarketplaceRevenue});
+  if (scope !== 'site') factors.push({key:'marketplaces',label:'Маркетплейси',value:r1+m1-r0-m0});
   const other = end-s1-r1-m1-(start-s0-r0-m0);
   if (Math.abs(other) > .005) factors.push({key:'other',label:'Інші канали',value:other});
 
@@ -89,8 +100,7 @@ export function overviewRevenueWaterfall(data, range, mode = 'yoy') {
   const old = Object.fromEntries(ids.map(id=>[id,legacy?data.waterfallBaseline[id]:data.salesChannels[id].previous]));
   const scope = range.salesScope || 'all';
   const zero = {available:true,metrics:{shippedRevenue:0,shippedDocs:0}};
-  const current = {all:scopedSales(data.sales,data.salesChannels,scope),traffic:data.channels,orderLoss:data.orderLoss?.current,
-    assortment:data.assortment || {available:false}};
+  const current = {all:scopedSales(data.sales,data.salesChannels,scope),traffic:data.channels,orderLoss:data.orderLoss?.current};
   const previous = {all:scopedSales(legacy?data.waterfallBaseline.all:data.sales.previous,old,scope),
     traffic:legacy?data.waterfallBaseline.traffic:data.channels?.previous,orderLoss:legacy?undefined:data.orderLoss?.previous};
   for (const id of ids) {
